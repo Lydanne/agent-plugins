@@ -80,7 +80,7 @@ AgentRepo 中实体资料库的“人员资源”分类及消息侧边栏的“�
 
 ## Worker 全局协作技能
 
-agent-repo 负责根据当前 Main 的已加载插件和工具目录自动生成 Worker 协作技能。Main 可调用 `agent_repo action=worker_skill` 刷新；Agent Worker 准备委派和 Main 回复原任务时也通过共享 Agent Repo API 刷新。数据来自宿主公开 `runtime.gateway.request` 的 `plugins.list`、`tools.catalog`，宿主缺少该接口时明确失败，不从私有 registry 或插件配置猜测已加载能力。
+agent-repo 负责根据当前 Main 的已加载插件和工具目录自动生成 Worker 协作技能。Main 可调用 `agent_repo action=worker_skill` 刷新；Agent Worker 准备委派和 Main 回复原任务时也通过共享 Agent Repo API 刷新。数据来自公开的 `plugins.list`、`tools.catalog` 接口。宿主允许时使用 `runtime.gateway.request`；本地第三方插件被限制时，复用宿主启动时的 Node 与 CLI 入口，执行官方 `openclaw gateway call` 的同样只读查询（不依赖交互式 shell PATH），命令有截止时间和输出上限，不向技能传递凭证。其他宿主错误或 CLI 不可用时明确失败，不修改宿主信任设置，不从私有 registry 或插件配置猜测已加载能力。
 
 全局目录取 Agent Worker 配置的 codexHome，默认 `~/.codex/skills`。按可信 agentId 隔离技能名和版本，`agents/openai.yaml` 设置 `allow_implicit_invocation: false`，仅在 Main 显式委派时加载。正文包括协作职责、已加载插件、候选工具名及用途、Main/Worker request/reply 协议；不导出配置或凭证。候选目录位于会话过滤之前，最终权限与参数仍由 Main 核验。
 
