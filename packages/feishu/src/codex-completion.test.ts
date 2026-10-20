@@ -187,7 +187,7 @@ it('edits the persisted original card before notifying and never posts a second 
  await deliverCodexCompletion(event,{beforeSend:before,onReceipt:received});
  expect(mocks.edit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({messageId:'original-card'}));
  expect(mocks.edit.mock.calls[0][0].card.body.elements).toEqual([{tag:'markdown',content:'核验结果'}]);
- expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({replyToMessageId:'original-card',mentions:[{openId:'sender',name:'',key:''}],plainText:true,text:expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)}));
+ expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({replyToMessageId:'original-card',mentions:[{openId:'sender',name:'',key:''}],plainText:true,text:'老师，结果已更新，请查看上方回复。'}));
  expect(before.mock.invocationCallOrder[0]).toBeLessThan(mocks.edit.mock.invocationCallOrder[0]);
  expect(mocks.edit.mock.invocationCallOrder[0]).toBeLessThan(received.mock.invocationCallOrder[0]);
  expect(received.mock.invocationCallOrder[0]).toBeLessThan(mocks.send.mock.invocationCallOrder[0]);
@@ -256,7 +256,7 @@ it('delivers oversized results in chunks and notifies only after every chunk is 
   await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:received});
   expect(chunks.mock.calls[0][0]).toBe('此前结果与完整链接\n\n---\n\n'+'长'.repeat(12000));
   expect(JSON.stringify(mocks.edit.mock.calls[0])).toContain('完整内容见下方回复');
-  expect(mocks.send.mock.calls.map(([p])=>p.text)).toEqual(['first chunk','last chunk',expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)]);
+  expect(mocks.send.mock.calls.map(([p])=>p.text)).toEqual(['first chunk','last chunk','老师，结果已更新，请查看上方回复。']);
   expect(mocks.send.mock.invocationCallOrder[1]).toBeLessThan(received.mock.invocationCallOrder[0]);
   expect(received.mock.invocationCallOrder[0]).toBeLessThan(mocks.send.mock.invocationCallOrder[2]);
  }finally{chunks.mockRestore();}
@@ -450,7 +450,7 @@ it('keeps a reminder when real SDK chunking breaks the draft native mention',asy
  const chunks=vi.spyOn(runtime.channel.text,'chunkMarkdownTextWithMode').mockImplementation((text,limit)=>chunkMarkdownTextWithMode(text,limit,'newline'));
  try {
   await deliverCodexCompletion(memberEvent,{beforeSend:vi.fn(),onReceipt:vi.fn()});
-  expect(mocks.send.mock.calls.at(-1)![0]).toMatchObject({plainText:true,mentions:[{openId:'ou_member'}],text:expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)});
+  expect(mocks.send.mock.calls.at(-1)![0]).toMatchObject({plainText:true,mentions:[{openId:'ou_member'}],text:'老师，结果已更新，请查看上方回复。'});
  }finally{chunks.mockRestore();}
 });
 it('skips a reminder when an accepted earlier chunk has a native mention',async()=>{
@@ -724,14 +724,28 @@ it('does not recreate legacy blank-ID cards whose send outcome is unknown',async
 });
 
 
-it('uses the delivered interactive question receipt instead of sending duplicate confirmation prose',async()=>{
+it.each(['waiting','submitted','accepted','cancelled'] as const)('uses the rendered %s question receipt instead of sending stale waiting prose',async status=>{
  const {saveQuestionCard}=await import('./worker-question.js');
  const question={questionId:'confirmed-q',question:'形式？',reason:'需确认',progress:'只读',expiresAt:Date.now()+60000};
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',reportPaths:[],contextRequest:question};
  saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question,messageId:'interactive-question',status:'waiting',rendered:true});
- mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'第一轮选择卡片已送达，请在卡片中选择活动类型。应用内加急尚未确认成功，任务正在等待您的选择。'},{kind:'final'}));
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'continuation-card',imageKey:'gif'});
+ mocks.run.mockImplementation(async({adapter})=>{
+  saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question,messageId:'interactive-question',status,rendered:true});
+  await adapter.resolveTurn().delivery.deliver({text:'当前排查暂停，等待补充查询范围。'},{kind:'final'});
+ });
  const receipt=vi.fn();await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:receipt});
  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();expect(receipt).toHaveBeenCalledWith({messageId:'interactive-question'});
+ expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe('continuation-card');
+ expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.questionMessageId).toBeUndefined();
+});
+
+it.each(['未执行生产日志查询，无法确认通知是否发送。','部分完成：尚缺平台回执。','已核验查询结果。'])('uses a neutral completed reminder for report: %s',async reportContent=>{
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'result-card',imageKey:'gif'});
+ mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:reportContent},{kind:'final'}));
+ await deliverCodexCompletion({...event,reportContent},{beforeSend:vi.fn(),onReceipt:vi.fn()});
+ expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({text:'老师，结果已更新，请查看上方回复。',replyToMessageId:'result-card'}));
+ expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe(reportContent);
 });
 
 
@@ -794,6 +808,9 @@ it('cycles four question/answer rounds A -> B -> C -> D -> E result and mentions
    const interactive=mocks.edit.mock.calls.filter(([v])=>v.messageId===cardId).at(-1)![0].card;
    expect(JSON.stringify(interactive)).toContain('worker.question.submit');expect(JSON.stringify(interactive)).not.toContain('img_key');
    const submitted={...pending,status:'submitted' as const,answers:{format:'detailed'},submittedAt:Date.now()};saveQuestionCard(cardStateDir,submitted);
+   mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'当前排查暂停，等待补充。'},{kind:'final'}));
+   await deliverCodexCompletion({...event,type:'agent_worker.context_request',status:'awaiting_main',reportPaths:[],contextRequest:question},{beforeSend:vi.fn(),onReceipt:vi.fn()});
+   expect(mocks.send).not.toHaveBeenCalled();expect(readAsyncTaskCard(cardStateDir,event.jobId,p)?.messageId).toBe(cardId);
    let answer:string|undefined;workerQuestionBridge.read=()=>({status:answer?'running':'awaiting_user',question:{...question,answer}});
    mocks.run.mockImplementation(async({adapter})=>{answer='形式：详细报告';await bridge.contextState({...state,status:'resumed'});await adapter.resolveTurn().delivery.deliver({text:'已恢复原任务，正在处理。'},{kind:'final'});});
    await workerQuestionBridge.submit!(submitted);
@@ -809,7 +826,7 @@ it('cycles four question/answer rounds A -> B -> C -> D -> E result and mentions
   mocks.edit.mockClear();mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'模拟报告已完成。'},{kind:'final'}));
   await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
   expect(mocks.edit).toHaveBeenCalledOnce();expect(mocks.edit.mock.calls[0][0].messageId).toBe('E');
-  expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({replyToMessageId:'E',mentions:[{openId:'sender',name:'',key:''}],text:expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)}));
+  expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({replyToMessageId:'E',mentions:[{openId:'sender',name:'',key:''}],text:'老师，结果已更新，请查看上方回复。'}));
   for(const index of [1,2,3,4])expect(readQuestionCard(cardStateDir,'loop-'+index)?.answers).toEqual({format:'detailed'});
  }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });

@@ -111,7 +111,10 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      if (!isCompletionSourceCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
      if(questionTurn){
       const question=readQuestionCard(stateDir,event.contextRequest!.questionId);
-      if(question?.rendered && question.status==='waiting' && question.jobId===event.jobId && question.messageId){
+      // The requester can submit while Main is still finishing this turn.
+      // The rendered card owns the question in every subsequent state; stale
+      // Main prose must not repeat it or replace the continuation binding.
+      if(question?.rendered && question.jobId===event.jobId && question.messageId){
        callbacks.onReceipt({messageId:question.messageId});sent=true;
        return {visibleReplySent:true,messageIds:[question.messageId],content:''};
       }

@@ -1811,9 +1811,7 @@
               },
               "completionMentions": {
                 "default": [
-                  "老师，搞定了",
-                  "老师，完成了",
-                  "老师，处理好了"
+                  "老师，结果已更新，请查看上方回复。"
                 ],
                 "minItems": 1,
                 "maxItems": 100,

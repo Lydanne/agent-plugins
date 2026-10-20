@@ -8,7 +8,7 @@ export const defaultProfileGuidance = "由插件按本条事件发送者匹配�
 export const defaultProfileRoles = [{"name": "研发", "titleKeywords": ["研发", "开发", "程序员", "软件工程", "测试工程", "运维", "前端", "后端"]}, {"name": "客服", "titleKeywords": ["客服", "客户服务"]}, {"name": "产品", "titleKeywords": ["产品经理", "产品设计", "产品负责人"]}];
 export const defaultProgressTemplate = "{greeting}{ageNotice}\n\n已完成：{completed}。\n\n正在做：{current}。\n\n还需要：{remaining}。\n\n{eta}";
 export const defaultMessages = {
- progressGreeting: "老师，让您久等了。", completionMention: "老师，搞定了",
+ progressGreeting: "老师，让您久等了。", completionMention: "老师，结果已更新，请查看上方回复。",
  failureMention: "老师，任务执行失败，结果已更新，请查看上方回复。",
  timeoutMention: "老师，任务超时，阶段结果已更新，请查看上方回复。",
  cancelledMention: "老师，任务已取消，结果已更新，请查看上方回复。",
@@ -31,7 +31,7 @@ export const defaultMessages = {
  progressAge: "以下阶段记录更新于约 {minutes} 分钟前。", progressNoCompleted: "尚无可确认的阶段成果",
  progressDeliver: "确认最终结果并交付", progressAwait: "取得执行结果，再核验并整理回复",
 };
-export const defaultCompletionMentions = ["老师，搞定了", "老师，完成了", "老师，处理好了"];
+export const defaultCompletionMentions = ["老师，结果已更新，请查看上方回复。"];
 export type BusinessMessages = Partial<typeof defaultMessages> & {completionMentions?: string[]};
 export function renderBusinessMessage(messages: BusinessMessages | undefined, key: keyof typeof defaultMessages, values: Record<string,string> = {}): string {
  const choices=messages?.completionMentions?.filter(value=>value.trim())??defaultCompletionMentions;

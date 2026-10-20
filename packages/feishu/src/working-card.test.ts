@@ -98,7 +98,7 @@ describe("working GIF lifecycle", () => {
     expect(mocks.notify).not.toHaveBeenCalled();
     await Promise.all([card.finish(), card.finish()]);
     expect(mocks.notify).toHaveBeenCalledTimes(1);
-    expect(mocks.notify.mock.calls[0][0]).toMatchObject({replyToMessageId:"om_working",replyInThread:true,mentions:[{openId:"ou_requester"}],plainText:true,text:expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)});
+    expect(mocks.notify.mock.calls[0][0]).toMatchObject({replyToMessageId:"om_working",replyInThread:true,mentions:[{openId:"ou_requester"}],plainText:true,text:'老师，结果已更新，请查看上方回复。'});
   });
   it("awaits placeholder creation before replacing it", async () => {
     let release!: (value: {messageId: string}) => void;
@@ -119,7 +119,7 @@ describe("working GIF lifecycle", () => {
     await card.finish();
     expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain("初步结果");
     expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain("结论：检查未通过，尚未修复。");
-    expect(mocks.notify.mock.calls[0][0].text).toMatch(/^老师，(?:搞定了|完成了|处理好了)$/);
+    expect(mocks.notify.mock.calls[0][0].text).toBe('老师，结果已更新，请查看上方回复。');
   });
   it("does not notify in direct messages", async()=>{
     const {card}=setup(false); await card.start(); await card.complete("结论：已完成。"); await card.finish();

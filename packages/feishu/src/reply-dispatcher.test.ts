@@ -567,7 +567,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     await options.onIdle?.();
     await options.onIdle?.();
     expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
-    expect(sendMessageFeishuMock).toHaveBeenCalledWith(expect.objectContaining({replyToMessageId:"om_card",mentions:[{openId:"ou_questioner",name:"提问者",key:""}],text:expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)}));
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(expect.objectContaining({replyToMessageId:"om_card",mentions:[{openId:"ou_questioner",name:"提问者",key:""}],text:'老师，结果已更新，请查看上方回复。'}));
   });
 
   it("keeps the working card open when typing cleanup precedes final delivery", async () => {
@@ -582,7 +582,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(JSON.stringify(editMessageFeishuMock.mock.calls.at(-1))).toContain("已完成查询，共 3 条");
     expect(JSON.stringify(editMessageFeishuMock.mock.calls)).not.toContain("未产生可展示的结果");
     expect(sendMessageFeishuMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      replyToMessageId: "om_card", text: expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/),
+      replyToMessageId: "om_card", text: '老师，结果已更新，请查看上方回复。',
     }));
   });
 
@@ -645,7 +645,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     await Promise.resolve();
     expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     release({messageId:"om_file"}); await delivery; await idle;
-    expect(sendMessageFeishuMock).toHaveBeenCalledWith(expect.objectContaining({replyToMessageId:"om_card",text:expect.stringMatching(/^老师，(?:搞定了|完成了|处理好了)$/)}));
+    expect(sendMessageFeishuMock).toHaveBeenCalledWith(expect.objectContaining({replyToMessageId:"om_card",text:'老师，结果已更新，请查看上方回复。'}));
   });
 
   it("starts the placeholder on actual agent run before any reply payload", async()=>{

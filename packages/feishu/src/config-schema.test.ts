@@ -841,5 +841,5 @@ it("validates completion candidates globally and per account and substitutes onl
  expect(FeishuConfigSchema.safeParse({businessMessages:{completionMentions:[]}}).success).toBe(false);
  expect(FeishuConfigSchema.safeParse({businessMessages:{completionMentions:[""]}}).success).toBe(false);
  expect(renderBusinessMessage({completionMentions:["老师，{result}"]},"completionMention",{result:"搞定了"})).toBe("老师，搞定了");
- expect(renderBusinessMessage({completionMentions:[" "]},"completionMention")).toBe("老师，搞定了");
+ expect(renderBusinessMessage({completionMentions:[" "]},"completionMention")).toBe("老师，结果已更新，请查看上方回复。");
 });
