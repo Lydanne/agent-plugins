@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
+import {rmSync} from 'node:fs';
 import {acquireWorkerSkillLock} from './worker-skill-lock.mjs';
 import {publishWorkerSkill} from './worker-skill.mjs';
 
@@ -15,7 +16,7 @@ test('live publishers serialize and unknown ownership is preserved',async()=>{
   await assert.rejects(acquireWorkerSkillLock(path,{timeoutMs:0}),/busy/);
   const waiting=acquireWorkerSkillLock(path);setTimeout(release,40);
   const next=await waiting;next();
-  await mkdir(path);await assert.rejects(acquireWorkerSkillLock(path),/ownership|ENOENT/);
+  await mkdir(path);await assert.rejects(acquireWorkerSkillLock(path,{timeoutMs:0}),/busy/);
   await writeFile(join(path,'keep'),'unmanaged');assert.equal(await readFile(join(path,'keep'),'utf8'),'unmanaged');
  }finally{await rm(root,{recursive:true,force:true});}
 });
@@ -51,4 +52,14 @@ test('independent publisher processes preserve a complete canonical version unde
   const marker=JSON.parse(await readFile(join(directory,'.agent-repo.json'),'utf8'));
   assert.equal(await readFile(join(directory,'SKILL.md'),'utf8'),await readFile(join(directory,'revisions',marker.revision+'.md'),'utf8'));
  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('a publisher retries the owner-removal window while another process releases its directory',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'worker-skill-release-')),path=join(root,'lock');
+ let timer;
+ try {
+  await mkdir(path);
+  timer=setTimeout(()=>rmSync(path,{recursive:true}),30);
+  const release=await acquireWorkerSkillLock(path);release();
+ }finally{clearTimeout(timer);await rm(root,{recursive:true,force:true});}
 });

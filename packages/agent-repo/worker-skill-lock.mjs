@@ -5,7 +5,8 @@ import {randomUUID} from 'node:crypto';
 function owner(path) {
  const directory=lstatSync(path),file=join(path,'owner.json');
  if(!directory.isDirectory()||directory.isSymbolicLink())throw Error('Unresolved Worker skill lock ownership');
- try {if(!lstatSync(file).isFile())throw Error('Unresolved Worker skill lock ownership');}catch(error){if(error.code==='ENOENT')throw Error('Unresolved Worker skill lock ownership');throw error;}
+ // Release can remove owner.json just before removing the directory; retry ENOENT.
+ if(!lstatSync(file).isFile())throw Error('Unresolved Worker skill lock ownership');
  const value=JSON.parse(readFileSync(file,'utf8'));
  if(!Number.isSafeInteger(value.pid)||value.pid<1||typeof value.token!=='string')throw Error('Unresolved Worker skill lock ownership');
  return value;
