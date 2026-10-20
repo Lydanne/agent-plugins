@@ -19,9 +19,11 @@ it('isolates child credentials and preserves exact user binding without inheriti
   vi.stubEnv('LARKSUITE_CLI_PROFILE', 'operator');
   vi.stubEnv('FEISHU_APP_SECRET', 'unrelated-secret');
   try {
-    const bot = cliInvocationEnvironment('/tmp/test-cli', account, 'bot');
+    const bot = cliInvocationEnvironment('/tmp/test-cli', account, 'bot', 'bound-bot-token');
     expect(bot.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBeUndefined(); expect(bot.LARKSUITE_CLI_PROFILE).toBeUndefined();
     expect(bot.FEISHU_APP_SECRET).toBeUndefined(); expect(bot.LARKSUITE_CLI_STRICT_MODE).toBe('bot');
+    expect(bot.LARKSUITE_CLI_TENANT_ACCESS_TOKEN).toBe('bound-bot-token');
+    expect(() => cliInvocationEnvironment('/tmp/test-cli', account, 'bot')).toThrow('Application access token required');
     expect(() => cliInvocationEnvironment('/tmp/test-cli', account, 'user')).toThrow();
     expect(cliInvocationEnvironment('/tmp/test-cli', account, 'user', 'bound-user-token').LARKSUITE_CLI_USER_ACCESS_TOKEN).toBe('bound-user-token');
   } finally { vi.unstubAllEnvs(); }
@@ -53,7 +55,7 @@ it('returns confirmation_required without automatically executing again or expos
   expect(run).toHaveBeenCalledOnce(); expect(run.mock.calls[0][1]).not.toContain('--yes');
   expect(result.confirmationRequired).toBe(true); expect(JSON.stringify(result)).not.toContain('private-app-secret');
   expect(JSON.stringify(result)).not.toContain('private-user-token');
-  await executeManagedCli({ manager, release, account, args, identity: 'bot', confirmed: true });
+  await executeManagedCli({ manager, release, account, args, identity: 'bot', token: 'private-bot-token', confirmed: true });
   expect(run.mock.calls[1][1].at(-1)).toBe('--yes');
   expect(run.mock.calls[1][0]).toContain(release.id);
   expect(redactCliOutput('{"access_token":"secret","appSecret":"key"}')).not.toContain('secret');

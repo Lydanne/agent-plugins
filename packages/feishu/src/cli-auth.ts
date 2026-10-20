@@ -8,6 +8,8 @@ type Pending = { deviceCode: string; expiresAt: number; nextPollAt: number; inte
 type Session = { token?: UserToken; pending?: Pending };
 type Fetch = typeof fetch;
 const activeAuthorizations = new Set<string>();
+const tenantTokens = new Map<string, { token: string; expiresAt: number }>();
+const tenantMints = new Map<string, Promise<string>>();
 
 export function cliAuthEndpoints(domain: string) {
   if (domain !== 'feishu' && domain !== 'lark') throw new Error('CLI authentication supports feishu/lark domains only');
@@ -18,6 +20,28 @@ export function cliAuthEndpoints(domain: string) {
 
 export class FeishuCliAuth {
   constructor(readonly root: string, readonly request: Fetch = fetch) {}
+  async tenantAccessToken(account: CliAccount): Promise<string> {
+    const key = createHash('sha256').update(JSON.stringify([account.appId, account.appSecret, account.domain])).digest('hex');
+    const cached = tenantTokens.get(key);
+    if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+    const pending = tenantMints.get(key);
+    if (pending) return pending;
+    const mint = (async () => {
+      const response = await this.request(`${cliAuthEndpoints(account.domain).api}/open-apis/auth/v3/tenant_access_token/internal`, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: account.appId, app_secret: account.appSecret }),
+      });
+      const value = await response.json() as { code?: number; tenant_access_token?: string; expire?: number };
+      if (!response.ok || value.code !== 0 || !value.tenant_access_token ||
+        !Number.isFinite(value.expire) || value.expire! <= 0) throw new Error('Unable to obtain Feishu application access token');
+      if (tenantTokens.size >= 64) tenantTokens.delete(tenantTokens.keys().next().value!);
+      tenantTokens.set(key, { token: value.tenant_access_token, expiresAt: Date.now() + value.expire! * 1000 });
+      return value.tenant_access_token;
+    })();
+    tenantMints.set(key, mint);
+    try { return await mint; } finally { tenantMints.delete(key); }
+  }
   private file(account: CliAccount, sender: string) {
     if (!/^ou_[A-Za-z0-9]+$/.test(sender)) throw new Error('A trusted Feishu sender OpenID is required');
     return join(this.root, createHash('sha256').update(JSON.stringify([account.accountId, account.appId, account.domain, sender])).digest('hex') + '.json');

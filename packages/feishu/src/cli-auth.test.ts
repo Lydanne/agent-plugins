@@ -17,6 +17,23 @@ const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 
 const device = { device_code: 'private-device', verification_uri_complete: 'https://accounts.feishu.cn/verify?x=a%2Bb', interval: 5, expires_in: 240 };
 const token = { access_token: 'private-access', refresh_token: 'private-refresh', token_type: 'Bearer', expires_in: 7200, scope: 'docs:document:readonly' };
 
+it('mints and caches application tokens, coalesces callers and isolates rotated app credentials', async () => {
+  vi.useFakeTimers(); const f = await fixture();
+  const botAccount = { ...account, appId: 'cli_tenant_fixture' };
+  f.request.mockResolvedValueOnce(json({ code: 0, tenant_access_token: 'private-tenant', expire: 7200 }));
+  expect(await Promise.all([f.auth.tenantAccessToken(botAccount), new FeishuCliAuth(f.root, f.request).tenantAccessToken(botAccount)]))
+    .toEqual(['private-tenant', 'private-tenant']);
+  expect(f.request).toHaveBeenCalledOnce();
+  expect(f.request.mock.calls[0][0]).toBe('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal');
+  expect(JSON.parse(String(f.request.mock.calls[0][1]?.body))).toEqual({ app_id: botAccount.appId, app_secret: botAccount.appSecret });
+  expect(await f.auth.tenantAccessToken(botAccount)).toBe('private-tenant'); expect(f.request).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(7200000);
+  f.request.mockResolvedValueOnce(json({ code: 0, tenant_access_token: 'renewed-tenant', expire: 7200 }));
+  expect(await f.auth.tenantAccessToken(botAccount)).toBe('renewed-tenant');
+  f.request.mockResolvedValueOnce(json({ code: 10003 }));
+  await expect(f.auth.tenantAccessToken({ ...botAccount, appSecret: 'rotated-fixture' })).rejects.toThrow('application access token');
+});
+
 it('requires explicit scopes, keeps secrets private, and binds authorization to the exact requesting user', async () => {
   vi.useFakeTimers(); const f = await fixture();
   await expect(f.auth.login(account, 'ou_alice', '')).rejects.toThrow('scopes'); expect(f.request).not.toHaveBeenCalled();

@@ -52,12 +52,12 @@ export function resolveCliAccount(cfg: OpenClawConfig, context: Pick<OpenClawPlu
 }
 
 export function cliInvocationEnvironment(root: string, account: CliAccount, identity: 'bot' | 'user', token?: string) {
-  if (identity === 'user' && !token) throw new Error('User authorization required');
+  if (!token) throw new Error(identity === 'user' ? 'User authorization required' : 'Application access token required');
   return { ...cliBaseEnvironment(join(root, 'isolated-cli-config')),
     LARKSUITE_CLI_APP_ID: account.appId, LARKSUITE_CLI_APP_SECRET: account.appSecret,
     LARKSUITE_CLI_BRAND: account.domain, LARKSUITE_CLI_DEFAULT_AS: identity,
     LARKSUITE_CLI_STRICT_MODE: identity,
-    ...(identity === 'user' ? { LARKSUITE_CLI_USER_ACCESS_TOKEN: token } : {}) };
+    ...(identity === 'user' ? { LARKSUITE_CLI_USER_ACCESS_TOKEN: token } : { LARKSUITE_CLI_TENANT_ACCESS_TOKEN: token }) };
 }
 
 export async function executeManagedCli(params: {
@@ -173,7 +173,7 @@ export function registerFeishuCli(api: OpenClawPluginApi) {
           if (identity === 'user') {
             if (!options(cfg).userAuth || !resolveCliConfig(resolveFeishuRuntimeAccount({ cfg, accountId: account.accountId }).config.cli).userAuth) throw new Error('User authorization is disabled by the administrator');
             token = await auth.accessToken(account, context.requesterSenderId ?? '');
-          }
+          } else token = await auth.tenantAccessToken(account);
           return feishuExternalToolResult(await executeManagedCli({ manager: instance, release, account,
             args: params.args ?? [], identity, token, confirmed: params.confirmed, signal }));
         } catch (error) { return feishuExternalToolResult({ error: error instanceof Error ? error.message : 'CLI operation failed' }); }

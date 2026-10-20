@@ -40,7 +40,7 @@ openclaw feishu-cli rollback
 
 Main 在可信飞书会话获取当前技能目录，并通过 `feishu_cli` 列举、读取技能或执行类型化业务命令。上游技能正文与 references 始终读取同版本 CLI 的内置内容；scripts/assets 不在内置内容中，不承诺这些资源可执行。`apps` 部署、常驻事件、原始 API、本地文件输入输出不开放给此入口，沿用相应现有工具。与旧 `feishu-doc/drive/wiki/perm` 重叠时，已有工具继续服务原流程，CLI 操作先读 `feishu-cli` 接入规则；消息、群历史、卡片、后台交付由原插件能力负责。
 
-应用凭证仅从可信消息账号的运行时配置解析（包括已解析的 SecretRef），通过子进程环境提供，清除操作员 CLI profile/token/sidecar 环境，不写入 CLI profile。业务命令无法选择其他账号、改变身份策略或管理凭证；风险操作保留 CLI 的 exit 10 确认流程。当前仅支持标准 feishu/lark 域名，自定义 API 域名不接入 CLI。
+应用凭证仅从可信消息账号的运行时配置解析（包括已解析的 SecretRef）。插件通过公开认证接口换取应用访问 Token，在内存中按应用、品牌和凭证版本缓存并合并并发换发，提前续期，再通过子进程环境提供给 CLI；不依赖 CLI 以 App Secret 自动换发 Token。清除操作员 CLI profile/token/sidecar 环境，不写入 CLI profile。业务命令无法选择其他账号、改变身份策略或管理凭证；风险操作保留 CLI 的 exit 10 确认流程。当前仅支持标准 feishu/lark 域名，自定义 API 域名不接入 CLI。
 
 个人资源由管理员显式开启 `userAuth`，并由每位请求人通过 `feishu_cli_auth` 按 scope 授权。插件使用与 CLI 相同的公开 OAuth device flow，单次检查有截止时间；先展示链接与二维码，后续再完成授权。完成及刷新时核对真实 user_info.open_id，拒绝他人扫码；本地状态按账号、App ID、品牌和请求人隔离。授权文件目录 0700、文件 0600，包含运行时 token，须按私有凭证管理，不能提交或分享。只支持 Bearer token；服务端要求 DPoP 时明确失败，不降级绕过要求。退出只删除本地状态，不撤销服务端授权。
 
