@@ -166,8 +166,9 @@ async function queryInternal(params,context={}) {
   const requester={senderId:context.requesterSenderId,accountId:context.agentAccountId},authorize=p=>!p||completionBridge.authorizeReply?.(p)===true;
   const submitted=params.action==='reply'&&original.provenance?globalThis[Symbol.for('ada.worker-question.v1')]?.submission?.({jobId:original.jobId,questionId:params.questionId,provenance:original.provenance}):undefined;
   if(params.answerBasis!==undefined&&(typeof params.answerBasis!=='string'||params.answerBasis.length>1000))throw Error('Invalid answer basis');
-  if(params.action==='reply'&&context.agentId&&original.project){const service=getAgentRepoService(context,{required:false});if(service?.prepareWorkerSkill)await service.prepareWorkerSkill();}
   const resumed=params.action==='await_user'?await jobs.awaitUser(params.jobId,scope,params.questionId,requester,authorize,params.knownValues):await jobs.reply(params.jobId,scope,params.questionId,params.answer,requester,authorize,false,undefined,{answerSource:continuationLease?'user_text':'main_context',...submitted,...(params.answerBasis?{answerBasis:params.answerBasis}:{})});
+  // Directory refresh is metadata maintenance, never a prerequisite for accepting an answer.
+  if(params.action==='reply'&&context.agentId&&original.project)void Promise.resolve().then(()=>getAgentRepoService(context,{required:false})?.prepareWorkerSkill?.()).catch(()=>console.error('Main Worker skill refresh failed; the accepted reply and previous skill remain available'));
   const newlyAnswered=params.action==='reply'&&['awaiting_main','awaiting_user'].includes(original.status);
   if(params.action==='await_user')rememberUserQuestion(continuationLease,resumed,params.questionId);
   const continuationHeld=newlyAnswered&&rememberAsyncContinuation(continuationLease,resumed,params.questionId);

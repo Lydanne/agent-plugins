@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,readFile,writeFile,rename,lstat,realpath,rm} from 'node:fs/promises';
 import {join,isAbsolute} from 'node:path';
 import {homedir} from 'node:os';
+import {acquireWorkerSkillLock} from './worker-skill-lock.mjs';
 import {contextRequestInstructions,pluginCapabilityInstructions} from './worker-protocol.mjs';
 
 const hash=text=>createHash('sha256').update(text).digest('hex');
@@ -30,12 +31,13 @@ export function renderWorkerSkill(agentId,plugins,catalog) {
 }
 async function atomic(path,content) {
  const temporary=path+'.'+randomUUID()+'.tmp';
- await writeFile(temporary,content,{mode:0o600});await rename(temporary,path);
+ try {await writeFile(temporary,content,{mode:0o600});await rename(temporary,path);}finally{await rm(temporary,{force:true});}
 }
 async function publish(codexHome,agentId,body) {
  const name=workerSkillName(agentId);
  if(!isAbsolute(codexHome))throw Error('Codex home must be absolute');
- const root=join(codexHome,'skills'),directory=join(root,name),path=join(directory,'SKILL.md');
+ const root=join(codexHome,'skills'),target=join(root,name);
+ let directory=target;
  await mkdir(root,{recursive:true,mode:0o700});
  // Each file is published atomically under a cross-process lock. Never follow
  // a user symlink or replace an unmanaged global skill with the same name.
@@ -46,32 +48,48 @@ async function publish(codexHome,agentId,body) {
  } catch(error) {if(error.code!=='ENOENT')throw error;
   // A partially populated/unmanaged directory must not be adopted.
   try {await lstat(directory);throw Error('Global Worker skill already exists without ownership');} catch(missing){if(missing.code!=='ENOENT')throw missing;}
+  directory=join(root,'.'+name+'.install.'+randomUUID());
  }
- await mkdir(directory,{recursive:true,mode:0o700});
- await mkdir(join(directory,'agents'),{recursive:true,mode:0o700});
- // Immutable revisions let queued jobs follow the latest Agent pointer to a
- // complete document without racing an entrypoint replacement.
- const revision=hash(body),revisionPath=join(directory,'revisions',revision+'.md');
- await mkdir(join(directory,'revisions'),{recursive:true,mode:0o700});
- for(const sub of ['agents','revisions'])if(await realpath(join(directory,sub))!==join(await realpath(directory),sub))throw Error('Worker skill directory must not be linked');
+ const path=join(directory,'SKILL.md');
  try {
-  if(await readFile(revisionPath,'utf8')===body&&await readFile(path,'utf8')===body&&await readFile(join(directory,'agents','openai.yaml'),'utf8')===yaml&&JSON.parse(await readFile(join(directory,'.agent-repo.json'),'utf8')).revision===revision)return {name,path,revision,revisionPath,agentId};
- } catch(error) {if(error.code!=='ENOENT')throw error;}
- await atomic(revisionPath,body);
- await atomic(join(directory,'agents','openai.yaml'),yaml);
- await atomic(path,body);
- await atomic(join(directory,'.agent-repo.json'),JSON.stringify({owner:'agent-repo',agentId,revision}));
- return {name,path,revision,revisionPath,agentId};
+  await mkdir(directory,{recursive:true,mode:0o700});
+  await mkdir(join(directory,'agents'),{recursive:true,mode:0o700});
+  // Immutable revisions let queued jobs follow the latest Agent pointer to a
+  // complete document without racing an entrypoint replacement.
+  const revision=hash(body),revisionPath=join(directory,'revisions',revision+'.md');
+  await mkdir(join(directory,'revisions'),{recursive:true,mode:0o700});
+  for(const sub of ['agents','revisions'])if(await realpath(join(directory,sub))!==join(await realpath(directory),sub))throw Error('Worker skill directory must not be linked');
+  try {
+   if(await readFile(revisionPath,'utf8')===body&&await readFile(path,'utf8')===body&&await readFile(join(directory,'agents','openai.yaml'),'utf8')===yaml&&JSON.parse(await readFile(join(directory,'.agent-repo.json'),'utf8')).revision===revision)return {name,path,revision,revisionPath,agentId};
+  } catch(error) {if(error.code!=='ENOENT')throw error;}
+  await atomic(revisionPath,body);
+  await atomic(join(directory,'agents','openai.yaml'),yaml);
+  await atomic(path,body);
+  await atomic(join(directory,'.agent-repo.json'),JSON.stringify({owner:'agent-repo',agentId,revision}));
+  if(directory!==target)await rename(directory,target);
+  return {name,path:join(target,'SKILL.md'),revision,revisionPath:join(target,'revisions',revision+'.md'),agentId};
+ }finally{if(directory!==target)await rm(directory,{recursive:true,force:true});}
 }
 export async function publishWorkerSkill(codexHome,agentId,body) {
  const name=workerSkillName(agentId),root=join(codexHome,'skills');
  if(!isAbsolute(codexHome))throw Error('Codex home must be absolute');
  await mkdir(root,{recursive:true,mode:0o700});
  const lock=join(root,'.'+name+'.lock');
- try {await mkdir(lock,{mode:0o700});}catch(error){if(error.code==='EEXIST')throw Error('Worker skill publication is busy; inspect unresolved lock');throw error;}
- try {return await publish(codexHome,agentId,body);}finally{await rm(lock,{recursive:true,force:true});}
+ const release=await acquireWorkerSkillLock(lock);
+ try {return await publish(codexHome,agentId,body);}finally{release();}
 }
-export function createWorkerSkillPublisher(getConfig,request) {
+async function previousSkill(codexHome,agentId) {
+ const name=workerSkillName(agentId),root=join(codexHome,'skills'),directory=join(root,name),path=join(directory,'SKILL.md');
+ if(!isAbsolute(codexHome)||!(await lstat(directory)).isDirectory()||await realpath(directory)!==join(await realpath(root),name))throw Error('Invalid cached Worker skill location');
+ const marker=JSON.parse(await readFile(join(directory,'.agent-repo.json'),'utf8'));
+ if(marker.owner!=='agent-repo'||marker.agentId!==agentId||!/^[a-f0-9]{64}$/.test(marker.revision))throw Error('Invalid cached Worker skill ownership');
+ const revisionPath=join(directory,'revisions',marker.revision+'.md');
+ if(await realpath(join(directory,'revisions'))!==join(await realpath(directory),'revisions'))throw Error('Invalid cached Worker skill revisions');
+ const body=await readFile(revisionPath,'utf8');
+ if(hash(body)!==marker.revision||await readFile(path,'utf8')!==body||await readFile(join(directory,'agents/openai.yaml'),'utf8')!==yaml)throw Error('Invalid cached Worker skill contents');
+ return {name,path,revision:marker.revision,revisionPath,agentId};
+}
+export function createWorkerSkillPublisher(getConfig,request,{logger}={}) {
  const pending=new Map();
  return agentId=>{
   const config=getConfig(),raw=config.plugins?.entries?.['agent-worker']?.config?.codexHome??'~/.codex';
@@ -80,7 +98,13 @@ export function createWorkerSkillPublisher(getConfig,request) {
   const key=codexHome+'\0'+agentId;
   if(pending.has(key))return pending.get(key);
   const work=(async()=>{
-   const [plugins,catalog]=await Promise.all([request('plugins.list',{}),request('tools.catalog',{agentId,includePlugins:true})]);
+   let plugins,catalog;
+   try {[plugins,catalog]=await Promise.all([request('plugins.list',{}),request('tools.catalog',{agentId,includePlugins:true})]);}
+   catch(error){
+    let cached;try{cached=await previousSkill(codexHome,agentId);}catch{throw error;}
+    logger?.warn?.('Main plugin catalog refresh failed; using the last verified Worker skill');
+    return cached;
+   }
    return publishWorkerSkill(codexHome,agentId,renderWorkerSkill(agentId,plugins,catalog));
   })().finally(()=>pending.delete(key));
   pending.set(key,work);return work;

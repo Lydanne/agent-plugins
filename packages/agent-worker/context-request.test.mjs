@@ -207,3 +207,22 @@ test('rejects coerced field identifiers and questions with no answer entry',()=>
   }
   assert.equal(parseContextRequest(JSON.stringify({type:'other',...question})),undefined);
  });
+
+for(const [kind,priorCount,expected] of [['plugin',5,'awaiting_main'],['plugin',49,'awaiting_main'],['plugin',50,'failed'],['context',4,'awaiting_main'],['context',5,'failed']])test(`separate ${kind} budget with ${priorCount} prior requests`,async()=>{
+ const f=fixture();try{
+  const job=readJson(join(f.root,f.id+'.json'));
+  job.questions=Array.from({length:priorCount},(_,i)=>({questionId:String(i),question:'earlier',answer:'done',...(kind==='plugin'?{requestKind:'plugin'}:{})}));
+  // Exhaust the other budget as well: the two counters remain independent.
+  job.questions.push(...Array.from({length:kind==='plugin'?5:50},()=>({requestKind:kind==='plugin'?'context':'plugin',answer:'done'})));
+  writeJson(join(f.root,f.id+'.json'),job);
+  const parsed=parseContextRequest(JSON.stringify({type:'request',...question,requestKind:kind}));
+  const result=await runWorker({...f,execute:async()=>({content:[{type:'text',text:JSON.stringify({contextRequest:parsed,sessionId:'original-thread'})}]})});
+  assert.equal(result.status,expected);
+  if(expected==='failed')assert.match(result.error,kind==='plugin'?/Plugin request limit/:/Context question limit/);
+  else assert.equal(result.contextRequest.requestKind,kind);
+ }finally{f.close();}
+});
+test('request kinds are optional for legacy tasks and strictly validated',()=>{
+ assert.deepEqual(parseContextRequest(JSON.stringify({type:'request',...question})),question);
+ for(const requestKind of ['other',null,1,{}])assert.throws(()=>parseContextRequest(JSON.stringify({type:'request',...question,requestKind})),/kind/);
+});

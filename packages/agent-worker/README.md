@@ -14,6 +14,8 @@
 
 Main 协作技能由 **agent-repo** 管理，Worker 不生成或安装技能。每次委派前，agent-repo 通过宿主公开的 `plugins.list` 和 `tools.catalog` 读取当前 Main Agent 的已加载插件与候选工具，生成全局 Codex 技能 `<codexHome>/skills/openclaw-main-<AgentID>/SKILL.md`（长 Agent ID 使用带哈希的短名），以及仅显式调用的 `agents/openai.yaml`。目录只包含插件/工具名称、版本、用途和通信协议，不复制配置、凭证或完整上游技能正文。工具目录是会话过滤前的候选清单，不代替实际会话授权。
 
+目录查询失败时，仅复用通过归属和内容哈希校验的上一已发布技能；没有有效版本时拒绝新任务。Main 回复先持久化并受理，再异步尝试刷新技能；刷新失败或超时不阻断回复及幂等重试，Worker 在后续轮次读取最新已完成发布的版本。
+
 Main 在 `run.responsibility` 简要说明本轮职责，`task` 提供具体任务；省略 responsibility 时使用通用执行职责。委派的业务输入携带小型 `collaborationSkill`：技能名、路径、版本及 `load/reuse/reload` 指令，并显式调用 `$openclaw-main-<AgentID>`；developer instructions 不再附加能力说明或技能入口。首次使用要求读取，同版本可复用已读正文，插件目录或通信协议变化后明确要求重新读取。原任务 reply 恢复前也刷新目录，Worker 按全局版本指针读取对应的完整版本文件，不修改技能文件。记录的是已投递版本通知，不宣称模型实际读取过正文。版本变化在下一次委派或恢复时生效，不中断正在运行的 CLI。
 
 Main 可用 `agent_repo action=worker_skill` 手动刷新并查看技能描述符。不同 Agent 的技能与目录分别保存；拒绝覆盖同名非 agent-repo 管理的技能或链接目录。无 Agent Repo provider 的兼容旧模式不自动生成该技能。
@@ -390,13 +392,13 @@ Worker 信息不足时最终返回 `{"type":"request","question":"具体问题",
 
 Main 调用同一个工具：`{"action":"reply","jobId":"原任务 ID","questionId":"问题 ID","answer":"补充上下文"}`。插件校验原会话、原请求人和账号、原授权的有效性、问题 ID 与有效期，恢复原 CLI 会话及原 jobId。原 task/context/constraints 和执行配置快照不变，补充信息是参考数据，不扩大授权。执行会话不匹配时拒绝恢复，不创建新会话重新执行。
 
-等待时释放执行槽位及业务资源锁，但保留同聊天同 topic 的顺序约束。问题 24 小时有效，每个 job 最多 5 次提问；等待可取消，来源撤回或任务修订会取消，超时形成终态。相同问题相同回答幂等，不同回答拒绝覆盖；失败、取消、超时任务不能恢复。问题与回复持久化，重启后继续调度，侧边栏显示等待状态和 Main/Worker 交互。回复不生成新业务轮次或新 job；单次恢复执行仍受配置的执行时限约束。
+等待时释放执行槽位及业务资源锁，但保留同聊天同 topic 的顺序约束。问题 24 小时有效，每个 job 的普通信息追问（requestKind=context，省略时默认）最多 5 次，插件请求（requestKind=plugin）单独最多 50 次，不占信息追问额度；等待可取消，来源撤回或任务修订会取消，超时形成终态。相同问题相同回答幂等，不同回答拒绝覆盖；失败、取消、超时任务不能恢复。问题与回复持久化，重启后继续调度，侧边栏显示等待状态和 Main/Worker 交互。回复不生成新业务轮次或新 job；单次恢复执行仍受配置的执行时限约束。
 
 此通道是结束 CLI 当前轮次后再恢复，并非执行过程中即时注入消息。Worker 不注册飞书聊天工具；这不等同于操作系统凭证隔离。
 
 ### 结构化提问和 Main 优先补充
 
-`request` 保留旧的 question/reason/progress 字段，可增加 `fields`（最多 6 项）、`allowFreeText` 和建议文本 `recommendation`。字段 id 必须是字符串；禁用自由文本时必须提供可回答字段。字段类型为 text、number、single_select、multi_select、date、date_range、datetime；选项最多 20 个，日期类必须有 IANA timezone。只提问必需的缺口，推荐不代表用户选择。Main 已知时直接 reply；能在原授权内查询时先查询；仅确实缺少决策或信息时 await_user。await_user.knownValues 记录已明确字段，由宿主校验并持久化，用户只填写剩余字段。reply.answerBasis 可记录简短来源说明。
+`request` 保留旧的 question/reason/progress 字段，可增加 `fields`（最多 6 项）、`allowFreeText`、建议文本 `recommendation` 和请求种类 `requestKind`（context/plugin）。字段 id 必须是字符串；禁用自由文本时必须提供可回答字段。字段类型为 text、number、single_select、multi_select、date、date_range、datetime；选项最多 20 个，日期类必须有 IANA timezone。只提问必需的缺口，推荐不代表用户选择。Main 已知时直接 reply；能在原授权内查询时先查询；仅确实缺少决策或信息时 await_user。await_user.knownValues 记录已明确字段，由宿主校验并持久化，用户只填写剩余字段。reply.answerBasis 可记录简短来源说明。
 
 飞书适配器接收原提问者的交互卡片提交后，将答案持久化并交回原 Main FIFO，再通过 reply 续接原 job 和 Worker 会话。只有受信任卡片回执可标记 answerSource=user_card、写入 answerValues；普通 Main 补充标记 main_context，等待用户后的普通回复标记 user_text。Main 与 Worker 原任务授权及约束保持有效，结构化字段进入 mainReplies，不创建新 run。旧问题、过期问题、错误发送者及重复答案遵循现有校验；等待状态不占执行槽位。详细卡片流程见 Feishu README。
 

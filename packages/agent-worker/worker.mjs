@@ -29,7 +29,9 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   checkCancellation();controller.signal.throwIfAborted();
   const output=JSON.parse(response.content.find(c=>c.type==='text').text);
   if(output.contextRequest){
-   if((job.questions??[]).length>=5)throw Error('Context question limit reached');
+   const kind=output.contextRequest.requestKind??'context',questions=job.questions??[];
+   const count=questions.filter(question=>(question.requestKind??'context')===kind).length;
+   if(count>=(kind==='plugin'?50:5))throw Error(kind==='plugin'?'Plugin request limit reached':'Context question limit reached');
    if(typeof output.sessionId!=='string')throw Error('Context request has no Worker session');
    const question={...output.contextRequest,questionId:randomUUID(),createdAt:Date.now(),expiresAt:Date.now()+24*60*60*1000};
    job.questions=[...(job.questions??[]),question];job.contextRequest=question;job.resumeSessionId=output.sessionId;job.status='awaiting_main';job.progress=question.question;

@@ -42,3 +42,20 @@ test('publisher queries public host catalogs, coalesces requests and service fix
   assert.equal((await service.prepareWorkerSkill({agentId:'other',codexHome:'/ignored'})).agentId,'main');
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('catalog outages reuse only a verified previous skill and subsequent refreshes still update it',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'repo-worker-cache-'));
+ try {
+  let offline=false,version='1.0';const warnings=[];
+  const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),async method=>{
+   if(offline)throw Error('catalog unavailable');return method==='plugins.list'?{plugins:plugins.plugins.map(plugin=>({...plugin,version}))}:catalog;
+  },{logger:{warn:message=>warnings.push(message)}});
+  offline=true;await assert.rejects(publisher('main'),/catalog unavailable/);
+  offline=false;const first=await publisher('main');
+  offline=true;assert.deepEqual(await publisher('main'),first);assert.equal(warnings.length,1);
+  await writeFile(first.revisionPath,'tampered');await assert.rejects(publisher('main'),/catalog unavailable/);
+  offline=false;assert.deepEqual(await publisher('main'),first);
+  version='2.0';const next=await publisher('main');assert.notEqual(next.revision,first.revision);
+  offline=true;assert.deepEqual(await publisher('main'),next);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
