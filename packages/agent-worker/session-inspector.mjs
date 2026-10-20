@@ -1,3 +1,4 @@
+import {collaborationDiagnostics} from './collaboration-diagnostics.mjs';
 import {createAgentTaskInspector} from './agent-task-inspector.mjs';
 import {trustedAgentId} from './dist/agent-repo-api.mjs';
 import {bindingKey,modelFields} from './project-binding.mjs';
@@ -84,6 +85,7 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
    const chosenModel=modelSessionScope!==undefined?modelSessionScope:selected?selected.modelSessionScope??null:undefined;
    const inScope=entry=>(chosenScope===undefined||chosenScope===null&&!entry.executionScope||entry.executionScope===chosenScope)&&(chosenModel===undefined||chosenModel===null&&!entry.modelSessionScope||entry.modelSessionScope===chosenModel);
    if(projectId!==undefined&&(typeof projectId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(projectId)))throw Error('Invalid project filter');
+   const bindings=await optionalJson(join(state,hash(scope)+'.json'));
    const matches=all.filter(j=>j.topic===topic&&inScope(j)&&(!projectId||j.projectId===projectId)),records=[];
    if(chosenModel===undefined&&new Set(matches.map(job=>job.modelSessionScope??null)).size>1)throw Error('Choose a model session scope for this topic');
    if(jobId!==undefined){if(typeof jobId!=='string'||!uuid.test(jobId))throw Error('Invalid job identifier');offset=matches.findIndex(job=>job.jobId===jobId);if(offset<0)throw Error('Task not found in conversation');}
@@ -102,7 +104,7 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
     }catch(e){if(e.code!=='ENOENT')availability='unreadable';}
     let result;try{result=JSON.parse(job.result?.content?.find(c=>c.type==='text')?.text??'null')?.result;}catch{ /* Raw invalid output is not displayed as a final reply. */ }
     if(typeof result==='string'){try{const nested=JSON.parse(result);if(nested.protocol==='codex_result_v1'&&typeof nested.result==='string')result=nested.result;}catch{ /* Plain text replies remain intact. */ }}
-    records.push({jobId:job.jobId,...modelFields(job),...(job.project?{projectId:job.projectId,repository:job.repository,cwd:job.cwd}:{}),status:job.status,createdAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt,progress:job.progress,error:job.error,notificationState:job.notification?.state,notificationKind:['awaiting_main','awaiting_user'].includes(job.status)?'context_request':'result',questions:job.questions??[],executionRounds:job.executionRounds??[],request:bound?{availability:'available',task:request.params.task,context:request.params.context,constraints:request.params.constraints}:{availability:'unavailable'},result,events,eventsAvailability:availability,omitted});
+    records.push({collaboration:collaborationDiagnostics(job,bindings?.[bindingKey(job.topic,job)],now()),jobId:job.jobId,...modelFields(job),...(job.project?{projectId:job.projectId,repository:job.repository,cwd:job.cwd}:{}),status:job.status,createdAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt,progress:job.progress,error:job.error,notificationState:job.notification?.state,notificationKind:['awaiting_main','awaiting_user'].includes(job.status)?'context_request':'result',questions:job.questions??[],executionRounds:job.executionRounds??[],request:bound?{availability:'available',task:request.params.task,context:request.params.context,constraints:request.params.constraints}:{availability:'unavailable'},result,events,eventsAvailability:availability,omitted});
    }
    // Summaries come from accepted jobs; full requests and logs remain lazy and bound above.
    const taskSummary=(job,index)=>({jobId:job.jobId,index,status:job.status,task:typeof job.taskSummary==='string'?redactInspection(job.taskSummary).slice(0,500):null,createdAt:job.createdAt,finishedAt:job.finishedAt});

@@ -1,3 +1,4 @@
+import {registerCliMaintenance} from './cli-maintenance.js';
 import { join, isAbsolute, win32 } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -103,6 +104,7 @@ export function registerFeishuCliCommands(api: OpenClawPluginApi) {
 }
 
 export function registerFeishuCli(api: OpenClawPluginApi) {
+  registerCliMaintenance(api);
   let timer: ReturnType<typeof setInterval> | undefined;
   let serviceManager: FeishuCliManager | undefined;
   let updating: Promise<void> | undefined;

@@ -5,25 +5,25 @@ const worker={taskTotal:0,conversationTotal:0,counts:{running:0,queued:0,awaitin
 const source={state:'available',skills:[],subagents:[]};
 const catalog={root:'/fixture/main',projects:[],registrationCommitted:true,agentSkills:source,agentSubagents:source,scheduledTasks:[]};
 function fixtureHost(){
- const calls=[],ctx=uiContext(async(method,params)=>{calls.push(params);return {ok:true,result:params.actionId==='inspect-agentTasks'?worker:params.actionId==='projects-list'?catalog:params.actionId==='projects-entityTypes'?{types:[],total:0}:params.actionId==='projects-entities'?{entities:[],total:0,nextOffset:null}:params.actionId==='projects-repositoryLogs'?{agentId:params.agentId,records:[]}:{people:[],total:0,nextOffset:null}};});
+ const calls=[],ctx=uiContext(async(method,params)=>{calls.push(params);return {ok:true,result:params.actionId==='projects-maintenance'?{apiVersion:1,providers:[]}:params.actionId==='inspect-agentTasks'?worker:params.actionId==='projects-list'?catalog:params.actionId==='projects-entityTypes'?{types:[],total:0}:params.actionId==='projects-entities'?{entities:[],total:0,nextOffset:null}:params.actionId==='projects-repositoryLogs'?{agentId:params.agentId,records:[]}:{people:[],total:0,nextOffset:null}};});
  ctx.host.agents.rows=[{id:'main',name:'Main'},{id:'other',name:'Other'}];ctx.host.agents.select=id=>{ctx.host.agents.selectedId=id;ctx.notify();};ctx.host.sessions.rows=[];return {ctx,calls};
 }
 test('AgentRepo is a global management center and personnel is only one of its modules',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();ctx.host.sessions.selectedKey='';
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
- assert.match(f.container.textContent,/AgentRepo/);assert.match(f.container.textContent,/管理概览/);assert.equal(calls.length,5);
+ assert.match(f.container.textContent,/AgentRepo/);assert.match(f.container.textContent,/管理概览/);assert.equal(calls.length,6);
  const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体资料库','定时任务','仓库日志']);
  click(f.container,'打开实体资料库');await settle();assert.ok(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'));assert.equal(f.container.querySelector('[aria-label="人员库所属 Agent"]'),null);assert.match(f.container.textContent,/实体资料库/);
  assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-entities');
- click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能与子代理"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
- click(f.container,'定时任务');await settle();assert.match(f.container.textContent,/暂无定时任务/);assert.equal(f.container.querySelector('[aria-label="搜索技能与子代理"]'),null);
+ click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
+ click(f.container,'定时任务');await settle();assert.match(f.container.textContent,/暂无定时任务/);assert.equal(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'),null);
  const before=calls.length;click(f.container,'仓库日志');await settle();assert.match(f.container.textContent,/暂无仓库异常记录/);assert.equal(f.container.querySelector('dialog'),null);assert.equal(calls[before].actionId,'projects-repositoryLogs');assert.equal(calls.length,before+1);
  const refresh=[...f.container.querySelector('.ar-log-inline').querySelectorAll('button')].find(button=>button.textContent==='刷新日志');assert.ok(refresh);refresh.click();await settle();assert.equal(calls.at(-1).actionId,'projects-repositoryLogs');
  assert.equal(calls.some(call=>call.actionId==='projects-clearRepositoryLogs'),false);
 });
 test('management center retains its module across Agent switches and discards hidden module responses',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost(),pending=deferred();
- ctx.host.request=async(method,params)=>{calls.push(params);return params.actionId==='projects-entities'?pending.promise:{ok:true,result:params.actionId==='inspect-agentTasks'?worker:catalog};};
+ ctx.host.request=async(method,params)=>{calls.push(params);return params.actionId==='projects-entities'?pending.promise:{ok:true,result:params.actionId==='projects-maintenance'?{apiVersion:1,providers:[]}:params.actionId==='inspect-agentTasks'?worker:catalog};};
  const view=f.track(f.ui.mountAgentRepo(f.container,ctx));click(f.container,'实体资料库');await settle();
  select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();assert.equal(calls.at(-1).agentId,'other');assert.equal(calls.at(-1).sessionKey,'agent:other:agent-repo-entities');
  click(f.container,'概览');pending.resolve({ok:true,result:{people:[],total:99,nextOffset:null}});await settle();assert.match(f.container.textContent,/管理概览/);assert.ok(!f.container.textContent.includes('99 位同事'));
@@ -44,11 +44,11 @@ test('overview shows real scoped counts, partial failures and safe read-only ref
  assert.deepEqual([...f.container.querySelectorAll('.ar-metric strong')].map(node=>node.textContent),['1','7','1','不可读取']);
  assert.match(f.container.textContent,/部分数据不可用/);assert.match(f.container.textContent,/仓库日志读取失败/);assert.match(f.container.textContent,/2 位人员缺少邮箱/);assert.match(f.container.textContent,/1 个账号关联待核验/);
  fail=false;click(f.container,'刷新概览');await settle();assert.equal(f.container.querySelectorAll('.ar-metric strong')[3].textContent,'0');assert.ok(!f.container.textContent.includes('仓库日志读取失败'));
- assert.ok(calls.every(call=>['projects-list','projects-entityTypes','projects-people','projects-repositoryLogs','inspect-agentTasks'].includes(call.actionId)));
+ assert.ok(calls.every(call=>['projects-list','projects-entityTypes','projects-people','projects-repositoryLogs','inspect-agentTasks','projects-maintenance'].includes(call.actionId)));
 });
 test('overview never publishes stale Agent results after switching Agent or losing read access',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx}=fixtureHost(),pending=deferred();
- ctx.host.request=async(method,params)=>params.agentId==='main'?pending.promise:{ok:true,result:params.actionId==='inspect-agentTasks'?worker:params.actionId==='projects-list'?catalog:params.actionId==='projects-entityTypes'?{types:[],total:3}:params.actionId==='projects-people'?{total:3,stats:{}}:{records:[]}};
+ ctx.host.request=async(method,params)=>params.agentId==='main'?pending.promise:{ok:true,result:params.actionId==='projects-maintenance'?{apiVersion:1,providers:[]}:params.actionId==='inspect-agentTasks'?worker:params.actionId==='projects-list'?catalog:params.actionId==='projects-entityTypes'?{types:[],total:3}:params.actionId==='projects-people'?{total:3,stats:{}}:{records:[]}};
  f.track(f.ui.mountAgentRepo(f.container,ctx));assert.equal(f.container.querySelector('.ar-overview').getAttribute('aria-busy'),'true');
  assert.deepEqual([...f.container.querySelectorAll('.ar-metric strong')].map(node=>node.textContent),['—','—','—','—']);
  select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();assert.equal(f.container.querySelectorAll('.ar-metric strong')[1].textContent,'3');

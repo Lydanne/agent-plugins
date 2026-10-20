@@ -92,7 +92,7 @@ it('advertises the admin CLI once and installs on first activation even with aut
   vi.spyOn(FeishuCliManager.prototype, 'status').mockResolvedValue({ enabled: true, autoUpdate: false, updateCheckIntervalHours: 24 } as never);
   const update = vi.spyOn(FeishuCliManager.prototype, 'update').mockResolvedValue({} as never);
   const auto = vi.spyOn(FeishuCliManager.prototype, 'autoUpdate').mockResolvedValue();
-  const service = api.registerService.mock.calls[0][0];
+  const service = api.registerService.mock.calls.find(([service]) => service.id === 'feishu-cli-updater')![0];
   service.start({ config: disabledAuto, stateDir: '/tmp/fixture-no-io', logger: { warn: vi.fn() } });
   try { await vi.waitFor(() => expect(update).toHaveBeenCalledOnce()); expect(auto).not.toHaveBeenCalled(); }
   finally { await service.stop(); }

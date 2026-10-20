@@ -490,3 +490,7 @@ AgentRepo 概览和「Worker 任务」模块通过 agent-worker 的只读 `inspe
 ## 数据块合同
 
 插件自带 `agent-worker-context` 技能，解释 `[AgentWorkerResult]`、`[AgentWorkerRequest]` 与渠道交接的 `[FeishuAnswer]`。默认标题不带冒号，不嵌入长说明；数据字段、来源绑定及机器协议保持原合同。旧长标题仍可按技能解释读取。补充问答、卡片与报告交付细则按需读取该技能引用。
+
+### 协作诊断
+
+任务详情的“Main–Worker 协作诊断”展示插件请求与信息追问各自的额度、事件投递次数、下次重试、受控失败代码及等待时间。`uncertain` 表示需先核查原事件，不能据此重放业务；`delivered` 只代表取得事件回执。会话最近通知的 Main 技能版本不代表该任务实际读取了技能，界面将实际读取标为未知。AgentRepo 概览汇总待核查投递和等待 Main 超过 30 分钟的任务，并保持原任务入口。

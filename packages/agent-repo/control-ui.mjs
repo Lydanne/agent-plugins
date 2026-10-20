@@ -1,3 +1,4 @@
+import {mountSkillMaintenance} from './skill-maintenance-page.mjs';
 import {mountWorkerPage,renderWorkerSummary} from './worker-page.mjs';
 import {mountPeopleDialog} from './people-ui.mjs';
 import {mountPeoplePage} from './people-page.mjs';
@@ -16,22 +17,28 @@ export function mountProjects(container,initial){
  const safe=value=>context.host.redact(String(value??'')),target=()=>currentUiTarget(context);
  const panelId='ar-skills-'+(++panelSequence);
  let logDialog=null,peopleDialog=null;
+ let maintenanceView=null;
+ function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
  function openPeople(){closePeople();peopleDialog=mountPeopleDialog(container,{invoke,isGroup:()=>/^agent:[^:]+:feishu:group:oc_/.test(target().sessionKey??''),canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{peopleDialog=null;}});}
  let historyGeneration=0,syncDialog=null,syncTaskId=null,syncRunId=null,syncTab='records',syncRenderedView=null;const syncRecords=new Map(),syncViewScroll=new Map();
  const syncLabels={completed:'成功',failed:'失败',running:'未结束',unavailable:'不可读取',started:'开始'};
  const shortTime=value=>value?new Date(value).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'未记录';
  const duration=record=>{const ms=Date.parse(record.finishedAt)-Date.parse(record.startedAt),seconds=Math.round(ms/1000);return Number.isFinite(ms)&&ms>=0?(ms<1000?'不足 1 秒':seconds<60?seconds+' 秒':Math.floor(seconds/60)+' 分 '+seconds%60+' 秒'):'—';};
- let observedTarget=target(),observedRead=context.host.connection.canRead,observedWrite=context.host.connection.canWrite,skillArea=null;
- const search=element('input');search.setAttribute('aria-label','搜索技能与子代理');search.placeholder='搜索技能、子代理名称或路径';
- search.oninput=()=>{query=search.value;renderSkills();};
- function renderSkills(){if(!skillArea||!list)return;const expanded=new Set([...skillArea.querySelectorAll('details[open]')].map(node=>node.dataset.skillPath));skillArea.replaceChildren(skills(projectId?(detail?.sources??[]).filter(source=>source.source!=='agent'):[list.agentSkills]),subagents(projectId?(detail?.subagentSources??[]).filter(source=>source.source!=='agent'):[list.agentSubagents].filter(Boolean)));for(const node of skillArea.querySelectorAll('details'))if(expanded.has(node.dataset.skillPath))node.open=true;}
- function reset(){closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';search.value='';error='';loading=false;}
+ let observedTarget=target(),observedRead=context.host.connection.canRead,observedWrite=context.host.connection.canWrite,skillArea=null,subagentArea=null;
+ function renderSkills(){
+  if(!skillArea||!list)return;
+  const sources=projectId?(detail?.sources??[]).filter(source=>source.source!=='agent'):[list.agentSkills];
+  if(!maintenanceView)maintenanceView=mountSkillMaintenance(skillArea,context,target().agentId,{sources,scopeKey:projectId+':'+repository,onViewChange:view=>{if(subagentArea)subagentArea.hidden=view==='cli';},onQuery:value=>{query=value;if(subagentArea){const open=new Set([...subagentArea.querySelectorAll('details[open]')].map(node=>node.dataset.skillPath));subagentArea.replaceChildren(subagents(projectId?(detail?.subagentSources??[]).filter(source=>source.source!=='agent'):[list.agentSubagents].filter(Boolean)));for(const row of subagentArea.querySelectorAll('details'))if(open.has(row.dataset.skillPath))row.open=true;}}});
+  else {skillArea.append(maintenanceView.element);maintenanceView.setSources(sources,projectId+':'+repository);}
+  subagentArea=element('div');subagentArea.append(subagents(projectId?(detail?.subagentSources??[]).filter(source=>source.source!=='agent'):[list.agentSubagents].filter(Boolean)));subagentArea.hidden=maintenanceView.view==='cli';skillArea.append(subagentArea);
+ }
+ function reset(){closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
  async function invoke(action,payload){const current=context,selected=projectInspectionTarget(context);return readInspectionResponse(async(name,data)=>{current.signal.throwIfAborted();if(current!==context)throw Error('Agent 已切换');return current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data});},action,payload);}
  async function refresh({scanList=true}={}){
   if(disposed||!context.presented||context.signal.aborted||!context.host.connection.canRead||!target().agentId)return;
   if(context.props.managementSection==='logs'){await openLogDialog();return;}
-  if(scanList){historyGeneration++;syncRecords.clear();}
+  if(scanList){historyGeneration++;syncRecords.clear();maintenanceView?.refresh();}
   const request=++generation;loading=true;error='';render();
   try{
    if(scanList||!list){const next=await invoke('list',{});if(disposed||request!==generation)return;list=next;}
@@ -41,29 +48,6 @@ export function mountProjects(container,initial){
    detail=nextDetail;
    if(detail)repository=detail.repository;loading=false;render();if(syncRunId&&!syncRecords.has(syncRunId))loadSyncRecord(selectedRun());
   }catch(failure){if(disposed||request!==generation)return;loading=false;error=safe(failure.message);detail=null;render();}
- }
- function skills(sources){
-  const section=element('section',undefined,'ar-skill-group'),heading=element('h3','技能');heading.append(element('span',String(sources.reduce((count,source)=>count+source.skills.length,0)),'ar-group-count'));section.append(heading);
-  let rowCount=0;
-  for(const source of sources){
-   if(source.warning)section.append(element('p',safe((source.directory?source.directory+' · ':'')+source.warning),'ar-warning'));
-   if(source.state==='dirty')section.append(element('p','存在未提交技能变化。以下是已提交版本；执行前仍需提交并校验。','ar-warning'));
-   const rows=source.skills.filter(skill=>[skill.name,skill.description,skill.path].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-   rowCount+=rows.length;
-   for(const skill of rows){
-    const status=skill.status??(skill.disabledReason?'disabled':source.state==='dirty'?'pending_commit':'candidate');
-    const row=element('details',undefined,'ar-skill'),summary=element('summary'),name=element('strong',safe(skill.name)),top=element('span',undefined,'ar-skill-heading'),body=element('div',undefined,'ar-skill-body');row.dataset.skillPath=skill.path;
-    top.append(name,element('span',statusLabels[status],'ar-status '+status));summary.append(top,element('span',safe('更新于 '+date(skill.updatedAt)),'ar-skill-time'));row.append(summary,body);
-    body.append(element('p',safe(skill.description||'没有技能描述')));
-    const path=element('code',safe(skill.path),'ar-path');body.append(path,element('p',safe(skill.appliesWhen),'ar-condition'));
-    if(skill.disabledReason)body.append(element('p',safe(skill.disabledReason),'ar-warning'));
-    if(skill.overriddenBy)body.append(element('p',safe('当前范围被 '+skill.overriddenBy+' 覆盖'),'ar-warning'));
-    const version=element('p',safe('提交 '+(skill.updatedCommit?skill.updatedCommit.slice(0,12):'未记录')),'ar-meta');version.title=safe(skill.updatedCommit??'');body.append(version);
-    section.append(row);
-   }
-  }
-  if(!rowCount)section.append(element('p',sources.length&&sources.every(source=>source.state==='unavailable')?'此范围暂不可扫描':query?'没有匹配技能':'没有已提交的技能','ar-muted'));
-  return section;
  }
  function subagents(sources){
   const section=element('section',undefined,'ar-skill-group ar-subagents'),heading=element('h3','子代理');heading.append(element('span',String(sources.reduce((count,source)=>count+source.subagents.length,0)),'ar-group-count'));section.append(heading);
@@ -252,7 +236,7 @@ export function mountProjects(container,initial){
  }
  function chooseTab(id){
   if(id===projectId)return;
-  closeSyncDialog(false);generation++;projectId=id;repository='';detail=null;query='';search.value='';error='';const body=root.querySelector('.ar-scroll');if(body)body.scrollTop=0;render();refresh({scanList:false});
+  closeSyncDialog(false);generation++;projectId=id;repository='';detail=null;query='';error='';const body=root.querySelector('.ar-scroll');if(body)body.scrollTop=0;render();refresh({scanList:false});
  }
  function tabs(){
   const nav=element('div',undefined,'ar-tabs'),projectTabs=element('div',undefined,'ar-project-tabs');nav.setAttribute('role','tablist');nav.setAttribute('aria-label','仓库与项目');
@@ -269,11 +253,10 @@ export function mountProjects(container,initial){
   const tabScroll=root.querySelector('.ar-project-tabs')?.scrollLeft??0;
   const scroll=root.querySelector('.ar-scroll')?.scrollTop??0,expanded=new Set([...root.querySelectorAll('details[open]')].map(node=>node.dataset.skillPath));
   const focusedTab=root.contains(document.activeElement)?document.activeElement?.dataset.tabKey:undefined;
-  const editing=document.activeElement===search,selection=[search.selectionStart,search.selectionEnd,search.selectionDirection];
-  skillArea=null;root.replaceChildren();const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);header.append(element('strong',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'仓库日志':'项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('仓库日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
+  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);header.append(element('strong',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'仓库日志':context.props.managementSection==='projects'?'项目与技能':'项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('仓库日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!selected.agentId){root.append(element('p','请先选择一个 Agent。'));return;}
-  root.append(element('p',safe('当前 Agent · '+selected.agentId),'ar-meta'));
+  if(context.props.managementSection!=='projects')root.append(element('p',safe('当前 Agent · '+selected.agentId),'ar-meta'));
   if(error)root.append(element('p',error,'ar-error'));
   if(context.props.managementSection==='logs')return;
   if(!list){root.append(element('p',loading?'正在读取项目、技能与子代理…':'尚未取得项目登记','ar-muted'));return;}
@@ -282,9 +265,10 @@ export function mountProjects(container,initial){
   root.append(tabs());root.querySelector('.ar-project-tabs').scrollLeft=tabScroll;
   const body=element('div',undefined,'ar-scroll');body.id=panelId;body.setAttribute('role','tabpanel');body.setAttribute('aria-labelledby',panelId+'-tab-'+(projectId?'project-'+projectId:'root'));body.tabIndex=0;root.append(body);
   if(!projectId){
-   body.append(element('h2',safe(list.root?.split('/').filter(Boolean).at(-1)??'Agent Repo')),element('code',safe(list.root??'skills/'),'ar-path'));
-   body.append(element('p','此 Agent 的所有项目共享','ar-meta'));
-   if(!list.projects.length)body.append(element('p','尚未登记项目。当前仍可查看技能和子代理。','ar-muted'));
+   if(context.props.managementSection==='projects')body.append(element('p','当前范围：Agent 共享技能与子代理','ar-meta'));
+   else {body.append(element('h2',safe(list.root?.split('/').filter(Boolean).at(-1)??'Agent Repo')),element('code',safe(list.root??'skills/'),'ar-path'));
+    body.append(element('p','此 Agent 的所有项目共享','ar-meta'));
+    if(!list.projects.length)body.append(element('p','尚未登记项目。当前仍可查看技能和子代理。','ar-muted'));}
   }else if(!detail)body.append(element('p',loading?'正在读取当前项目内容…':'当前项目内容尚未读取，请重试或选择其他 Tab。','ar-muted'));
   if(detail){
    const heading=element('div',undefined,'ar-project-heading');heading.append(element('h2',safe(detail.name)));
@@ -297,9 +281,8 @@ export function mountProjects(container,initial){
    const git=detail.inspection.git;body.append(element('p',safe('本地仓库状态 · '+git.state+(git.branch?' · '+git.branch:'')+(git.dirty?' · 有本地修改':'')+(git.branchMatches===false?' · 分支不匹配':'')+(git.remoteMatches===false?' · origin 不匹配':'')),'ar-meta'));
    body.append(element('p','候选索引不代表会话已加载技能正文；Main 和 Worker 仍需选定范围、准备版本并按任务读取。','ar-muted'));
   }
-  if(!projectId||detail){search.value=query;body.append(search);skillArea=element('div');body.append(skillArea);renderSkills();}
+  if(!projectId||detail){skillArea=element('div');body.append(skillArea);renderSkills();}
   const history=syncHistory();if(history)body.append(history);
-  if(editing&&body.contains(search)){search.focus({preventScroll:true});search.setSelectionRange(...selection);}
   body.append(element('p','更新时间来自技能目录最后一次 Git 提交，包含正文、引用及资源变化；子代理更新时间来自定义文件及关联配置最近一次提交；刷新扫描不执行 fetch、pull 或加载。','ar-muted'));
   body.append(element('p',safe('扫描于 '+date(detail?.scannedAt??list.scannedAt)),'ar-meta'));
   for(const node of body.querySelectorAll('details'))if(expanded.has(node.dataset.skillPath))node.open=true;body.scrollTop=scroll;
@@ -307,7 +290,7 @@ export function mountProjects(container,initial){
  }
  const stopNavigation=subscribeWorkerNavigation(()=>{if(!disposed)render();}),stopHost=context.host.subscribe(()=>{if(disposed)return;const next=target(),read=context.host.connection.canRead,write=context.host.connection.canWrite,changed=next.agentId!==observedTarget.agentId||next.sessionKey!==observedTarget.sessionKey||read!==observedRead||write!==observedWrite;observedTarget=next;observedRead=read;observedWrite=write;if(changed){reset();render();refresh();}});
  render();refresh();
- return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
+ return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
 }
 const managementModules=[
  {id:'overview',label:'概览'},
@@ -321,7 +304,7 @@ function mountOverview(container,context,agentId,choose){
  let disposed=false,generation=0,loading=false,results={},loadedAt=null;
  const root=element('section',undefined,'ar-overview');root.setAttribute('aria-label','AgentRepo 运行概览');container.append(root);
  const safe=value=>context.host.redact(String(value??''));
- const sources=[['catalog','list','agent-repo','projects-'],['people','people','agent-repo','projects-'],['entities','entityTypes','agent-repo','projects-'],['logs','repositoryLogs','agent-repo','projects-'],['worker','agentTasks','agent-worker','inspect-']];
+ const sources=[['catalog','list','agent-repo','projects-'],['people','people','agent-repo','projects-'],['entities','entityTypes','agent-repo','projects-'],['logs','repositoryLogs','agent-repo','projects-'],['worker','agentTasks','agent-worker','inspect-'],['maintenance','maintenance','agent-repo','projects-']];
  async function refresh(){
   const epoch=++generation;loading=true;results={};render();
   await Promise.allSettled(sources.map(async([key,action,pluginId,prefix])=>{
@@ -357,6 +340,9 @@ function mountOverview(container,context,agentId,choose){
   let issues=0;
   const issue=(title,detail,module)=>{issues++;const row=element('div',undefined,'ar-attention-row'),text=element('div');text.append(element('strong',title),element('p',detail));row.append(text,button('查看'+managementModules.find(item=>item.id===module).label,()=>choose(module)));attention.append(row);};
   for(const [key,module,label] of [['catalog','projects','项目清单'],['people','entities','人员资料'],['entities','entities','实体资料'],['logs','logs','仓库日志']])if(results[key]?.error)issue(label+'读取失败',results[key].error,module);
+  if(results.maintenance?.error)issue('技能维护状态不可读取',results.maintenance.error,'projects');
+  for(const provider of results.maintenance?.value?.providers??[])if(['unavailable','fallback','degraded'].includes(provider.state))issue(safe(provider.label)+'需处理',safe(provider.scope)+' · '+({unavailable:'不可读取',fallback:'正在使用已验证旧版',degraded:'检查或更新失败'})[provider.state],'projects');
+  const workerDiagnostics=results.worker?.value?.diagnostics;if(workerDiagnostics?.deliveryUncertain)issue(workerDiagnostics.deliveryUncertain+' 个投递结果待核查','Main 可能已经执行，先查看原任务及事件回执。','worker');if(workerDiagnostics?.awaitingMainOverdue)issue(workerDiagnostics.awaitingMainOverdue+' 个任务等待 Main 超过 30 分钟','等待时间仅用于提醒，不代表任务失败。','worker');
   if(catalog&&!catalog.registrationCommitted)issue('项目登记尚未提交','登记需提交后才能用于正式的项目准备与技能检查。','projects');
   if(people?.stats?.missing?.email)issue(people.stats.missing.email+' 位人员缺少邮箱','可从实体资料库的人员资源查看来源和账号关联。','entities');
   if(people?.stats?.giteaSources?.email_prefix)issue(people.stats.giteaSources.email_prefix+' 个账号关联待核验','邮箱推导的候选账号需要核验后再用于人员归属。','entities');
@@ -385,7 +371,7 @@ export function mountAgentRepo(container,initial){
  const childContext=()=>({...context,props:{agentId,sessionKey:'agent:'+agentId+':agent-repo-management',managementSection:section,embeddedManagement:true}});
  function choose(id){section=id;render();}
  function render(){
-  child?.dispose();child=null;root.replaceChildren();
+  child?.dispose();child=null;root.replaceChildren();root.dataset.section=section;
   const header=element('header',undefined,'ar-management-header'),heading=element('div');heading.append(element('span','工作区管理','ar-management-eyebrow'),element('h1','AgentRepo'),element('p','项目、实体资料与运行记录，一个入口统一管理。'));
   const picker=element('select');picker.setAttribute('aria-label','AgentRepo 所属 Agent');const agents=context.host.agents.rows??[];
   for(const agent of agents){const option=element('option',safe(agent.name??agent.id));option.value=agent.id;picker.append(option);}

@@ -1,3 +1,5 @@
+import {createSkillMaintenance} from './skill-maintenance.mjs';
+import {maintenanceCatalog,runMaintenance,maintenanceContext,MaintenanceError} from './dist/maintenance-api.mjs';
 import {createEntityStore} from './entities.mjs';
 import {getPeopleGroupSync} from './dist/people-api.mjs';
 import {createPeopleStore} from './people.mjs';
@@ -65,8 +67,11 @@ async function scopes(root,project){
  return result;
 }
 export function createProjectInspector(config,getHostConfig,now=()=>Date.now()){
+ const maintenance=createSkillMaintenance(getHostConfig);
  async function context(ctx){const agentId=trustedAgentId(ctx),binding=bindingFor(config,{agentId});if(!binding)throw Error('当前 Agent 未绑定 Agent Repo');return {agentId,binding};}
  return {
+  async maintenance(ctx){await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('Invalid maintenance parameters');const catalog=await maintenanceCatalog(ctx);let main;try{main=await maintenance.snapshot(ctx);}catch{main={apiVersion:1,id:'agent-repo.main-skill',label:'Main 协作技能',scope:'当前 Agent',state:'unavailable',skills:[],actions:[],observedAt:new Date().toISOString()};}return {...catalog,providers:[main,...catalog.providers]};},
+  async maintenanceRun(ctx){await context(ctx);maintenanceContext(ctx,true);const input=ctx.payload??{};if(input.providerId==='agent-repo.main-skill'){if(Object.keys(input).some(key=>!['providerId','action','expectedRevision','requestId','confirmed','settings'].includes(key))||input.confirmed!==true||!/^[a-f0-9]{64}$/.test(input.expectedRevision??'')||!/^[a-f0-9-]{36}$/i.test(input.requestId??''))throw new MaintenanceError('INVALID_OPERATION','请确认维护目标和当前版本');return maintenance.run(ctx,input);}return runMaintenance(ctx,input);},
   async entityTypes(ctx){const {binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('实体类型查询不接受范围参数');return createEntityStore(binding.repo).types();},
   async entities(ctx){const {binding}=await context(ctx);return createEntityStore(binding.repo).list(ctx.payload??{});},
   async entity(ctx){const {binding}=await context(ctx),params=ctx.payload??{};if(Object.keys(params).some(key=>key!=='id'))throw Error('实体查询参数无效');return createEntityStore(binding.repo).get(params.id);},
@@ -159,7 +164,7 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now()}={}){
  const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);if(!register){api.logger?.warn?.('Agent Repo panel unavailable: host lacks public session actions');return;}
  const transfers=new Map(),owner=ctx=>JSON.stringify([trustedAgentId(ctx),ctx.sessionKey??null]);
  const part=(id,value,index)=>({encoding:'json-chunks',transferId:id,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
- for(const action of ['list','detail','chunk','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity'])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['clearRepositoryLogs','syncPeople','updatePerson','deletePerson'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
+ for(const action of ['list','detail','chunk','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity','maintenance','maintenanceRun'])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['clearRepositoryLogs','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
   try{
    const scope=owner(ctx);for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);
    if(action==='chunk'){const {transferId,index}=ctx.payload??{},value=transfers.get(transferId);if(!value||value.owner!==scope||!Number.isInteger(index)||index<0||index>=Math.ceil(value.text.length/inspectionChunkSize))throw Error('Invalid transfer');return {ok:true,result:part(transferId,value,index)};}
@@ -167,6 +172,6 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now()}={}){
    const id=randomUUID(),value={owner:scope,text,expiresAt:now()+120000};
    if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,value);}
    return {ok:true,result:part(id,value,0)};
-  }catch{return ['entityTypes','entities','entity'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
+  }catch(error){if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['entityTypes','entities','entity'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
  }});
 }

@@ -78,7 +78,7 @@ function processTimeline(record,safe){
  for(const event of toolRecords(record.events)){
   const type=event.item.type;entries.push({kind:'tool',at:event.time,event,label:({command_execution:'Worker · 执行命令',mcp_tool_call:'Worker · 调用 MCP',web_search:'Worker · 网站访问 / 搜索',file_change:'Worker · 文件变更'})[type]??'Worker · 工具调用'});
  }
- for(const q of record.questions??[]){entries.push({kind:'question',at:q.createdAt,label:'Worker · 请求上下文',question:q});if(q.waitingForUserAt)entries.push({kind:'waiting_user',at:q.waitingForUserAt,label:'Main · 等待用户补充'});if(q.answer)entries.push({kind:'answer',at:q.answeredAt,label:q.answerSource==='user_card'?'用户 · 卡片选择':q.answerSource==='main_context'?'Main · 自动补充':'Main · 补充上下文',question:q});}
+ for(const q of record.questions??[]){entries.push({kind:'question',at:q.createdAt,label:q.requestKind==='plugin'?'Worker · 请求插件能力':'Worker · 请求上下文',question:q});if(q.waitingForUserAt)entries.push({kind:'waiting_user',at:q.waitingForUserAt,label:'Main · 等待用户补充'});if(q.answer)entries.push({kind:'answer',at:q.answeredAt,label:q.answerSource==='user_card'?'用户 · 卡片选择':q.answerSource==='main_context'?'Main · 自动补充':'Main · 补充上下文',question:q});}
  if(record.finishedAt)entries.push({kind:'finished',at:record.finishedAt,label:labels[record.status]??record.status});
  for(const entry of entries.sort((a,b)=>(a.at??0)-(b.at??0))){
   const node=element('section',undefined,'cq-process-node'),state=entry.kind==='question'&&!entry.question.answer?'awaiting_main':entry.kind==='waiting_user'?'awaiting_user':entry.kind==='finished'?record.status:entry.kind==='tool'&&callFailed(entry.event.item)?'failed':'done';
@@ -187,6 +187,7 @@ export function mountPanel(container,initial){
        if(record.request.constraints)details.append(fold('执行限制',messageText(safe(record.request.constraints))));
       }else details.append(element('p',safe(task.task??'原始任务正文不可用，旧任务不会补造任务内容。'),'cq-muted'));
       details.append(information([['任务标识',safe(record.jobId)],['执行模型',safe(record.model?(record.harness??'codex')+' / '+record.model:'旧任务未记录模型')],['智慧等级',record.thinkingLevel===undefined?'旧任务未记录':String(record.thinkingLevel)],['受理时间',time(record.createdAt)],['开始时间',time(record.startedAt)],['结束时间',time(record.finishedAt)],[record.notificationKind==='context_request'?'提问投递':'结果交付',({delivered:'已交付',pending:'待交付',processing:'处理中',sending:'发送中',suppressed:'已抑制',uncertain:'待核查'})[record.notificationState]??record.notificationState??'无异步交付记录']]));
+      if(record.collaboration){const diagnostic=record.collaboration,delivery=diagnostic.delivery;details.append(fold('Main–Worker 协作诊断',information([['插件请求额度',diagnostic.requests.plugin.used+' / '+diagnostic.requests.plugin.limit],['信息追问额度',diagnostic.requests.context.used+' / '+diagnostic.requests.context.limit],['事件投递尝试',String(delivery.attempts)],['下次重试',time(delivery.retryAt)],['最近失败代码',safe(delivery.lastErrorCode??'无记录')],['等待时长',diagnostic.waiting?Math.floor(diagnostic.waiting.ageMs/1000)+' 秒':'未等待'],['会话最近通知的技能版本',safe(diagnostic.skill.lastNotifiedRevision??'未记录')],['实际读取技能', '未知；更新通知不代表已读取'],['投递说明',safe(delivery.meaning)],['诊断采集时间',time(diagnostic.observedAt)]])));}
       if(record.progress)details.append(fold('当前进度',element('p',safe(record.progress))));if(record.error)details.append(element('p',safe(record.error),'cq-error'));
       const links=element('div',undefined,'cq-task-links');for(const [id,label] of [['records','查看对话'],['process','查看执行过程']])links.append(button(label,()=>{view=id;root.querySelector('.cq-scroll')?.scrollTo(0,0);render();}));links.append(button('原始任务 JSON',()=>openOriginal('Main',record),'cq-original-button'));details.append(links);card.append(details);
      }else {entry.append(element('p',safe(task.task??'任务摘要未保存，点击查看详情'),'cq-task-goal'));entry.title=safe(task.task??'查看任务详情');}
@@ -207,13 +208,13 @@ export function mountPanel(container,initial){
      if(record.questions?.length){
       const messages=record.events.filter(e=>e.event==='item.completed'&&e.item?.type==='agent_message');
       const entries=[];
-      for(const message of messages){let protocol;try{protocol=JSON.parse(message.item.text);}catch{}if(protocol?.type!=='context_request')entries.push({actor:'Worker',at:message.time,text:message.item.text,raw:message});}
+      for(const message of messages){let protocol;try{protocol=JSON.parse(message.item.text);}catch{}if(!['context_request','request'].includes(protocol?.type))entries.push({actor:'Worker',at:message.time,text:message.item.text,raw:message});}
       if(record.result&&messages.at(-1)?.item.text!==record.result&&!['awaiting_main','awaiting_user'].includes(record.status))entries.push({actor:'Worker',at:record.finishedAt??record.startedAt,text:record.result});
       for(const q of record.questions){entries.push({actor:'Worker',at:q.createdAt,text:q.question,question:q,raw:q});if(q.answer)entries.push({actor:q.answerSource==='user_card'?'用户':'Main',at:q.answeredAt,text:q.answer,raw:q});}
       for(const entry of entries.sort((a,b)=>(a.at??0)-(b.at??0))){
        if(filter!=='all'&&filter!==entry.actor)continue;
        const item=element('article',undefined,'cq-message '+entry.actor.toLowerCase());item.append(messageHeading(entry.actor,entry.at,()=>openOriginal(entry.actor,record,entry)),messageText(safe(entry.text)));
-       if(entry.question){const q=entry.question;item.append(element('small','请求 Main 补充上下文'),fold('提问原因与已完成工作',messageText(safe(q.reason+'\n'+q.progress))));if(!q.answer)item.append(element('p',['awaiting_main','awaiting_user'].includes(record.status)?(labels[record.status]+' 回复 · ')+time(q.expiresAt)+' 前有效':'任务已结束，问题未回答','cq-muted'));}block.append(item);
+       if(entry.question){const q=entry.question;item.append(element('small',q.requestKind==='plugin'?'请求 Main 调用插件':'请求 Main 补充上下文'),fold('提问原因与已完成工作',messageText(safe(q.reason+'\n'+q.progress))));if(!q.answer)item.append(element('p',['awaiting_main','awaiting_user'].includes(record.status)?(labels[record.status]+' 回复 · ')+time(q.expiresAt)+' 前有效':'任务已结束，问题未回答','cq-muted'));}block.append(item);
       }
       if(filter!=='Main'&&toolRecords(record.events).length)block.append(fold('Worker · 工具与执行记录',showCalls(record.events,safe)));
      }

@@ -99,16 +99,17 @@ export function createWorkerSkillPublisher(getConfig,request,{logger}={}) {
   const codexHome=raw.startsWith('~/')?join(homedir(),raw.slice(2)):raw;
   const key=codexHome+'\0'+agentId;
   if(pending.has(key))return pending.get(key);
+  const record=async(state,revision)=>{try{const directory=join(codexHome,'skills',workerSkillName(agentId)),marker=JSON.parse(await readFile(join(directory,'.agent-repo.json'),'utf8'));if(marker.owner==='agent-repo'&&marker.agentId===agentId&&(!revision||marker.revision===revision))await atomic(join(directory,'.publication-status.json'),JSON.stringify({state,revision:marker.revision,observedAt:new Date().toISOString()}));}catch{}};
   const work=(async()=>{
    let plugins,catalog;
    try {[plugins,catalog]=await Promise.all([request('plugins.list',{}),request('tools.catalog',{agentId,includePlugins:true})]);}
    catch(error){
     let cached;try{cached=await previousSkill(codexHome,agentId);}catch{throw error;}
     logger?.warn?.('Main plugin catalog refresh failed; using the last verified Worker skill');
-    return cached;
+    await record('fallback',cached.revision);return cached;
    }
-   return publishWorkerSkill(codexHome,agentId,renderWorkerSkill(agentId,plugins,catalog));
-  })().finally(()=>pending.delete(key));
+   const result=await publishWorkerSkill(codexHome,agentId,renderWorkerSkill(agentId,plugins,catalog));await record('published',result.revision);return result;
+  })().catch(async error=>{await record('failed');throw error;}).finally(()=>pending.delete(key));
   pending.set(key,work);return work;
  };
 }

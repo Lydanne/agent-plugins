@@ -15,6 +15,10 @@
     "./context-blocks": {
       "types": "./context-blocks.d.mts",
       "import": "./context-blocks.mjs"
+    },
+    "./maintenance": {
+      "types": "./maintenance.d.mts",
+      "import": "./maintenance.mjs"
     }
   },
   "files": [
@@ -26,10 +30,12 @@
     "entities.mjs",
     "entities.d.mts",
     "context-blocks.mjs",
-    "context-blocks.d.mts"
+    "context-blocks.d.mts",
+    "maintenance.mjs",
+    "maintenance.d.mts"
   ],
   "scripts": {
-    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs",
+    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs",
     "test": "node --test *.test.mjs",
     "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck entities.type-test.mts"
   },

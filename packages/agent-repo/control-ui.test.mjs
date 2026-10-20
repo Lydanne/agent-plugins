@@ -26,7 +26,7 @@ test('plugin exposes AgentRepo as the sole left navigation and keeps personnel d
 function contractHost(){
  const actions=[],requests=[];
  registerProjectInspector({registerSessionAction:action=>actions.push(action)}, {
-  list:async ctx=>catalog(trustedAgentId(ctx)),detail:async ctx=>detail(trustedAgentId(ctx)),
+  maintenance:async()=>({apiVersion:1,providers:[],observedAt:'2026-10-20T00:00:00Z'}),list:async ctx=>catalog(trustedAgentId(ctx)),detail:async ctx=>detail(trustedAgentId(ctx)),
  });
  // OpenClaw 2026.9.5: standalone params.agentId is NOT passed to an action.
  // Qualified keys resolve ownership first; the host rejects unknown/mismatched Agents.
@@ -44,7 +44,7 @@ test('Agent catalog resolves host identity without selecting or creating a match
  const stop=registerWorkerNavigation(target=>opened.push(target));t.after(stop);
  const view=f.track(f.ui.mountProjects(f.container,ctx));await settle();
  assert.match(f.container.textContent,/当前 Agent · other/);assert.match(f.container.textContent,/demo-cli/);assert.ok(!f.container.querySelector('.ar-error'));
- assert.ok(wire.requests.every(request=>request.agentId==='other'&&request.sessionKey==='agent:other:agent-repo-catalog'));
+ assert.ok(wire.requests.every(request=>request.agentId==='other'&&['agent:other:agent-repo-catalog','agent:other:agent-repo-management'].includes(request.sessionKey)));
  const jump=()=>[...f.container.querySelectorAll('button')].find(button=>button.textContent==='查看 Worker 项目任务 ↗');
  assert.equal(jump(),undefined);click(f.container,'Demo');await settle();
  assert.equal(jump().disabled,true);assert.equal(ctx.host.sessions.selectedKey,oldSession);assert.deepEqual(opened,[]);
@@ -56,14 +56,14 @@ test('Agent catalog resolves host identity without selecting or creating a match
 test('search survives host notifications and rerenders with input node, focus and caret intact',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),wire=contractHost(),ctx=uiContext(wire.request);
  f.track(f.ui.mountProjects(f.container,ctx));await settle();
- const row=f.container.querySelector('.ar-skill');row.open=true;
- const search=f.container.querySelector('[aria-label="搜索技能与子代理"]');search.focus();search.value='demo-cli';search.setSelectionRange(2,5);search.dispatchEvent(new f.window.Event('input'));
- assert.equal(f.container.querySelectorAll('.ar-skill').length,1);assert.equal(f.container.querySelector('.ar-skill').open,true);const before=wire.requests.length;ctx.notify();await settle();
+ click(f.container,'demo-cli');
+ const search=f.container.querySelector('[aria-label="搜索技能或关联 CLI"]');search.focus();search.value='demo-cli';search.setSelectionRange(2,5);search.dispatchEvent(new f.window.Event('input'));
+ assert.equal(f.container.querySelectorAll('.ar-maintenance-table tbody tr').length,1);assert.match(f.container.querySelector('aside').textContent,/Demo CLI/);const before=wire.requests.length;ctx.notify();await settle();
  assert.equal(wire.requests.length,before);assert.equal(search.value,'demo-cli');assert.equal(f.window.document.activeElement,search);assert.deepEqual([search.selectionStart,search.selectionEnd],[2,5]);
- click(f.container,'刷新扫描');await settle();assert.equal(f.container.querySelector('[aria-label="搜索技能与子代理"]'),search);assert.equal(f.window.document.activeElement,search);assert.deepEqual([search.selectionStart,search.selectionEnd],[2,5]);assert.equal(search.value,'demo-cli');
+ click(f.container,'刷新扫描');await settle();assert.equal(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'),search);assert.equal(f.window.document.activeElement,search);assert.deepEqual([search.selectionStart,search.selectionEnd],[2,5]);assert.equal(search.value,'demo-cli');
  // Navigation availability notifications also rebuild the view, without losing editing state.
  const stop=registerWorkerNavigation(()=>{});stop();assert.equal(f.window.document.activeElement,search);assert.deepEqual([search.selectionStart,search.selectionEnd],[2,5]);
- ctx.host.connection.canRead=false;ctx.notify();assert.ok(!f.container.textContent.includes('demo-cli'));ctx.host.connection.canRead=true;ctx.notify();await settle();assert.equal(search.value,'');assert.equal(f.container.querySelectorAll('.ar-skill').length,2);
+ ctx.host.connection.canRead=false;ctx.notify();assert.ok(!f.container.textContent.includes('demo-cli'));ctx.host.connection.canRead=true;ctx.notify();await settle();assert.equal(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]').value,'');assert.equal(f.container.querySelectorAll('.ar-maintenance-table tbody tr').length,2);
 });
 
 test('first fixed tab defaults to role skills only; project tabs load only their selected scope',async t=>{
@@ -73,10 +73,10 @@ test('first fixed tab defaults to role skills only; project tabs load only their
  f.track(f.ui.mountProjects(f.container,ctx));await settle();
  const tabs=()=>[...f.container.querySelectorAll('[role=tab]')];
  assert.deepEqual(tabs().map(tab=>tab.textContent),['Agent Repo','Demo','Second']);assert.equal(tabs()[0].getAttribute('aria-selected'),'true');assert.equal(tabs()[0].tabIndex,0);
- assert.deepEqual([...f.container.querySelectorAll('h3')].map(heading=>heading.textContent),['技能2','子代理0']);assert.ok(!/角色技能|仓库技能|项目根技能/.test(f.container.textContent));assert.equal(requests.filter(p=>p.actionId==='projects-detail').length,0);assert.ok(!f.container.querySelector('[aria-label="当前仓库范围"]'));
+ assert.deepEqual([...f.container.querySelectorAll('h3')].map(heading=>heading.textContent),['子代理0']);assert.ok(!/角色技能|仓库技能|项目根技能/.test(f.container.textContent));assert.equal(requests.filter(p=>p.actionId==='projects-detail').length,0);assert.ok(!f.container.querySelector('[aria-label="当前仓库范围"]'));
  assert.equal(f.container.querySelector('.ar-tabs').parentElement,f.container.querySelector('.ar-panel'));assert.ok(!f.container.querySelector('.ar-scroll').contains(tabs()[0]));
  click(f.container,'Demo');await settle();assert.match(f.container.textContent,/demo-only/);assert.ok(!f.container.querySelector('[data-skill-path="skills/demo-cli/SKILL.md"]'));assert.match(f.container.textContent,/继承 2 个技能/);assert.ok(!f.container.textContent.includes('b-only'));assert.ok(f.container.querySelector('[aria-label="当前仓库范围"]'));
- const scope=f.container.querySelector('[aria-label="当前仓库范围"]');scope.value='projects/demo/repositories/frontend';scope.dispatchEvent(new f.window.Event('change'));await settle();assert.deepEqual([...f.container.querySelectorAll('h3')].map(heading=>heading.textContent),['技能2','子代理0']);assert.match(f.container.textContent,/child-only/);assert.equal(f.container.querySelectorAll('.ar-skill').length,2);assert.ok(f.container.querySelector('[data-skill-path="projects/demo/repositories/frontend/.agents/skills/child-only/SKILL.md"]'));
+ const scope=f.container.querySelector('[aria-label="当前仓库范围"]');scope.value='projects/demo/repositories/frontend';scope.dispatchEvent(new f.window.Event('change'));await settle();assert.deepEqual([...f.container.querySelectorAll('h3')].map(heading=>heading.textContent),['子代理0']);assert.match(f.container.textContent,/child-only/);assert.equal(f.container.querySelectorAll('.ar-maintenance-table tbody tr').length,2);assert.ok(f.container.querySelector('[data-item-key="repo:projects/demo/repositories/frontend/.agents/skills/child-only/SKILL.md"]'));
  f.container.querySelector('.ar-scroll').scrollTop=170;click(f.container,'Second');await settle();assert.equal(f.container.querySelector('.ar-scroll').scrollTop,0);assert.match(f.container.textContent,/b-only/);assert.ok(!f.container.textContent.includes('demo-only'));
  click(f.container,'Agent Repo');await settle();assert.ok(!f.container.textContent.includes('b-only'));assert.ok(!f.container.querySelector('[aria-label="当前仓库范围"]'));assert.ok(!f.container.textContent.includes('查看 Worker 项目任务'));
  const panel=f.container.querySelector('[role=tabpanel]');assert.equal(panel.getAttribute('aria-labelledby'),tabs()[0].id);assert.equal(tabs()[0].getAttribute('aria-controls'),panel.id);
@@ -85,11 +85,11 @@ test('first fixed tab defaults to role skills only; project tabs load only their
 });
 test('returning to role tab invalidates pending project results and permits recovery from project errors',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),late=deferred();let fail=false;
- const ctx=uiContext(async(_method,p)=>p.actionId==='projects-list'?{ok:true,result:catalog('main')}:fail?{ok:false,error:'Project unavailable'}:late.promise);
+ const ctx=uiContext(async(_method,p)=>p.actionId==='projects-maintenance'?{ok:true,result:{apiVersion:1,providers:[]}}:p.actionId==='projects-list'?{ok:true,result:catalog('main')}:fail?{ok:false,error:'Project unavailable'}:late.promise);
  f.track(f.ui.mountProjects(f.container,ctx));await settle();click(f.container,'Demo');assert.ok(!f.container.querySelector('.ar-skill'));assert.match(f.container.textContent,/正在读取当前项目内容/);
  click(f.container,'Agent Repo');await settle();late.resolve({ok:true,result:detail('main')});await settle();assert.equal(f.container.querySelector('[role=tab][aria-selected=true]').textContent,'Agent Repo');assert.ok(!f.container.querySelector('[aria-label="当前仓库范围"]'));
- fail=true;click(f.container,'Demo');await settle();assert.match(f.container.textContent,/Project unavailable/);assert.equal(f.container.querySelectorAll('.ar-skill').length,0);
- click(f.container,'Agent Repo');await settle();assert.ok(!f.container.querySelector('.ar-error'));assert.equal(f.container.querySelectorAll('.ar-skill').length,2);
+ fail=true;click(f.container,'Demo');await settle();assert.match(f.container.textContent,/Project unavailable/);assert.equal(f.container.querySelectorAll('.ar-maintenance-table tbody tr').length,0);
+ click(f.container,'Agent Repo');await settle();assert.ok(!f.container.querySelector('.ar-error'));assert.equal(f.container.querySelectorAll('.ar-maintenance-table tbody tr').length,2);
 });
 test('role tab remains usable without projects and with empty or unavailable role skills',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname);
