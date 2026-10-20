@@ -9,7 +9,7 @@ test('skills and CLI share details, associations navigate both ways, technical f
  f.track(f.ui.mountSkillMaintenance(f.container,uiContext(async(_m,p)=>{calls.push(p);return {ok:true,result:snapshot};}),'main',{sources}));await settle();
  click(f.container,'fixture-skill');assert.match(f.container.querySelector('aside').textContent,/fixture description/);assert.ok(!f.container.textContent.includes('private hash'));
  click(f.container,'查看 CLI 详情');assert.match(f.container.querySelector('aside').textContent,/1.0.99/);assert.match(f.container.querySelector('aside').textContent,/当前宿主共享/);
- const associated=[...f.container.querySelector('aside').querySelectorAll('button')].find(button=>button.textContent.startsWith('fixture-skill'));associated.click();assert.match(f.container.querySelector('aside').getAttribute('aria-label'),/技能详情/);
+ assert.equal(f.container.querySelector('.ar-maintenance-associations').open,false);f.container.querySelector('.ar-maintenance-associations').open=true;const associated=[...f.container.querySelector('aside').querySelectorAll('button')].find(button=>button.textContent.startsWith('fixture-skill'));associated.click();assert.match(f.container.querySelector('aside').getAttribute('aria-label'),/技能详情/);
  click(f.container,'repo-skill');assert.match(f.container.querySelector('aside').textContent,/仓库技能用途/);assert.ok(!f.container.textContent.includes('b'.repeat(40)));click(f.container,'诊断');assert.match(f.container.querySelector('aside').textContent,/skills\/repo/);
  const search=f.container.querySelector('input[type=search]');search.value='skills/repo';search.dispatchEvent(new f.window.Event('input'));assert.equal(f.container.querySelectorAll('tbody tr').length,1);
  assert.ok(calls.every(p=>p.agentId==='main'&&p.sessionKey==='agent:main:agent-repo-management'));
@@ -32,4 +32,16 @@ test('integrated project maintenance discards previous Agent data and preserves 
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),gate=deferred();
  const ctx=uiContext(async(_method,p)=>p.actionId==='projects-maintenance'?p.agentId==='main'?gate.promise:Promise.reject(Error('provider not available')):{ok:true,result:{root:'/fixture',agentId:p.agentId,projects:[],agentSkills:p.agentId==='main'?{state:'available',skills:[]}:{state:'available',skills:sources[0].skills},agentSubagents:{state:'available',subagents:[]},scannedAt:1}},{agentId:'main',sessionKey:'agent:main:panel'});
  const view=f.track(f.ui.mountProjects(f.container,ctx));await settle();view.update({...ctx,props:{agentId:'other',sessionKey:'agent:other:panel'}});gate.resolve({ok:true,result:snapshot});await settle();assert.ok(!f.container.textContent.includes('fixture-skill'));assert.match(f.container.textContent,/repo-skill/);click(f.container,'repo-skill');assert.match(f.container.textContent,/仓库技能用途/);
+});
+
+test('long skill instructions stay searchable and complete in detail without expanding list summaries',async t=>{
+ const f=await browserFixture(t,new URL('./skill-maintenance-page.mjs',import.meta.url).pathname);
+ const description='飞书应用开发与托管。'+ '管理应用创建、发布、监控、成员与自动化触发器。'.repeat(40)+'末尾搜索标记';
+ const longProvider={...provider,skills:[{name:'long-skill-name-for-application-management',description}]};
+ f.track(f.ui.mountSkillMaintenance(f.container,uiContext(async()=>({ok:true,result:{...snapshot,providers:[longProvider]}})),'main'));await settle();
+ const summary=f.container.querySelector('.ar-maintenance-summary');assert.ok(summary.textContent.length<=101);assert.ok(!summary.textContent.includes('末尾搜索标记'));
+ assert.equal(f.container.querySelectorAll('thead th').length,2);
+ const search=f.container.querySelector('input[type=search]');search.value='末尾搜索标记';search.dispatchEvent(new f.window.Event('input'));assert.equal(f.container.querySelectorAll('tbody tr').length,1);
+ click(f.container,longProvider.skills[0].name);assert.equal(f.container.querySelector('.ar-maintenance-description').textContent,description);
+ click(f.container,'返回列表');assert.equal(f.container.querySelector('.ar-maintenance-detail'),null);assert.equal(f.window.document.activeElement.dataset.itemKey,'fixture.cli:'+longProvider.skills[0].name);
 });

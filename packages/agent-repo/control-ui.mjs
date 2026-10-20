@@ -239,10 +239,10 @@ export function mountProjects(container,initial){
   closeSyncDialog(false);generation++;projectId=id;repository='';detail=null;query='';error='';const body=root.querySelector('.ar-scroll');if(body)body.scrollTop=0;render();refresh({scanList:false});
  }
  function tabs(){
-  const nav=element('div',undefined,'ar-tabs'),projectTabs=element('div',undefined,'ar-project-tabs');nav.setAttribute('role','tablist');nav.setAttribute('aria-label','仓库与项目');
+  const nav=element('div',undefined,'ar-tabs'),projectTabs=element('div',undefined,'ar-project-tabs');projectTabs.setAttribute('role','tablist');projectTabs.setAttribute('aria-label','仓库与项目');
   const add=(id,label,title,container)=>{const tab=button(label,()=>chooseTab(id));tab.id=panelId+'-tab-'+(id?'project-'+id:'root');tab.dataset.tabKey=id;tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(projectId===id));tab.setAttribute('aria-controls',panelId);tab.tabIndex=projectId===id?0:-1;tab.title=title;
    tab.onkeydown=event=>{const items=[...nav.querySelectorAll('[role=tab]')],index=items.indexOf(tab),next=event.key==='ArrowRight'?(index+1)%items.length:event.key==='ArrowLeft'?(index+items.length-1)%items.length:event.key==='Home'?0:event.key==='End'?items.length-1:null;if(next===null)return;event.preventDefault();for(const item of items)item.tabIndex=-1;items[next].tabIndex=0;items[next].focus();};container.append(tab);};
-  add('','Agent Repo','技能与子代理 · 所有项目共享',nav);nav.append(projectTabs);
+  add('','Agent Repo','技能与子代理 · 所有项目共享',projectTabs);nav.append(projectTabs);
   for(const project of list.projects)add(project.projectId,safe(project.name),safe(project.name+' · '+project.repository),projectTabs);
   return nav;
  }
@@ -262,11 +262,10 @@ export function mountProjects(container,initial){
   if(!list){root.append(element('p',loading?'正在读取项目、技能与子代理…':'尚未取得项目登记','ar-muted'));return;}
   if(context.props.managementSection==='tasks'){const history=syncHistory();root.append(history??element('p','暂无定时任务','ar-muted'));return;}
   if(!list.registrationCommitted)root.append(element('p','项目登记存在未提交变化；当前展示仅供检查，执行前须提交并复核。','ar-warning'));
-  root.append(tabs());root.querySelector('.ar-project-tabs').scrollLeft=tabScroll;
+  const scopeTabs=tabs();if(context.props.managementSection==='projects')scopeTabs.append(actions);root.append(scopeTabs);root.querySelector('.ar-project-tabs').scrollLeft=tabScroll;
   const body=element('div',undefined,'ar-scroll');body.id=panelId;body.setAttribute('role','tabpanel');body.setAttribute('aria-labelledby',panelId+'-tab-'+(projectId?'project-'+projectId:'root'));body.tabIndex=0;root.append(body);
   if(!projectId){
-   if(context.props.managementSection==='projects')body.append(element('p','当前范围：Agent 共享技能与子代理','ar-meta'));
-   else {body.append(element('h2',safe(list.root?.split('/').filter(Boolean).at(-1)??'Agent Repo')),element('code',safe(list.root??'skills/'),'ar-path'));
+   if(context.props.managementSection!=='projects'){body.append(element('h2',safe(list.root?.split('/').filter(Boolean).at(-1)??'Agent Repo')),element('code',safe(list.root??'skills/'),'ar-path'));
     body.append(element('p','此 Agent 的所有项目共享','ar-meta'));
     if(!list.projects.length)body.append(element('p','尚未登记项目。当前仍可查看技能和子代理。','ar-muted'));}
   }else if(!detail)body.append(element('p',loading?'正在读取当前项目内容…':'当前项目内容尚未读取，请重试或选择其他 Tab。','ar-muted'));

@@ -380,15 +380,22 @@
 .ar-maintenance-views,.ar-maintenance-detail-tabs{display:flex;gap:24px;border-bottom:1px solid var(--ar-line);margin:14px 0 0}
 .ar-maintenance-views button,.ar-maintenance-detail-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;padding:12px 0;color:var(--ar-muted)}
 .ar-maintenance-views button[aria-current=page],.ar-maintenance-detail-tabs button[aria-current=page]{color:var(--ar-accent);border-bottom-color:var(--ar-accent);font-weight:650}
-.ar-maintenance-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);min-height:440px}
-.ar-maintenance-list{min-width:0;padding:24px 24px 24px 0}
-.ar-maintenance-list>input{display:block;width:100%;margin:0 0 20px!important;padding:10px 12px;border:1px solid var(--ar-line);border-radius:6px;background:var(--ar-surface)}
+.ar-maintenance{container:skill-maintenance / inline-size}
+.ar-maintenance-layout{display:grid;grid-template-columns:minmax(0,1fr);min-height:320px}
+.ar-maintenance-list{min-width:0;padding:16px 0}
+.ar-maintenance-list>input{display:block;width:100%;margin:0!important;padding:10px 12px;border:1px solid var(--ar-line);border-radius:8px;background:var(--ar-surface);min-height:40px}
+.ar-maintenance-count{font-size:12px;color:var(--ar-muted);margin:10px 0}
 .ar-maintenance-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}
-.ar-maintenance-table th{text-align:left;font-size:12px;font-weight:500;color:var(--ar-muted);padding:12px 10px;border-bottom:1px solid var(--ar-line)}
-.ar-maintenance-table th:first-child{width:24%}.ar-maintenance-table td{padding:18px 10px;border-bottom:1px solid var(--ar-line);vertical-align:middle;overflow-wrap:anywhere;cursor:pointer}
-.ar-maintenance-table td small{display:block;margin-top:4px;font-size:11px}.ar-maintenance-table td:first-child{padding-left:0}
-.ar-maintenance-table .ar-maintenance-item{border:0;text-align:left;padding:8px 10px;font-weight:600;width:100%;border-radius:0}
-.ar-maintenance-table tr.ar-selected,.ar-maintenance-table tbody tr:hover{background:color-mix(in srgb,var(--ar-accent) 9%,transparent)}
+.ar-maintenance-table th{text-align:left;font-size:12px;font-weight:500;color:var(--ar-muted);padding:10px 12px;border-bottom:1px solid var(--ar-line)}
+.ar-maintenance-table th:first-child{width:auto}.ar-maintenance-table th:last-child{width:130px}
+.ar-maintenance-table td{padding:14px 12px;border-bottom:1px solid var(--ar-line);vertical-align:top;overflow-wrap:anywhere;cursor:pointer}
+.ar-maintenance-table td small{display:block;margin-top:5px;font-size:12px}.ar-maintenance-table td:first-child{padding-left:12px}
+.ar-maintenance-table .ar-maintenance-item{display:block;border:0;text-align:left;padding:0;font-weight:600;line-height:1.5;width:100%;border-radius:0;overflow-wrap:anywhere}
+.ar-maintenance-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.6;color:var(--ar-muted);margin-top:5px}
+.ar-maintenance-badge{display:inline-block;font-size:12px;font-weight:500;color:var(--ar-ink);white-space:normal}
+.ar-maintenance-table tr.ar-selected,.ar-maintenance-table tbody tr:hover{background:color-mix(in srgb,var(--ar-accent) 7%,transparent)}
+.ar-maintenance-layout>.ar-maintenance-empty{display:none}
+.ar-maintenance-layout.ar-has-detail>.ar-maintenance-list{display:none}
 .ar-maintenance-detail{border-left:1px solid var(--ar-line);padding:24px 0 24px 28px;min-width:0}
 .ar-maintenance-detail>header button{border:0;padding:6px;font-size:12px;color:var(--ar-muted)}
 .ar-maintenance-empty{padding:48px 24px;color:var(--ar-muted);font-size:13px;text-align:center}
@@ -405,7 +412,6 @@
 .ar-maintenance-confirm{border-top:1px solid var(--ar-line);padding-top:16px;margin-top:24px}.ar-maintenance-confirm button{margin:0 8px 8px 0}
 .ar-maintenance-event{padding:16px 0;border-bottom:1px solid var(--ar-line)}.ar-maintenance-event p{font-size:13px;margin:6px 0}.ar-maintenance-notice{color:var(--ar-accent);font-size:13px}
 .ar-maintenance pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;font:12px/1.65 ui-monospace,monospace}.ar-maintenance details>summary{cursor:pointer}
-@media(max-width:1000px){.ar-maintenance-layout{grid-template-columns:1fr}.ar-maintenance-list{padding-right:0}.ar-maintenance-layout.ar-has-detail>.ar-maintenance-list{display:none}.ar-maintenance-detail{border-left:0;padding:24px 0}.ar-maintenance-table{font-size:12px}.ar-maintenance-table th,.ar-maintenance-table td{padding:12px 6px}}
 
 .ar-management-body>.ar-panel[data-management-section=projects]{padding:0;border:0;border-radius:0}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header{padding:0 0 12px}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-tabs{margin-top:0}.ar-management-body .ar-maintenance{margin-top:12px}.ar-management-body .ar-maintenance h2{font-size:20px}.ar-management-body .ar-maintenance button{font-size:13px}.ar-management-body .ar-maintenance-list input{font-size:14px}.ar-maintenance-detail p{font-size:14px;line-height:1.7}
 
@@ -417,7 +423,52 @@
 .ar-maintenance-actions{position:sticky;bottom:0;background:var(--ar-surface);padding-bottom:12px}
 .ar-maintenance-linked-skill{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px!important;padding:10px 0!important}
 .ar-maintenance-linked-skill small{font-size:12px;max-width:64%;text-align:right;margin:0}
-@media(min-width:1001px){.ar-maintenance-detail{max-height:calc(100vh - 330px);min-height:420px}.ar-maintenance-detail h4{margin:20px 0 8px}.ar-maintenance-detail-tabs{margin-top:14px}.ar-maintenance-list .ar-description{margin-top:0}}
-@media(max-width:1000px){.ar-maintenance-detail{max-height:none;overflow:visible;padding-right:0}.ar-maintenance-table th:nth-child(2){width:32%}}
+/* Respond to the plugin's available width, including host sidebar and split panes. */
+.ar-maintenance-detail{border-left:0;padding:20px 0;max-height:none;overflow:visible}
+.ar-maintenance-detail>header{gap:12px}.ar-maintenance-detail>header button{flex-shrink:0;min-height:36px}
+.ar-maintenance-detail h3{overflow-wrap:anywhere}
+@container skill-maintenance (min-width:880px){
+ .ar-maintenance-layout.ar-has-detail{grid-template-columns:minmax(0,1.15fr) minmax(320px,1fr)}
+ .ar-maintenance-layout.ar-has-detail>.ar-maintenance-list{display:block}
+ .ar-has-detail>.ar-maintenance-list{padding-right:24px;max-height:calc(100vh - 250px);overflow:auto}
+
+ .ar-maintenance-detail{border-left:1px solid var(--ar-line);padding:20px 0 20px 24px;max-height:calc(100vh - 250px);min-height:400px;overflow:auto}
+}
+@container skill-maintenance (max-width:480px){
+ .ar-maintenance-table thead{display:none}
+ .ar-maintenance-table tbody,.ar-maintenance-table tr,.ar-maintenance-table td{display:block;width:100%}
+ .ar-maintenance-table tr{padding:14px 0;border-bottom:1px solid var(--ar-line)}
+ .ar-maintenance-table td{border:0;padding:0 10px!important}
+ .ar-maintenance-table .ar-maintenance-state{padding-top:8px!important;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+ .ar-maintenance-state small{margin:0!important}
+ .ar-maintenance-badge{font-size:11px;color:var(--ar-muted)}
+ .ar-maintenance-item{min-height:28px}
+ .ar-maintenance-detail-tabs{gap:18px}.ar-maintenance-fields{gap:10px}
+ .ar-maintenance-linked-skill{display:block}.ar-maintenance-linked-skill small{max-width:none;text-align:left;margin-top:4px}
+}
 
 .ar-maintenance-versions{grid-template-columns:1fr 1fr;gap:4px 20px;border-bottom:1px solid var(--ar-line);padding-bottom:20px}.ar-maintenance-versions dt:nth-child(1){grid-column:1;grid-row:1}.ar-maintenance-versions dd:nth-child(2){grid-column:1;grid-row:2}.ar-maintenance-versions dt:nth-child(3){grid-column:2;grid-row:1}.ar-maintenance-versions dd:nth-child(4){grid-column:2;grid-row:2}.ar-maintenance-versions dd{font-size:24px;font-weight:600;letter-spacing:-.03em}.ar-maintenance-table .ar-maintenance-item[aria-pressed=true]{background:transparent}
+
+/* The host already supplies the application shell. Keep the management header task focused. */
+.ar-management{container:agent-management / inline-size}
+.ar-management-eyebrow,.ar-management-header p,.ar-management>.ar-meta{display:none}
+.ar-management-header h1{font-size:22px;letter-spacing:-.02em}
+.ar-management-nav{margin:16px 0 20px;gap:22px}
+.ar-management-body>.ar-panel[data-management-section=projects]{background:transparent}
+.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header{justify-content:flex-end;padding-bottom:4px}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header>strong{display:none}
+.ar-management-body .ar-maintenance{margin-top:0}
+.ar-management-body .ar-maintenance-views{margin-top:0}
+.ar-management-body>.ar-panel[data-management-section=projects]>.ar-tabs{margin-bottom:8px}
+@container agent-management (max-width:560px){
+ .ar-management-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:12px 0 16px}
+ .ar-management-nav button{padding:9px 4px;font-size:12px;white-space:normal}
+ .ar-management-agent>span{display:none}
+ .ar-overview-heading{align-items:flex-start}.ar-overview-tools{flex-direction:column;align-items:flex-end;gap:6px}
+}
+
+.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header{display:none}
+.ar-management .ar-tabs>.ar-panel-actions{margin-left:auto;align-self:center}
+.ar-management .ar-tabs>.ar-panel-actions button{padding:6px 10px;min-height:32px;border:1px solid var(--ar-line);border-radius:6px;font-size:12px}
+.ar-management .ar-scroll>.ar-meta{margin:6px 0 10px;font-size:12px}
+
+.ar-maintenance-associations{margin-top:20px;border-top:1px solid var(--ar-line);padding-top:16px}.ar-maintenance-associations>summary{font-size:13px;font-weight:600;min-height:32px}

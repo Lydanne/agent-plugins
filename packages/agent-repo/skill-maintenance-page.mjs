@@ -3,6 +3,7 @@ const el=(tag,text,className)=>{const node=document.createElement(tag);if(text!=
 const button=(label,action,className)=>{const node=el('button',label,className);node.type='button';node.onclick=action;return node;};
 const states={available:'CLI 可用',fallback:'使用已验证旧版',not_installed:'未安装',disabled:'已禁用',unavailable:'不可读取',degraded:'需处理',running:'执行中',succeeded:'成功',failed:'失败',unknown:'结果待核查',unsupported:'版本不支持'};
 const time=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'未记录';
+const summary=value=>{const text=String(value??'').replace(/\s+/g,' ').trim();return text.length>100?text.slice(0,100)+'…':text;};
 const sourceName=source=>({agent:'Agent 仓库',project:'项目仓库',repository:'子仓库'})[source]??'仓库技能';
 export function mountSkillMaintenance(container,context,agentId,options={}){
  let disposed=false,generation=0,data=null,error='',notice='',loading=false,busy=false,confirmation=null,retry=null,query='',view='skills',selected=null,detailTab='overview',sources=options.sources??[],sourceKey=options.scopeKey??'';
@@ -18,7 +19,7 @@ export function mountSkillMaintenance(container,context,agentId,options={}){
   const managed=providers().flatMap(provider=>(provider.skills?.length?provider.skills:provider.kind==='generated-skill'||provider.id==='agent-repo.main-skill'?[{name:provider.id}]:[]).map(skill=>({...skill,key:provider.id+':'+skill.name,label:provider.kind==='generated-skill'||provider.id==='agent-repo.main-skill'?provider.label:skill.name,sourceLabel:provider.ownerLabel??provider.label,scope:provider.kind==='generated-skill'||provider.id==='agent-repo.main-skill'?provider.scope:skill.scope??'以技能说明与当前任务权限为准',state:provider.state,provider,cli:cliProviders().includes(provider)?provider:null})));
   return [...managed,...repository];
  }
- const skillState=skill=>skill.provider?(skill.cli?(skill.state==='available'?'CLI 可用 · 按任务授权':states[skill.state]??'未知'):skill.state==='available'?'已生成':states[skill.state]??'未知'):({candidate:'范围内候选',pending_commit:'待提交变化',shadowed:'同名覆盖',disabled:'已禁用'})[skill.state]??'状态待核验';
+ const skillState=skill=>skill.provider?(skill.cli?(skill.state==='available'?'CLI 可用':states[skill.state]??'未知'):skill.state==='available'?'已生成':states[skill.state]??'未知'):({candidate:'范围内候选',pending_commit:'待提交变化',shadowed:'同名覆盖',disabled:'已禁用'})[skill.state]??'状态待核验';
  function setView(next){view=next;options.onViewChange?.(view);}
  function choose(kind,key){selected={kind,key};detailTab='overview';confirmation=null;render();root.querySelector('.ar-maintenance-detail h3')?.focus({preventScroll:true});}
  async function refresh(){
@@ -74,27 +75,27 @@ export function mountSkillMaintenance(container,context,agentId,options={}){
  }
  function renderDetail(layout,rows){
   let skill=selected?.kind==='skill'?rows.find(row=>row.key===selected.key):null,provider=selected?.kind==='cli'?cliProviders().find(provider=>provider.id===selected.key):skill?.provider;
-  if(!skill&&!provider){selected=null;layout.append(el('aside','选择技能或 CLI 查看详情。','ar-maintenance-empty'));return;}
+  if(!skill&&!provider){selected=null;layout.append(el('aside','选择一项查看详情','ar-maintenance-empty'));return;}
   const panel=el('aside',undefined,'ar-maintenance-detail');panel.setAttribute('aria-label',skill?'技能详情':'CLI 详情');
-  const heading=el('header'),title=el('h3',safe(skill?.label??provider.label));title.tabIndex=-1;heading.append(title,button('关闭详情',()=>{const prior=selected;selected=null;confirmation=null;render();[...root.querySelectorAll('[data-item-key]')].find(node=>node.dataset.itemKey===prior.key)?.focus();}));panel.append(heading,el('p',safe(skill?.sourceLabel??provider.ownerLabel??provider.label),'ar-description'));
+  const heading=el('header'),title=el('h3',safe(skill?.label??provider.label));title.tabIndex=-1;heading.append(title,button('返回列表',()=>{const prior=selected;selected=null;confirmation=null;render();[...root.querySelectorAll('[data-item-key]')].find(node=>node.dataset.itemKey===prior.key)?.focus();}));panel.append(heading,el('p',safe(skill?.sourceLabel??provider.ownerLabel??provider.label),'ar-description'));
   const tabs=el('nav',undefined,'ar-maintenance-detail-tabs');tabs.setAttribute('aria-label','详情视图');for(const [key,label] of [['overview','概览'],...(!skill?[['settings','更新设置']]:[]),...(provider?[['history','维护记录']]:[]),['diagnostic','诊断']]){const tab=button(label,()=>{detailTab=key;confirmation=null;render();});if(detailTab===key)tab.setAttribute('aria-current','page');tabs.append(tab);}panel.append(tabs);
   if(detailTab==='settings')policyForm(panel,provider);
   else if(detailTab==='history')history(panel,provider);
   else if(detailTab==='diagnostic')diagnostic(panel,provider,skill);
   else if(skill){
-   panel.append(el('h4','技能用途'),el('p',safe(skill.description||'此技能尚未提供用途说明。')),fields([['来源',skill.sourceLabel],['当前状态',skillState(skill)],['适用范围',skill.scope||'当前仓库范围']]));
+   panel.append(fields([['当前状态',skillState(skill)],['适用范围',skill.scope||'当前仓库范围']]),el('h4','用途与使用条件'),el('p',safe(skill.description||'此技能尚未提供用途说明。'),'ar-maintenance-description'));
    if(skill.warning||skill.disabledReason)panel.append(el('p',safe(skill.disabledReason??skill.warning),'ar-warning'));
-   if(skill.cli){panel.append(el('h4','关联 CLI'));const link=button(skill.cli.label,()=>{setView('cli');choose('cli',skill.cli.id);},'ar-maintenance-dependency');link.append(el('small',safe(skill.cli.scope)));panel.append(link,fields([['当前版本',skill.cli.versions?.current],['更新状态',status(skill.cli)],['自动更新',skill.cli.policy?.autoUpdate?'已开启':'已关闭']]),button('查看 CLI 详情',()=>{setView('cli');choose('cli',skill.cli.id);},'ar-primary'));}
+   if(skill.cli){panel.append(el('h4','关联 CLI'));const link=el('div',skill.cli.label,'ar-maintenance-dependency');link.append(el('small',safe(skill.cli.scope)));panel.append(link,fields([['当前版本',skill.cli.versions?.current],['更新状态',status(skill.cli)],['自动更新',skill.cli.policy?.autoUpdate?'已开启':'已关闭']]),button('查看 CLI 详情',()=>{setView('cli');choose('cli',skill.cli.id);},'ar-primary'));}
    else if(provider){panel.append(el('p','由 AgentRepo 自动生成，供 Worker 按任务读取；版本通知不代表实际读取。','ar-muted'));for(const action of provider.actions??[])panel.append(actionButton(provider,action));}
    else panel.append(el('p','当前来源没有声明受托管的 CLI 依赖；不会根据技能名称推断安装状态。','ar-muted'));
   }else{
    panel.append(el('p',safe(provider.scope),'ar-maintenance-scope'),el('h4','版本信息'),el('strong',status(provider),'ar-maintenance-status'),versions(provider));
-   panel.append(el('h4','关联技能（'+(provider.skills?.length??0)+'）'));
-   for(const associated of provider.skills??[]){const linked=rows.find(row=>row.provider===provider&&row.name===associated.name);const open=button(associated.name,()=>{setView('skills');choose('skill',linked.key);},'ar-maintenance-linked-skill');if(associated.description)open.append(el('small',safe(associated.description)));panel.append(open);}
+   const associations=el('details',undefined,'ar-maintenance-associations');associations.append(el('summary','关联技能（'+(provider.skills?.length??0)+'）'));
+   for(const associated of provider.skills??[]){const linked=rows.find(row=>row.provider===provider&&row.name===associated.name);const open=button(associated.name,()=>{setView('skills');choose('skill',linked.key);},'ar-maintenance-linked-skill');if(associated.description)open.append(el('small',safe(summary(associated.description))));associations.append(open);}
    panel.append(el('p','更新由提供方执行，关联技能索引与 CLI 一同维护。','ar-muted'),el('h4','自动更新设置'),fields([['当前状态',provider.policy?provider.policy.autoUpdate?'开启':'关闭':'未提供'],['固定版本',provider.policy?.version||'跟随兼容稳定版'],['检查间隔',provider.policy?provider.policy.updateCheckIntervalHours+' 小时':'未提供']]));
    if(provider.actions?.some(action=>action.settings))panel.append(button('修改设置',()=>{detailTab='settings';render();}));
    const actions=el('footer',undefined,'ar-maintenance-actions');for(const action of provider.actions??[]){if(action.settings||action.id==='rollback')continue;if(action.id==='check'){const check=button(action.label,()=>execute(provider,action));check.disabled=!canWrite()||busy||loading||!!retry||!provider.revision;actions.append(check);}else actions.append(actionButton(provider,action,action.id==='update'&&provider.versions?.available?'更新至 '+provider.versions.available:action.label));}
-   const moreActions=(provider.actions??[]).filter(action=>action.id==='rollback');if(moreActions.length){const more=el('details');more.append(el('summary','更多操作'));for(const action of moreActions)more.append(actionButton(provider,action));actions.append(more);}panel.append(actions);
+   const moreActions=(provider.actions??[]).filter(action=>action.id==='rollback');if(moreActions.length){const more=el('details');more.append(el('summary','更多操作'));for(const action of moreActions)more.append(actionButton(provider,action));actions.append(more);}panel.append(actions,associations);
   }
   if(provider)confirmationForm(panel,provider);layout.append(panel);
  }
@@ -110,14 +111,22 @@ export function mountSkillMaintenance(container,context,agentId,options={}){
   if(!canWrite())root.append(el('p','只读模式：可以查看详情，维护操作需要写入权限。','ar-muted'));
   if(retry){const original=button('重试原维护请求',()=>execute({},{},null));original.disabled=busy||!canWrite();root.append(original);}
   const layout=el('div',undefined,'ar-maintenance-layout');if(selected)layout.classList.add('ar-has-detail');root.append(layout);const list=el('section',undefined,'ar-maintenance-list');list.setAttribute('aria-label',view==='skills'?'技能列表':'关联 CLI 列表');layout.append(list);
-  const intro=el('p',view==='cli'?'提供方声明的 CLI 运行依赖；共享范围以每项标注为准。':'查看当前范围的技能、来源与运行依赖。','ar-description');list.append(intro);
   search.type='search';search.value=query;search.setAttribute('aria-label','搜索技能或关联 CLI');search.placeholder=view==='skills'?'搜索技能名称、用途或 CLI':'搜索 CLI 或关联技能';search.oninput=()=>{query=search.value;options.onQuery?.(query);render();};list.append(search);
   const rows=skills(),terms=query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean),items=view==='skills'?rows:cliProviders();
   const matching=items.filter(row=>terms.every(term=>[row.label,row.name,row.path,row.description,row.sourceLabel,row.cli?.label,...(row.skills??[]).map(skill=>skill.name)].join(' ').toLocaleLowerCase().includes(term)));
-  const table=el('table',undefined,'ar-maintenance-table'),thead=el('thead'),header=el('tr');for(const title of view==='skills'?['技能','用途 / 来源','状态','关联 CLI']:['CLI','来源','状态','自动更新','关联技能']){const th=el('th',title);th.scope='col';header.append(th);}thead.append(header);table.append(thead);const body=el('tbody');
-  for(const row of matching){const key=view==='skills'?row.key:row.id,kind=view==='skills'?'skill':'cli',tr=el('tr');if(selected?.key===key)tr.className='ar-selected';const open=()=>choose(kind,key);tr.onclick=open;const name=button(safe(row.label),event=>{event.stopPropagation();open();},'ar-maintenance-item');name.dataset.itemKey=key;name.setAttribute('aria-pressed',String(selected?.key===key));const cell=el('td');cell.append(name);tr.append(cell);
-   const values=view==='skills'?[[row.description||'查看技能说明',row.sourceLabel],[skillState(row)], [row.cli?.label??'未声明']]:[[row.ownerLabel??row.label,row.scope],[status(row),row.versions?.current??'版本未知'],[row.policy?row.policy.autoUpdate?'已开启':'已关闭':'未提供'],[String(row.skills?.length??0)+' 个技能']];
-   for(const [primary,secondary] of values){const td=el('td');td.append(el('span',safe(primary)));if(secondary)td.append(el('small',safe(secondary)));tr.append(td);}body.append(tr);
+  const count=el('p',query?matching.length+' / '+items.length+' 项匹配':items.length+(view==='skills'?' 个技能':' 个关联 CLI'),'ar-maintenance-count');count.setAttribute('role','status');list.append(count);
+  const table=el('table',undefined,'ar-maintenance-table'),thead=el('thead'),header=el('tr');table.classList.toggle('ar-cli-table',view==='cli');
+  for(const title of view==='skills'?['技能与用途','状态']:['CLI 与来源','版本与更新']){const th=el('th',title);th.scope='col';header.append(th);}thead.append(header);table.append(thead);const body=el('tbody');
+  for(const row of matching){
+   const key=view==='skills'?row.key:row.id,kind=view==='skills'?'skill':'cli',tr=el('tr');if(selected?.key===key)tr.className='ar-selected';
+   const open=()=>choose(kind,key);tr.onclick=open;
+   const name=button(safe(row.label),event=>{event.stopPropagation();open();},'ar-maintenance-item');name.dataset.itemKey=key;name.setAttribute('aria-pressed',String(selected?.key===key));
+   const cell=el('td',undefined,'ar-maintenance-identity');cell.append(name);
+   if(view==='skills')cell.append(el('span',safe(summary(row.description)||'查看技能说明'),'ar-maintenance-summary'),el('small',safe([row.sourceLabel,row.cli?.label].filter(Boolean).join(' · '))));
+   else cell.append(el('span',safe(row.ownerLabel??row.label),'ar-maintenance-summary'),el('small',(row.skills?.length??0)+' 个关联技能'));
+   const state=el('td',undefined,'ar-maintenance-state');state.append(el('span',view==='skills'?skillState(row):status(row),'ar-maintenance-badge'));
+   if(view==='cli'){state.append(el('small',safe(row.versions?.current??'版本未知')),el('small',row.policy?row.policy.autoUpdate?'自动更新已开启':'自动更新已关闭':'未提供更新设置'));}
+   tr.append(cell,state);body.append(tr);
   }
   table.append(body);list.append(table);if(!matching.length)list.append(el('p',query?'没有匹配的结果。':loading?'正在读取…':view==='skills'&&sources.length&&sources.every(source=>source.state==='unavailable')?'此范围暂不可扫描':view==='cli'?'尚无提供方声明关联 CLI；仓库技能仍可查看。':'当前范围没有可显示的技能。','ar-maintenance-empty'));
   for(const source of sources)if(source.warning)list.append(el('p',safe(source.warning),'ar-warning'));
