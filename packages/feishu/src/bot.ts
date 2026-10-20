@@ -108,6 +108,8 @@ import {
 import { resolveFeishuReasoningPreviewEnabled } from "./reasoning-preview.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
 import { getFeishuRuntime } from "./runtime.js";
+import { workerQuestionBridge } from "./worker-question.js";
+import { parsePostContent } from "./post.js";
 import { getMessageFeishu, listFeishuThreadMessages, sendMessageFeishu, parseFeishuMessageItem } from "./send.js";
 import { getFeishuSyntheticDirectPreDispatchTarget } from "./synthetic-event-target.js";
 import {
@@ -610,6 +612,14 @@ export async function handleFeishuMessage(params: {
   let requireMention = false; // DMs never require mention; groups may override below
   let activationQuoteChain: Awaited<ReturnType<typeof loadQuoteChain>> | undefined;
   let activationQuoteVisibilityMode: "all" | "allowlist" | "allowlist_quote" | undefined;
+  const acceptQuestionTextReply = async (currentCfg:ClawdbotConfig) => {
+    if(ctx.senderType!=="user"||!ctx.parentId||ctx.replyTargetMessageId||ctx.suppressReplyTarget||broadcastAgents||
+       !["text","post"].includes(event.message.message_type)||(params.sourceMessages?.length??1)>1||!workerQuestionBridge.textReply)return false;
+    if(event.message.message_type==="post"&&parsePostContent(event.message.content).attachments.length)return false;
+    const handled=await workerQuestionBridge.textReply({cfg:currentCfg,accountId:account.accountId,chatId:ctx.chatId,senderId:ctx.senderOpenId,messageId:ctx.messageId,parentId:ctx.parentId,text:ctx.content});
+    if(handled){turnAdoptionLifecycle?.onAdoptionFinalizing?.();await turnAdoptionLifecycle?.onAdopted?.();params.onDispatchReady?.();}
+    return handled;
+  };
   const readCurrentQuoteChain = (parentId: string, mode: "all" | "allowlist" | "allowlist_quote", requireSameChat = false) => loadQuoteChain({
     parentId, currentMessageId: ctx.messageId, chatId: ctx.chatId,
     maxDepth: feishuCfg?.quoteChain?.maxDepth, readMaxChars: feishuCfg?.historySummary?.maxInputChars ?? 200000,
@@ -688,6 +698,9 @@ export async function handleFeishuMessage(params: {
       log(`feishu: sender ${ctx.senderOpenId} not in group ${ctx.chatId} sender allowlist`);
       return;
     }
+    // A native reply to the requester's own question is an explicit activation,
+    // after group/sender admission and before the generic mention requirement.
+    if(await acceptQuestionTextReply(cfg))return;
     const conversationWindow = groupConfig?.conversationWindow ?? feishuCfg?.conversationWindow;
     if (requireMention && conversationWindow?.enabled && ctx.senderType !== "bot" && !broadcastAgents) {
       try {
@@ -882,6 +895,8 @@ export async function handleFeishuMessage(params: {
           currentAuthorization.shouldComputeCommandAuthorized;
       }
     }
+
+    if(isDirect&&await acceptQuestionTextReply(effectiveCfg))return;
 
     // In group chats, the session is scoped to the group, but the *speaker* is the sender.
     // Using a group-scoped From causes the agent to treat different users as the same person.

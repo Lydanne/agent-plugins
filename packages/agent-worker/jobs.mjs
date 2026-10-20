@@ -58,7 +58,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const job=readJson(join(root,file));
    // Inspect stored state, not the derived 'unknown' heartbeat projection: a
    // temporarily lost worker must see cancellation if it later comes back.
-   if ((active.has(job.status)||job.status==='unknown'||waiting.has(job.status)) && matches(job.provenance)) {
+   if ((active.has(job.status)||job.status==='unknown'||waiting.has(job.status)) && matches(job.provenance,job)) {
     if(waiting.has(job.status))terminalJob({...job,status:'cancelled',finishedAt:Date.now(),notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined});
     else writeFileSync(join(root,job.jobId+'.cancel'),'source-recalled',{mode:0o600}); ids.push(job.jobId);
    }
@@ -117,7 +117,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   tick,
   start(){if(timer)return;tick();timer=setInterval(()=>{try{tick();}catch(error){logger?.error?.('Codex scheduler: '+error.message);}},500);timer.unref();},
   stop(){clearInterval(timer);timer=undefined;},
-  cancelSources(event) {return cancelMatching(p=>p?.accountId===event.accountId && p?.chatId===event.chatId && p.sourceMessageIds?.includes(event.messageId));},
+  cancelSources(event) {return cancelMatching((p,job)=>p?.accountId===event.accountId && p?.chatId===event.chatId && (p.sourceMessageIds?.includes(event.messageId)||job.questions?.some(q=>q.answerSource==='user_text'&&q.answerMessageId===event.messageId)));},
   cancelTask(taskId,revision) {return cancelMatching(p=>p?.taskId===taskId && p?.revision===revision);},
   list(scope,options={}){return this.search(scope,options).jobs;},
   search(scope,{limit=10,query='',projectId,repository}={}){

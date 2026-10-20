@@ -43,8 +43,8 @@ function database(stateDir?: string) {
     CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, metadata TEXT NOT NULL, updated INTEGER NOT NULL);`);
   return db;
 }
-function isRecalled(event: RecallIdentity): boolean {
-  const db = database();
+export function isTaskSourceRecalled(event: RecallIdentity, stateDir?:string): boolean {
+  const db = database(stateDir);
   try { return Boolean(db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(event.accountId, event.chatId, event.messageId)); }
   finally { db.close(); }
 }
@@ -81,7 +81,7 @@ export class SourceTask {
     this.id = "ada_" + createHash("sha256").update(JSON.stringify([sourceIdentity, sources.map(s => s.messageId).sort()])).digest("hex").slice(0, 24);
     for (const source of sources) {
       this.sources.set(source.messageId, source);
-      if (isRecalled({ ...scope, messageId: source.messageId })) this.withdrawn.add(source.messageId);
+      if (isTaskSourceRecalled({ ...scope, messageId: source.messageId })) this.withdrawn.add(source.messageId);
     }
     this.revision = this.withdrawn.size;
     if (!this.remainingRequests().length) this.stopped.abort();
@@ -100,7 +100,7 @@ export class SourceTask {
   add(source: TaskSource) {
     this.sources.set(source.messageId, source);
     if (this.lease) { this.lease.sourceMessageIds = this.remaining().map(s => s.messageId); this.lease.requestMessageIds = this.remainingRequests().map(s => s.messageId); }
-    if (isRecalled({ ...this.scope, messageId: source.messageId })) this.recall({ ...this.scope, messageId: source.messageId });
+    if (isTaskSourceRecalled({ ...this.scope, messageId: source.messageId })) this.recall({ ...this.scope, messageId: source.messageId });
     this.persist();
   }
   recall(event: RecallIdentity) {

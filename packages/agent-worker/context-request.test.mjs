@@ -73,6 +73,23 @@ test('waiting releases capacity but reserves its topic, can cancel and expires w
   const waiting=await ask({...f,id:f.id});waiting.contextRequest.expiresAt=0;writeJson(join(f.root,f.id+'.json'),waiting);jobs.tick();assert.equal(jobs.status(f.id,f.scope).status,'timed_out');
  }finally{f.close();}
 });
+
+test('native text answers preserve source metadata and withdrawing that message cancels only the matching account and chat',async()=>{
+ const f=fixture();try{
+  f.provenance.chatId='chat';writeJson(join(f.root,f.id+'.json'),{...readJson(join(f.root,f.id+'.json')),provenance:f.provenance});
+  const job=await ask(f);mkdirSync(join(f.root,'active'));
+  const jobs=createJobs({root:f.root,node:process.execPath,worker:'unused'}),q=job.contextRequest.questionId;
+  await jobs.awaitUser(f.id,f.scope,q,f.provenance);
+  const resumed=await jobs.reply(f.id,f.scope,q,'北京时间10月19日至20日',f.provenance,()=>true,false,undefined,{answerSource:'user_text',answerMessageId:'native-answer',userSubmittedAt:123});
+  assert.equal(resumed.jobId,f.id);assert.equal(resumed.status,'queued');
+  assert.equal(resumed.questions[0].answerMessageId,'native-answer');assert.equal(resumed.questions[0].answerSource,'user_text');assert.equal(resumed.questions[0].answerValues,undefined);
+  assert.deepEqual(jobs.cancelSources({accountId:'other',chatId:'chat',messageId:'native-answer'}),[]);
+  assert.deepEqual(jobs.cancelSources({accountId:'a',chatId:'other',messageId:'native-answer'}),[]);
+  assert.deepEqual(jobs.cancelSources({accountId:'a',chatId:'chat',messageId:'unrelated'}),[]);
+  assert.deepEqual(jobs.cancelSources({accountId:'a',chatId:'chat',messageId:'native-answer'}),[f.id]);
+  assert.equal(readFileSync(join(f.root,f.id+'.cancel'),'utf8'),'source-recalled');
+ }finally{f.close();}
+});
 test('old question receipt cannot overwrite notification for a resumed task',async()=>{
  const f=fixture();let service;try{
   const job=await ask(f);let callbacks,release;const done=new Promise(r=>release=r);

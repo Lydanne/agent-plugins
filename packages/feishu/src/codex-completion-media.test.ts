@@ -18,6 +18,7 @@ vi.mock("./send.js", () => ({
 }));
 vi.mock("./source-task.js", () => ({
   isCompletionSourceCurrent: () => true,
+  isTaskSourceRecalled: () => false,
   sourceTaskBridge: { recalls: new Set(), leases: new Map() },
 }));
 vi.mock("./bot-sender-name.js", () => ({ resolveFeishuSenderName: async () => ({}) }));

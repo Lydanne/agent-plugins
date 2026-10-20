@@ -1,8 +1,8 @@
 import {completionPayloadForMain} from "./completion-payload.js";
 import {urgentQuestion} from './question-urgent.js';
-import {handleWorkerQuestionAction} from './worker-question-action.js';
+import {handleWorkerQuestionAction,handleWorkerQuestionTextReply} from './worker-question-action.js';
 import {isFeishuCardValidationRejection} from './api-response.js';
-import {workerQuestionBridge,readQuestionCard,listQuestionCards,saveQuestionCard,renderQuestionCard,answerSummary,type Question,type QuestionCard} from './worker-question.js';
+import {workerQuestionBridge,readQuestionCard,listQuestionCards,saveQuestionCard,renderQuestionCard,answerSummary,questionAnswerSourceIds,type Question,type QuestionCard} from './worker-question.js';
 import {FeishuWorkingCard} from './working-card.js';
 import {continueAsyncTaskCard,sharesAsyncTaskCard} from './async-task-card.js';
 import {recentlyMentioned} from './recent-outbound-mentions.js';
@@ -13,7 +13,7 @@ import {renderBusinessMessage} from "./business-config.js";
 import {resolveFeishuRuntimeAccount} from "./accounts.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-entry-contract";
 import type { ClawdbotConfig } from "../runtime-api.js";
-import { isCompletionSourceCurrent, sourceTaskBridge } from "./source-task.js";
+import { isCompletionSourceCurrent, isTaskSourceRecalled, sourceTaskBridge } from "./source-task.js";
 import { runFeishuWorkingTurn } from "./working-turn-queue.js";
 import { editMessageFeishu, sendMessageFeishu, sendCardFeishu } from "./send.js";
 import { bindAsyncTaskCard, acceptAsyncCardResult, prepareAsyncCardResult, readAsyncTaskCard, saveAsyncCardQuestion, acceptAsyncCardProgress, prepareAsyncOriginalOverview } from "./async-task-card.js";
@@ -37,6 +37,10 @@ type Bridge = {contextState?: (event:ContextCardState)=>Promise<{interactive:boo
 const symbol = Symbol.for("ada.codex-completion.v1");
 const state = globalThis as typeof globalThis & {[symbol]?: Bridge};
 const bridge = state[symbol] ??= {};
+
+function isCompletionSourceAndAnswersCurrent(p:Provenance,stateDir:string):boolean{
+ return isCompletionSourceCurrent(p,stateDir)&&questionAnswerSourceIds(p,stateDir).every(messageId=>!isTaskSourceRecalled({...p,messageId},stateDir));
+}
 
 /** Keep the full persisted report deliverable even if the model omitted its link. */
 export function ensureCompletionReportLink(text:string,event:CompletionEvent):string {
@@ -65,11 +69,11 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
  if(questionTurn && (event.status!=="awaiting_main"||!event.contextRequest||event.contextRequest.expiresAt<=Date.now()))return {suppressed:true,reason:"question_invalid"};
  if (!questionTurn && !["completed", "failed", "timed_out", "cancelled"].includes(event.status)) return {suppressed: true, reason: "job_not_terminal"};
  const stateDir = core.state.resolveStateDir();
- if (!p?.requestMessageIds?.length || !isCompletionSourceCurrent(p, stateDir)) return {suppressed: true, reason: "source_invalid"};
+ if (!p?.requestMessageIds?.length || !isCompletionSourceAndAnswersCurrent(p, stateDir)) return {suppressed: true, reason: "source_invalid"};
  const controller = new AbortController();
  const signal = callbacks.signal ? AbortSignal.any([controller.signal, callbacks.signal]) : controller.signal;
  const recalled = (e: {accountId: string; chatId: string; messageId: string}) => {
-  if (e.accountId === p.accountId && e.chatId === p.chatId && p.sourceMessageIds.includes(e.messageId)) controller.abort();
+  if (e.accountId === p.accountId && e.chatId === p.chatId && (p.sourceMessageIds.includes(e.messageId)||questionAnswerSourceIds(p,stateDir).includes(e.messageId))) controller.abort();
  };
  sourceTaskBridge.recalls.add(recalled);
  let sent = false, suppressed = false, interrupted = false;
@@ -78,7 +82,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
    prepare: async () => {}, cancel: async () => {interrupted = callbacks.signal?.aborted === true; suppressed = !interrupted;},
    run: async () => {
     if(questionTurn && event.contextRequest!.expiresAt<=Date.now()){suppressed=true;return;}
-    if (!isCompletionSourceCurrent(p, stateDir) || signal.aborted) {suppressed = true; return;}
+    if (!isCompletionSourceAndAnswersCurrent(p, stateDir) || signal.aborted) {suppressed = true; return;}
     const cfg = structuredClone(core.config.current()) as ClawdbotConfig;
     const account=resolveFeishuRuntimeAccount({cfg,accountId:p.accountId});
     const accountConfig=account.config;
@@ -108,7 +112,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      if (deliveryError) throw deliveryError;
      if (sent || info.kind !== "final" || payload.isReasoning || payload.isCommentary || !payload.text) return;
      if (payload.text.startsWith("⚠️ OpenClaw couldn't produce or deliver a reply.")) throw Error("Codex completion received the host's no-visible-reply fallback");
-     if (!isCompletionSourceCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
+     if (!isCompletionSourceAndAnswersCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
      if(questionTurn){
       const question=readQuestionCard(stateDir,event.contextRequest!.questionId);
       // The requester can submit while Main is still finishing this turn.
@@ -137,7 +141,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      } catch {signal.throwIfAborted();stagingFailed=true;}
      const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,text:finalText,
       mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal});
-     if (!isCompletionSourceCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
+     if (!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
      const deliveryText=document?.text ?? finalText;
      let receipt;
      let resultMentionsRequester = false;
@@ -156,7 +160,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
        const chunks = core.channel.text.chunkMarkdownTextWithMode(result.combined, limit, mode);
        let firstReceipt;
        for (const chunk of chunks) {
-        if (!isCompletionSourceCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
+        if (!isCompletionSourceAndAnswersCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
         const chunkReceipt = await sendMessageFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
          replyToMessageId: binding.messageId, text: chunk, replyInThread: p.replyInThread ?? false});
         resultMentionsRequester ||= chunkReceipt.mentionedUserIds?.includes(p.senderId) ?? false;
@@ -179,18 +183,18 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       else activateBackgroundDocument(stateDir,staged,receipt.messageId,true,`<at id="${p.senderId}"></at>${renderBusinessMessage(businessMessages,"mentionSuffix")}\n`);
      }
      for(const mediaUrl of document && "mediaUrls" in document ? document.mediaUrls ?? [] : splitMessageImages(finalText,[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],cfg.agents?.defaults?.workspace).images) {
-      if(!isCompletionSourceCurrent(p,stateDir) || !sessionCurrent() || signal.aborted){suppressed=true;return;}
+      if(!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted){suppressed=true;return;}
       await sendMediaFeishu({cfg:completionCfg,mediaRuntime:core.media,accountId:p.accountId,to:"chat:"+p.chatId,replyToMessageId:receipt.messageId,replyInThread:p.replyInThread ?? false,mediaUrl});
      }
      callbacks.onReceipt(receipt); sent = true;
      clearPreparedCompletion(stateDir,event);
-     if(binding?.originalMessageId && !listQuestionCards(stateDir).some(card=>card.jobId===event.jobId&&card.messageId===binding.originalMessageId&&card.provenance.accountId===p.accountId&&card.provenance.sessionKey===p.sessionKey) && isCompletionSourceCurrent(p,stateDir) && sessionCurrent() && !signal.aborted){
+     if(binding?.originalMessageId && !listQuestionCards(stateDir).some(card=>card.jobId===event.jobId&&card.messageId===binding.originalMessageId&&card.provenance.accountId===p.accountId&&card.provenance.sessionKey===p.sessionKey) && isCompletionSourceAndAnswersCurrent(p,stateDir) && sessionCurrent() && !signal.aborted){
       try {
        const overview=prepareAsyncOriginalOverview(stateDir,binding,event.status,accountConfig);
        if(overview)await editMessageFeishu({cfg:completionCfg,accountId:p.accountId,messageId:binding.originalMessageId,card:overview});
       }catch{console.warn("Worker result accepted, but initial overview status update failed; latest result remains authoritative");}
      }
-     if (binding && isCompletionSourceCurrent(p, stateDir) && sessionCurrent() && !signal.aborted &&
+     if (binding && isCompletionSourceAndAnswersCurrent(p, stateDir) && sessionCurrent() && !signal.aborted &&
       (!resultMentionsRequester && (binding.imageKey || !recentlyMentioned({accountId:p.accountId,to:'chat:'+p.chatId,replyInThread:p.replyInThread,replyToMessageId:receipt.messageId},p.senderId)))) {
       try {
        await sendMessageFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
@@ -218,7 +222,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
     const recipientContext=profileContext+buildDepartmentReplyStyleContext({senderOpenId:p.senderId,
      departments:directory.departments,rules:accountConfig.departmentReplyStyles});
     text=buildCodexCompletionText(event,recipientContext);
-    if (!isCompletionSourceCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
+    if (!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
     const ctxPayload=contextPayload();
     let mainStarted=false;
     await core.channel.inbound.run({channel: "feishu", accountId: p.accountId, raw: event, adapter: {
@@ -248,7 +252,7 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
  const runtime = api.runtime;
  const deliver: NonNullable<Bridge["deliver"]> = (event, callbacks) => deliverCodexCompletion(event, callbacks, runtime);
  const authorizeReply: NonNullable<Bridge["authorizeReply"]> = p => {
-  if(!isCompletionSourceCurrent(p,runtime.state.resolveStateDir()))return false;
+  if(!isCompletionSourceAndAnswersCurrent(p,runtime.state.resolveStateDir()))return false;
   const agentId=/^agent:([^:]+):/.exec(p.sessionKey)?.[1];if(!agentId)return false;
   const cfg=runtime.config.current();const storePath=runtime.agent.session.resolveStorePath(cfg.session?.store,{agentId});
   return !p.sessionId||runtime.agent.session.getSessionEntry({storePath,agentId,sessionKey:p.sessionKey,readConsistency:"latest"})?.sessionId===p.sessionId;
@@ -347,13 +351,19 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
    card={...card,dispatchAttempts:(card.dispatchAttempts??0)+1};saveQuestionCard(stateDir,card);
    const answerEventId='worker-answer:'+card.question.questionId+':'+card.dispatchAttempts;
    const answer=answerSummary(card.question,card.answers??{})+(card.note?'\n补充说明：'+card.note:'');
-   const text=renderSection('FeishuAnswer', JSON.stringify({jobId:card.jobId,questionId:card.question.questionId,answers:card.answers,answer,question:card.question}));
+   const text=renderSection('FeishuAnswer', JSON.stringify({jobId:card.jobId,questionId:card.question.questionId,answers:card.answers,answer,question:card.question,...(card.answerSource==='user_text'?{answerSource:'user_text',answerMessageId:card.answerMessageId}:{})}));
    const answerCfg={...cfg,messages:{...cfg.messages,queue:{...cfg.messages?.queue,mode:'followup' as const}}};
    const agentId=/^agent:([^:]+):/.exec(p.sessionKey)?.[1];if(!agentId)throw Error('Main session owner missing');
    const ctxPayload=runtime.channel.reply.finalizeInboundContext({Body:text,BodyForAgent:text,RawBody:text,CommandBody:'',SessionKey:p.sessionKey,AccountId:p.accountId,From:'feishu:'+p.senderId,To:'chat:'+p.chatId,ChatType:'group',Provider:'feishu',Surface:'feishu',SenderId:p.senderId,OriginatingChannel:'feishu',OriginatingTo:'chat:'+p.chatId,MessageSid:answerEventId,CommandAuthorized:false});
+   let clarification:string|undefined;
    // The new working card is the acknowledgement; only the eventual Worker result is user-facing.
-   await runtime.channel.inbound.run({channel:'feishu',accountId:p.accountId,raw:card,adapter:{ingest:()=>({id:answerEventId,rawText:text,textForAgent:text,textForCommands:'',raw:card}),resolveTurn:()=>({cfg:answerCfg,channel:'feishu',accountId:p.accountId,route:{agentId,sessionKey:p.sessionKey},ctxPayload,replyOptions:{disableBlockStreaming:true},delivery:{deliver:async()=>{}}})}});
+   await runtime.channel.inbound.run({channel:'feishu',accountId:p.accountId,raw:card,adapter:{ingest:()=>({id:answerEventId,rawText:text,textForAgent:text,textForCommands:'',raw:card}),resolveTurn:()=>({cfg:answerCfg,channel:'feishu',accountId:p.accountId,route:{agentId,sessionKey:p.sessionKey},ctxPayload,replyOptions:{disableBlockStreaming:true},delivery:{deliver:async(payload,info)=>{if(info.kind==='final'&&!payload.isReasoning&&!payload.isCommentary&&payload.text)clarification=payload.text;}}})}});
    const after=workerQuestionBridge.read?.({jobId:card.jobId,questionId:card.question.questionId,provenance:p});
+   if(after?.question.answer===undefined&&after?.status==='awaiting_user'&&card.answerSource==='user_text'){
+    const latest=readQuestionCard(stateDir,card.question.questionId)??card;
+    saveQuestionCard(stateDir,{...latest,status:'waiting',question:after.question,validationNote:clarification?.slice(0,2000)??'这条文字补充还不足以继续，请填写卡片中的必要信息或重新回复。'});
+    return;
+   }
    if(after?.question.answer===undefined)throw Error('Main has not accepted the answer; saved for retry');
    const latest=readQuestionCard(stateDir,card.question.questionId)??card;saveQuestionCard(stateDir,{...latest,status:'accepted'});
   }});
@@ -361,10 +371,11 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
  const submission:NonNullable<typeof workerQuestionBridge.submission>=params=>{
   const card=readQuestionCard(runtime.state.resolveStateDir(),params.questionId);
   if(!card||card.jobId!==params.jobId||!card.answers||!['submitted','accepted'].includes(card.status)||!authorizeReply(params.provenance)||['taskId','revision','accountId','chatId','sessionKey','senderId'].some(key=>card.provenance[key as keyof typeof card.provenance]!==params.provenance[key as keyof typeof params.provenance]))return;
-  return {answerValues:card.answers,answerSource:'user_card',userSubmittedAt:card.submittedAt};
+  return card.answerSource==='user_text'?{answerSource:'user_text',answerMessageId:card.answerMessageId,userSubmittedAt:card.submittedAt}:{answerValues:card.answers,answerSource:'user_card',userSubmittedAt:card.submittedAt};
  };
  const action:NonNullable<typeof workerQuestionBridge.action>=params=>handleWorkerQuestionAction({...params,stateDir:runtime.state.resolveStateDir()});
- api.registerService({id: "feishu-codex-completion", start: async () => {workerQuestionBridge.submission=submission;workerQuestionBridge.action=action;workerQuestionBridge.submit=submit;workerQuestionBridge.authorize=authorizeReply;bridge.deliver = deliver;bridge.authorizeReply=authorizeReply;bridge.contextState=contextState;
+ const textReply:NonNullable<typeof workerQuestionBridge.textReply>=params=>handleWorkerQuestionTextReply({...params,stateDir:runtime.state.resolveStateDir()});
+ api.registerService({id: "feishu-codex-completion", start: async () => {workerQuestionBridge.submission=submission;workerQuestionBridge.action=action;workerQuestionBridge.textReply=textReply;workerQuestionBridge.submit=submit;workerQuestionBridge.authorize=authorizeReply;bridge.deliver = deliver;bridge.authorizeReply=authorizeReply;bridge.contextState=contextState;
    // Restore visible retry controls without replaying an uncertain Main turn or card create.
    for(const card of listQuestionCards(runtime.state.resolveStateDir())){
     if(card.status!=='submitted'||!card.messageId||!authorizeReply(card.provenance)||card.question.expiresAt<=Date.now())continue;
@@ -376,5 +387,5 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
     }catch{console.warn('Pending question recovery failed; saved answer retained');}
    }
   },
-  stop: () => {if(workerQuestionBridge.submission===submission)workerQuestionBridge.submission=undefined;if(workerQuestionBridge.action===action)workerQuestionBridge.action=undefined;if(workerQuestionBridge.submit===submit)workerQuestionBridge.submit=undefined;if(workerQuestionBridge.authorize===authorizeReply)workerQuestionBridge.authorize=undefined;if (bridge.deliver === deliver) bridge.deliver = undefined;if(bridge.authorizeReply===authorizeReply)bridge.authorizeReply=undefined;if(bridge.contextState===contextState)bridge.contextState=undefined;}});
+  stop: () => {if(workerQuestionBridge.submission===submission)workerQuestionBridge.submission=undefined;if(workerQuestionBridge.action===action)workerQuestionBridge.action=undefined;if(workerQuestionBridge.textReply===textReply)workerQuestionBridge.textReply=undefined;if(workerQuestionBridge.submit===submit)workerQuestionBridge.submit=undefined;if(workerQuestionBridge.authorize===authorizeReply)workerQuestionBridge.authorize=undefined;if (bridge.deliver === deliver) bridge.deliver = undefined;if(bridge.authorizeReply===authorizeReply)bridge.authorizeReply=undefined;if(bridge.contextState===contextState)bridge.contextState=undefined;}});
 }

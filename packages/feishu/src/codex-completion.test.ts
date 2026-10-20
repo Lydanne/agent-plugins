@@ -9,11 +9,11 @@ import {join} from 'node:path';
 import {acceptAsyncCardResult,bindAsyncTaskCard,readAsyncTaskCard,continueAsyncTaskCard} from './async-task-card.js';
 import {runFeishuWorkingTurn} from "./working-turn-queue.js";
 import {savePreparedCompletion,readPreparedCompletion} from "./completion-outbox.js";
-const mocks=vi.hoisted(()=>({directory:vi.fn(),valid:true,buzz:vi.fn(),media:vi.fn(),send:vi.fn(),edit:vi.fn(),run:vi.fn(),recalls:new Set(),leases:new Map(),entry: {sessionId:"current"},config:{messages:{queue:{mode:'steer'}}}}));
+const mocks=vi.hoisted(()=>({directory:vi.fn(),valid:true,buzz:vi.fn(),media:vi.fn(),send:vi.fn(),edit:vi.fn(),run:vi.fn(),recalls:new Set(),withdrawnMessages:new Set<string>(),leases:new Map(),entry: {sessionId:"current"},config:{messages:{queue:{mode:'steer'}}}}));
 vi.mock('./media.js',()=>({sendMediaFeishu:mocks.media}));
 vi.mock('./question-urgent.js',()=>({urgentQuestion:mocks.buzz}));
 vi.mock('./bot-sender-name.js',()=>({resolveFeishuSenderName:mocks.directory}));
-vi.mock('./source-task.js',()=>({isCompletionSourceCurrent:()=>mocks.valid,sourceTaskBridge:{recalls:mocks.recalls,leases:mocks.leases}}));
+vi.mock('./source-task.js',()=>({isCompletionSourceCurrent:()=>mocks.valid,isTaskSourceRecalled:({messageId}:{messageId:string})=>mocks.withdrawnMessages.has(messageId),sourceTaskBridge:{recalls:mocks.recalls,leases:mocks.leases}}));
 vi.mock('./send.js',()=>({sendMessageFeishu:mocks.send,sendCardFeishu:mocks.send,editMessageFeishu:mocks.edit}));
 vi.mock('./runtime.js',()=>({getFeishuRuntime:()=>{throw Error('Feishu runtime not initialized');}}));
 import {ensureCompletionReportLink,buildCodexCompletionText,deliverCodexCompletion as deliverWithRuntime,registerCodexCompletion,type CompletionEvent} from './codex-completion.js';
@@ -25,7 +25,7 @@ const deliverCodexCompletion=(event:CompletionEvent,callbacks:Parameters<typeof 
 const event:CompletionEvent={type:'codex_query.completed',eventId:'event',jobId:'job',topic:'test',status:'completed',reportContent:'完整报告',reportPaths:['/workspace/.tmp/report.md'],provenance:{sessionId:'current',taskId:'task',revision:0,accountId:'a',chatId:'chat',sessionKey:'agent:main:feishu:chat',senderId:'sender',sourceMessageIds:['request','quote'],requestMessageIds:['request']}};
 const completionPayload=(value:CompletionEvent)=>JSON.parse(buildCodexCompletionText(value).split('\n').at(-1)!);
 afterEach(()=>rmSync(cardStateDir,{recursive:true,force:true}));
-beforeEach(()=>{mocks.media.mockReset().mockResolvedValue({messageId:"image"});mocks.buzz.mockReset().mockResolvedValue(undefined);clearRecentOutboundMentions();mocks.directory.mockReset().mockResolvedValue({});cardStateDir=mkdtempSync(join(tmpdir(),'feishu-completion-test-'));mocks.edit.mockReset().mockImplementation(async p=>{recordEditedMentions(p.accountId,p.messageId,p.card,Date.now(),p.mentionScope);return {messageId:p.messageId,contentType:'interactive',mentionedUserIds:nativeMentionIds(p.card)};});mocks.entry={sessionId:"current"};mocks.valid=true;mocks.send.mockReset().mockResolvedValue({messageId:'sent'});mocks.run.mockReset();mocks.recalls.clear();mocks.leases.clear();mocks.run.mockImplementation(async({adapter})=>{const plan=adapter.resolveTurn();await plan.delivery.deliver({text:'核验结果'}, {kind:'final'});});});
+beforeEach(()=>{mocks.media.mockReset().mockResolvedValue({messageId:"image"});mocks.buzz.mockReset().mockResolvedValue(undefined);clearRecentOutboundMentions();mocks.directory.mockReset().mockResolvedValue({});cardStateDir=mkdtempSync(join(tmpdir(),'feishu-completion-test-'));mocks.edit.mockReset().mockImplementation(async p=>{recordEditedMentions(p.accountId,p.messageId,p.card,Date.now(),p.mentionScope);return {messageId:p.messageId,contentType:'interactive',mentionedUserIds:nativeMentionIds(p.card)};});mocks.entry={sessionId:"current"};mocks.valid=true;mocks.send.mockReset().mockResolvedValue({messageId:'sent'});mocks.run.mockReset();mocks.recalls.clear();mocks.withdrawnMessages.clear();mocks.leases.clear();mocks.run.mockImplementation(async({adapter})=>{const plan=adapter.resolveTurn();await plan.delivery.deliver({text:'核验结果'}, {kind:'final'});});});
 it('retains the original completion envelope and full submitted context for Ada and host routing',async()=>{
  const sample={...event,reportContent:'aaa',reportPaths:[],experienceReview:{status:'none',candidates:[],reportedBy:'codex_executor',persisted:false}};
  expect(completionPayload(sample)).toEqual({...sample,request:{availability:'unavailable',reason:'legacy_event'}});
@@ -787,6 +787,63 @@ it.each(['sender','aborted'])('does not acquire another or inactive working card
  }finally{await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
 
+
+it.each([false,true])('continues the bound job from a native text reply, updates its question and sends one neutral reminder (recalled=%s)',async recalled=>{
+ const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');
+ const {FeishuWorkingCard}=await import('./working-card.js');
+ const p=event.provenance,question={questionId:'native-q',question:'请选择查询日期范围',reason:'范围缺失',progress:'只读查询',expiresAt:Date.now()+60000,fields:[{id:'period',label:'查询范围',type:'date_range' as const,required:true,timezone:'Asia/Shanghai'}]};
+ bindAsyncTaskCard(cardStateDir,p,[event.jobId],{messageId:'question-card',imageKey:'gif'});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>;authorizeReply:(p:typeof event.provenance)=>boolean}})[Symbol.for('ada.codex-completion.v1')];
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockImplementation(async()=>{}),hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'continuation-card',imageKey:'gif'});
+ let answer:string|undefined;
+ await service.start({} as Parameters<typeof service.start>[0]);
+ try{
+  workerQuestionBridge.read=()=>({status:answer?'running':'awaiting_user',question:{...question,answer}});
+  await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:p,status:'awaiting_user',contextRequest:question});
+  mocks.run.mockImplementation(async({adapter})=>{
+   const plan=adapter.resolveTurn(),payload=JSON.parse(plan.ctxPayload.Body.split('\n')[1]);
+   expect(plan.ctxPayload.Body).toMatch(/^\[FeishuAnswer\]/);expect(payload).toMatchObject({jobId:event.jobId,questionId:question.questionId,answerSource:'user_text',answerMessageId:'native-answer'});
+   expect(payload.answer).toContain('北京时间10月19日至20日');
+   const metadata=workerQuestionBridge.submission!({jobId:event.jobId,questionId:question.questionId,provenance:p});
+   expect(metadata).toMatchObject({answerSource:'user_text',answerMessageId:'native-answer'});expect(metadata).not.toHaveProperty('answerValues');
+   answer=payload.answer;await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:p,status:'resumed'});
+   await plan.delivery.deliver({text:'原任务继续执行。'},{kind:'final'});
+  });
+  expect(await workerQuestionBridge.textReply!({cfg:{},accountId:p.accountId,chatId:p.chatId,senderId:p.senderId,parentId:'question-card',messageId:'native-answer',text:'北京时间10月19日至20日'})).toBe(true);
+  await vi.waitFor(()=>expect(readQuestionCard(cardStateDir,question.questionId)?.status).toBe('accepted'));
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,p)?.messageId).toBe('continuation-card');expect(mocks.send).not.toHaveBeenCalled();
+  expect(JSON.stringify(mocks.edit.mock.calls.filter(([v])=>v.messageId==='question-card').at(-1))).toContain('文字补充：北京时间10月19日至20日');
+  if(recalled){mocks.withdrawnMessages.add('native-answer');expect(bridge.authorizeReply(p)).toBe(false);}
+  mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'部分完成，尚缺发送回执。'},{kind:'final'}));
+  const receipt=vi.fn();const delivered=await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:receipt});
+  if(recalled){expect(delivered).toMatchObject({suppressed:true,reason:'source_invalid'});expect(receipt).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();}
+  else{expect(receipt).toHaveBeenCalledOnce();expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({replyToMessageId:'continuation-card',text:'老师，结果已更新，请查看上方回复。'}));}
+ }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
+it('keeps a text answer pending with Main clarification on the original card and accepts a later correction',async()=>{
+ const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');const {FeishuWorkingCard}=await import('./working-card.js');
+ const p=event.provenance,question={questionId:'clarify-q',question:'查询哪一天？',reason:'日期缺失',progress:'只读',expiresAt:Date.now()+60000,fields:[{id:'day',label:'日期',type:'date' as const,required:true,timezone:'Asia/Shanghai'}]};
+ bindAsyncTaskCard(cardStateDir,p,[event.jobId],{messageId:'question-card',imageKey:'gif'});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockImplementation(async()=>{}),hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'continuation-card',imageKey:'gif'});let answer:string|undefined;
+ await service.start({} as Parameters<typeof service.start>[0]);
+ try{
+  workerQuestionBridge.read=()=>({status:answer?'running':'awaiting_user',question:{...question,answer}});
+  await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:p,status:'awaiting_user',contextRequest:question});
+  mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'请补充具体日期，例如2026-10-19。'},{kind:'final'}));
+  const reply={cfg:{},accountId:p.accountId,chatId:p.chatId,senderId:p.senderId,parentId:'question-card'};
+  await workerQuestionBridge.textReply!({...reply,messageId:'vague-answer',text:'之前那天'});
+  await vi.waitFor(()=>expect(readQuestionCard(cardStateDir,question.questionId)).toMatchObject({status:'waiting',validationNote:'请补充具体日期，例如2026-10-19。'}));
+  expect(mocks.send).not.toHaveBeenCalled();expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain('请补充具体日期');
+  mocks.run.mockImplementation(async({adapter})=>{answer='2026-10-19';await adapter.resolveTurn().delivery.deliver({text:'已收到。'},{kind:'final'});});
+  await workerQuestionBridge.textReply!({...reply,messageId:'clear-answer',text:'2026-10-19'});
+  await vi.waitFor(()=>expect(readQuestionCard(cardStateDir,question.questionId)).toMatchObject({status:'accepted',answerMessageId:'clear-answer',note:'2026-10-19'}));
+  expect(readQuestionCard(cardStateDir,question.questionId)?.validationNote).toBeUndefined();expect(hold).toHaveBeenCalledOnce();expect(mocks.send).not.toHaveBeenCalled();
+ }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
 
 it('cycles four question/answer rounds A -> B -> C -> D -> E result and mentions completion only once',async()=>{
  const {workerQuestionBridge,readQuestionCard,saveQuestionCard}=await import('./worker-question.js');

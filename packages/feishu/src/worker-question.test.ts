@@ -3,7 +3,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {renderQuestionCard,parseQuestionSubmission,saveQuestionCard,readQuestionCard,claimQuestionAnswer,questionAction,workerQuestionBridge,type QuestionCard} from './worker-question.js';
-import {handleWorkerQuestionAction} from './worker-question-action.js';
+import {handleWorkerQuestionAction,handleWorkerQuestionTextReply} from './worker-question-action.js';
 const mocks=vi.hoisted(()=>({edit:vi.fn(),send:vi.fn()}));
 vi.mock('./send.js',()=>({editMessageFeishu:mocks.edit,sendMessageFeishu:mocks.send}));
 let stateDir:string;
@@ -94,6 +94,72 @@ it('keeps every form input within the Card JSON 2.0 length limit',()=>{
  const walk=(node:unknown)=>{if(Array.isArray(node))node.forEach(walk);else if(node&&typeof node==='object'){const value=node as Record<string,unknown>;if(value.tag==='input')inputs.push(value);Object.values(value).forEach(walk);}};walk(rendered);
  expect(inputs.map(node=>[node.name,node.max_length])).toEqual([['detail',1000],['count',40],['worker_note',1000]]);
  for(const input of inputs){expect(input.max_length).toBeGreaterThanOrEqual(1);expect(input.max_length).toBeLessThanOrEqual(1000);}
+});
+
+const textReply=(overrides:Partial<Parameters<typeof handleWorkerQuestionTextReply>[0]>={})=>handleWorkerQuestionTextReply({cfg:{},stateDir,accountId:'a',chatId:'chat',senderId:'alice',messageId:'answer-message',parentId:'card',text:'北京时间10月19日到20日',...overrides});
+it('accepts a native text answer without inventing values for required form fields and updates the same question card',async()=>{
+ const card=fixture();saveQuestionCard(stateDir,card);
+ expect(await textReply()).toBe(true);
+ await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+ expect(readQuestionCard(stateDir,'q')).toMatchObject({answerSource:'user_text',answerMessageId:'answer-message',answers:{env:'prod'},note:'北京时间10月19日到20日',messageId:'card'});
+ expect(workerQuestionBridge.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({jobId:'job',answerMessageId:'answer-message'}));
+ expect(mocks.edit.mock.calls.every(([p])=>p.messageId==='card')).toBe(true);
+ expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain('文字补充：北京时间10月19日到20日');
+ expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).not.toContain('form_action_type');
+ expect(mocks.send).not.toHaveBeenCalled();
+});
+it.each(['accountId','chatId','senderId','parentId'] as const)('does not capture a text answer with a different %s',async key=>{
+ saveQuestionCard(stateDir,fixture());expect(await textReply({[key]:'other'})).toBe(false);
+ expect(workerQuestionBridge.submit).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();
+});
+it.each(['expired','cancelled','source','worker-running','wrong-question'] as const)('keeps an invalid %s text answer from resuming or becoming a new task',async kind=>{
+ const card=fixture();if(kind==='expired')card.question.expiresAt=0;if(kind==='cancelled')card.status='cancelled';saveQuestionCard(stateDir,card);
+ if(kind==='source')workerQuestionBridge.authorize=()=>false;
+ if(kind==='worker-running')workerQuestionBridge.read=()=>({status:'running',question:card.question});
+ if(kind==='wrong-question')workerQuestionBridge.read=()=>({status:'awaiting_user',question:{...card.question,questionId:'other'}});
+ expect(await textReply()).toBe(true);expect(workerQuestionBridge.submit).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.send).toHaveBeenCalledOnce();
+ expect(readQuestionCard(stateDir,'q')?.answerMessageId).toBeUndefined();
+});
+it('deduplicates the same native reply and rejects replacement by a different reply',async()=>{
+ saveQuestionCard(stateDir,fixture());await textReply();await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+ await textReply();expect(mocks.send).not.toHaveBeenCalled();
+ await textReply({messageId:'second-message',text:'另一条补充'});
+ expect(workerQuestionBridge.submit).toHaveBeenCalledOnce();expect(readQuestionCard(stateDir,'q')?.note).toBe('北京时间10月19日到20日');expect(mocks.send).toHaveBeenCalledOnce();
+});
+it('preserves a long text answer in full while bounding only the question card preview',async()=>{
+ const card=fixture();card.question.allowFreeText=false;saveQuestionCard(stateDir,card);const raw='完整原始文字'.repeat(1800);
+ await textReply({text:raw});await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+ expect(readQuestionCard(stateDir,'q')?.note).toBe(raw);expect(workerQuestionBridge.submit).toHaveBeenCalledWith(expect.objectContaining({note:raw}));
+ expect(Buffer.byteLength(JSON.stringify(mocks.edit.mock.calls.at(-1)![0].card),'utf8')).toBeLessThan(28000);
+ expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain('完整文字已保存');
+});
+it('keeps oversize text pending and does not silently truncate it before continuation',async()=>{
+ saveQuestionCard(stateDir,fixture());expect(await textReply({text:'长'.repeat(16000)})).toBe(true);
+ expect(workerQuestionBridge.submit).not.toHaveBeenCalled();expect(readQuestionCard(stateDir,'q')?.status).toBe('waiting');expect(mocks.send).toHaveBeenCalledOnce();
+});
+it('reserves the answer once when a form callback races with a native text reply',async()=>{
+ const card=fixture();saveQuestionCard(stateDir,card);let release!:()=>void;
+ workerQuestionBridge.submit=vi.fn(async submitted=>{await new Promise<void>(resolve=>release=resolve);saveQuestionCard(stateDir,{...submitted,status:'accepted'});});
+ await textReply();await vi.waitFor(()=>expect(workerQuestionBridge.submit).toHaveBeenCalledOnce());
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:event(card,{period__start:'2026-10-19',period__end:'2026-10-20'}),stateDir});
+ release();await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));expect(workerQuestionBridge.submit).toHaveBeenCalledOnce();
+});
+it('retains a failed text answer for the same explicit retry control as a form answer',async()=>{
+ saveQuestionCard(stateDir,fixture());workerQuestionBridge.submit=vi.fn().mockRejectedValueOnce(Error('offline')).mockImplementation(async card=>saveQuestionCard(stateDir,{...card,status:'accepted'}));
+ await textReply();await vi.waitFor(()=>expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain('重试交回 Main'));
+ const retry=event(fixture(),{});retry.action.value.m={questionId:'q',retry:true};
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:retry,stateDir});await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+ expect(workerQuestionBridge.submit).toHaveBeenLastCalledWith(expect.objectContaining({answerSource:'user_text',answerMessageId:'answer-message',note:'北京时间10月19日到20日'}));
+});
+it('does not guess between two pending questions sharing the same reply target',async()=>{
+ const card=fixture();saveQuestionCard(stateDir,card);saveQuestionCard(stateDir,{...card,jobId:'other',question:{...card.question,questionId:'other'}});
+ expect(await textReply()).toBe(true);expect(workerQuestionBridge.submit).not.toHaveBeenCalled();expect(mocks.send).toHaveBeenCalledOnce();
+});
+it('clears the earlier text source and clarification when a pending question is answered through its form',()=>{
+ const card={...fixture(),answerSource:'user_text' as const,answerMessageId:'unaccepted-text',note:'未明确',validationNote:'请提供日期'};saveQuestionCard(stateDir,card);
+ const values=parseQuestionSubmission(card,{period__start:'2026-10-19',period__end:'2026-10-20'});
+ const submitted=claimQuestionAnswer(stateDir,card,values.answers,values.note);
+ expect(submitted.answerSource).toBe('user_card');expect(submitted.answerMessageId).toBeUndefined();expect(submitted.validationNote).toBeUndefined();
 });
 
 it('rejects waiting cards with no remaining response controls',()=>{

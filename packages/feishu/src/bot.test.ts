@@ -2,6 +2,7 @@ import { prepareHistory } from "./input-context.js";
 const contextSdk = vi.hoisted(() => ({getSessionEntry: vi.fn(), readCodexSessionContext: vi.fn(), readTranscriptStatsSync: vi.fn()}));
 vi.mock('openclaw/plugin-sdk/codex-session-transcript-runtime', () => ({readCodexSessionContext: (scope: unknown, read: (messages: unknown[]) => unknown) => read(contextSdk.readCodexSessionContext(scope) ?? [])}));
 import { recallTaskSource, sourceTaskBridge } from "./source-task.js";
+import { workerQuestionBridge } from "./worker-question.js";
 const mockPrepareWorkspaceContext = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("./workspace-context.js", () => ({prepareWorkspaceContext: mockPrepareWorkspaceContext, clearWorkspaceContext: vi.fn()}));
 const mockSyncAdaWorkspace = vi.hoisted(() => vi.fn(async (_config?: unknown): Promise<{ok:true;rootHead?:string;wikiHead?:string}|{ok:false;reason:string}> => ({ok:true})));
@@ -1474,6 +1475,37 @@ describe("handleFeishuMessage command authorization", () => {
         },
       }),
     );
+  });
+
+  it.each(['group','p2p'] as const)('routes an admitted native %s question reply without a separate mention or a new model task',async chatType=>{
+    const textReply=vi.fn(async()=>true);workerQuestionBridge.textReply=textReply;
+    try{
+      await dispatchMessage({cfg:createFeishuTestConfig({groupPolicy:'open',requireMention:true,dmPolicy:'open'}),event:createFeishuTestEvent({messageId:'question-native-'+chatType,senderOpenId:'ou-questioner',chatId:'oc-question-chat',chatType,text:'北京时间10月19日至20日',message:{parent_id:'question-card'}})});
+      expect(textReply).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({chatId:'oc-question-chat',senderId:'ou-questioner',parentId:'question-card',text:'北京时间10月19日至20日'}));
+      expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();expect(mockCreateFeishuReplyDispatcher).not.toHaveBeenCalled();expect(mockSyncAdaWorkspace).not.toHaveBeenCalled();expect(mockGetMessageFeishu).not.toHaveBeenCalled();
+    }finally{workerQuestionBridge.textReply=undefined;}
+  });
+  it.each(['group','sender','dm'] as const)('does not let a native question reply bypass %s admission',async kind=>{
+    const textReply=vi.fn(async()=>true);workerQuestionBridge.textReply=textReply;
+    const cfg=createFeishuTestConfig(kind==='dm'?{dmPolicy:'allowlist',allowFrom:['ou-approved']}:{groupPolicy:kind==='group'?'disabled':'open',groupSenderAllowFrom:['ou-approved'],requireMention:true});
+    try{
+      await dispatchMessage({cfg,event:createFeishuTestEvent({messageId:'denied-question-'+kind,senderOpenId:'ou-questioner',chatId:'oc-question-chat',chatType:kind==='dm'?'p2p':'group',text:'补充范围',message:{parent_id:'question-card'}})});
+      expect(textReply).not.toHaveBeenCalled();expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    }finally{workerQuestionBridge.textReply=undefined;}
+  });
+  it('routes a text-only rich-text question reply through the same continuation adapter',async()=>{
+    const textReply=vi.fn(async()=>true);workerQuestionBridge.textReply=textReply;
+    try{
+      await dispatchMessage({cfg:createFeishuTestConfig({groupPolicy:'open',requireMention:true}),event:createFeishuTestEvent({messageId:'rich-question-reply',chatType:'group',text:'',message:{parent_id:'question-card',message_type:'post',content:JSON.stringify({zh_cn:{title:'补充范围',content:[[{tag:'text',text:'2026年10月19日至20日'}]]}})}})});
+      expect(textReply).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({text:expect.stringContaining('2026年10月19日至20日')}));expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
+    }finally{workerQuestionBridge.textReply=undefined;}
+  });
+  it('continues ordinary chat routing when the quoted message is not a bound question',async()=>{
+    workerQuestionBridge.textReply=vi.fn(async()=>false);
+    try{
+      await dispatchMessage({cfg:createFeishuTestConfig({groupPolicy:'open',requireMention:false}),event:createFeishuTestEvent({messageId:'ordinary-reply',chatType:'group',text:'普通追问',message:{parent_id:'ordinary-card'}})});
+      expect(mockDispatchReplyFromConfig).toHaveBeenCalledOnce();
+    }finally{workerQuestionBridge.textReply=undefined;}
   });
 
   it.each([true, false])("window decision %s controls non-mentioned dispatch", async (accepted) => {

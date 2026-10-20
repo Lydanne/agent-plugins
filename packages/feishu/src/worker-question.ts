@@ -8,8 +8,9 @@ export const WORKER_QUESTION_SUBMIT='worker.question.submit';
 export const WORKER_QUESTION_CANCEL='worker.question.cancel';
 export type Question = ContextRequest & {questionId:string;expiresAt:number;knownValues?:Record<string,unknown>;answer?:string};
 export type QuestionProvenance = Omit<TaskLease,'signal'> & {sessionId?:string;requestMessageIds:string[]};
-export type QuestionCard = {jobId:string;provenance:QuestionProvenance;question:Question;messageId:string;status:'waiting'|'submitted'|'accepted'|'cancelled';answers?:Record<string,unknown>;note?:string;submittedAt?:number;workingMessageId?:string;workingAttempted?:boolean;rendered?:boolean;creationState?:'retryable'|'uncertain';dispatchAttempts?:number;urgentAttemptedAt?:number;urgentOutcome?:'uncertain'|'sent'|'failed'};
-type QuestionBridge={submission?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{answerValues:Record<string,unknown>;answerSource:'user_card';userSubmittedAt?:number}|undefined;cancel?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string};read?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string;question:Question};submit?:(card:QuestionCard)=>Promise<void>;action?:(params:{cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;event:import('./card-action.js').FeishuCardActionEvent})=>Promise<void>;authorize?:(p:QuestionProvenance)=>boolean};
+export type QuestionTextReply = {cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;chatId:string;senderId:string;messageId:string;parentId:string;text:string};
+export type QuestionCard = {jobId:string;provenance:QuestionProvenance;question:Question;messageId:string;status:'waiting'|'submitted'|'accepted'|'cancelled';answers?:Record<string,unknown>;note?:string;answerSource?:'user_card'|'user_text';answerMessageId?:string;validationNote?:string;submittedAt?:number;workingMessageId?:string;workingAttempted?:boolean;rendered?:boolean;creationState?:'retryable'|'uncertain';dispatchAttempts?:number;urgentAttemptedAt?:number;urgentOutcome?:'uncertain'|'sent'|'failed'};
+type QuestionBridge={submission?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{answerValues?:Record<string,unknown>;answerSource:'user_card'|'user_text';answerMessageId?:string;userSubmittedAt?:number}|undefined;cancel?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string};read?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string;question:Question};submit?:(card:QuestionCard)=>Promise<void>;textReply?:(params:QuestionTextReply)=>Promise<boolean>;action?:(params:{cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;event:import('./card-action.js').FeishuCardActionEvent})=>Promise<void>;authorize?:(p:QuestionProvenance)=>boolean};
 const symbol=Symbol.for('ada.worker-question.v1');
 const globalState=globalThis as typeof globalThis & {[symbol]?:QuestionBridge};
 export const workerQuestionBridge=globalState[symbol]??={};
@@ -22,6 +23,12 @@ export function readQuestionCard(stateDir:string,questionId:string):QuestionCard
  const db=database(stateDir);try{const row=db.prepare('SELECT metadata FROM questions WHERE id=?').get(questionId) as {metadata:string}|undefined;return row?JSON.parse(row.metadata):undefined;}finally{db.close();}
 }
 export function saveQuestionCard(stateDir:string,card:QuestionCard){const db=database(stateDir);try{db.prepare('INSERT OR REPLACE INTO questions VALUES (?,?)').run(card.question.questionId,JSON.stringify(card));}finally{db.close();}}
+export function findQuestionCardsForReply(stateDir:string,p:Pick<QuestionTextReply,'accountId'|'chatId'|'senderId'|'parentId'>):QuestionCard[]{
+ const db=database(stateDir);try{return (db.prepare("SELECT metadata FROM questions WHERE json_extract(metadata,'$.messageId')=? AND json_extract(metadata,'$.provenance.accountId')=? AND json_extract(metadata,'$.provenance.chatId')=? AND json_extract(metadata,'$.provenance.senderId')=?").all(p.parentId,p.accountId,p.chatId,p.senderId) as {metadata:string}[]).map(row=>JSON.parse(row.metadata));}finally{db.close();}
+}
+export function questionAnswerSourceIds(p:Pick<QuestionProvenance,'taskId'|'revision'|'accountId'|'chatId'|'sessionKey'|'senderId'>,stateDir:string):string[]{
+ const db=database(stateDir);try{return (db.prepare("SELECT json_extract(metadata,'$.answerMessageId') AS message FROM questions WHERE json_extract(metadata,'$.provenance.taskId')=? AND json_extract(metadata,'$.provenance.revision')=? AND json_extract(metadata,'$.provenance.accountId')=? AND json_extract(metadata,'$.provenance.chatId')=? AND json_extract(metadata,'$.provenance.sessionKey')=? AND json_extract(metadata,'$.provenance.senderId')=? AND json_extract(metadata,'$.answerSource')='user_text' AND json_extract(metadata,'$.answerMessageId') IS NOT NULL").all(p.taskId,p.revision,p.accountId,p.chatId,p.sessionKey,p.senderId) as {message:string}[]).map(row=>row.message);}finally{db.close();}
+}
 
 /** Reserve before the provider call; never replay an uncertain buzz after restart. */
 export function claimQuestionUrgent(stateDir:string,card:QuestionCard):boolean{
@@ -39,12 +46,14 @@ export function recordQuestionUrgentOutcome(stateDir:string,questionId:string,ou
   db.prepare("UPDATE questions SET metadata=json_set(metadata,'$.urgentOutcome',?) WHERE id=?").run(outcome,questionId);
  }finally{db.close();}
 }
-export function claimQuestionAnswer(stateDir:string,card:QuestionCard,answers:Record<string,unknown>,note?:string):QuestionCard{
+export function claimQuestionAnswer(stateDir:string,card:QuestionCard,answers:Record<string,unknown>,note?:string,answerMessageId?:string):QuestionCard{
  const db=database(stateDir);try{
   db.exec('BEGIN IMMEDIATE');const row=db.prepare('SELECT metadata FROM questions WHERE id=?').get(card.question.questionId) as {metadata:string}|undefined;
   if(!row)throw Error('提问不存在');const current:QuestionCard=JSON.parse(row.metadata);
+  if(current.jobId!==card.jobId||current.messageId!==card.messageId||['accountId','chatId','senderId'].some(key=>current.provenance[key as 'accountId'|'chatId'|'senderId']!==card.provenance[key as 'accountId'|'chatId'|'senderId']))throw Error('Question card binding mismatch');
   if(current.status!=='waiting')throw Error('本轮答案已提交，请等待任务继续');
-  const next:QuestionCard={...current,status:'submitted',answers,note,submittedAt:Date.now()};
+  const {answerSource:_source,answerMessageId:_message,validationNote:_validation,...fresh}=current;
+  const next:QuestionCard={...fresh,status:'submitted',answers,note,submittedAt:Date.now(),answerSource:answerMessageId?'user_text':'user_card',...(answerMessageId?{answerMessageId,rendered:true}:{})};
   db.prepare('UPDATE questions SET metadata=? WHERE id=?').run(JSON.stringify(next),card.question.questionId);db.exec('COMMIT');return next;
  }finally{db.close();}
 }
@@ -63,7 +72,7 @@ export function questionAction(card:QuestionCard){return createFeishuCardInterac
 export function renderQuestionCard(card:QuestionCard,error?:string):Record<string,unknown>{
  const q=card.question,waiting=card.status==='waiting';
  const elements:Record<string,unknown>[]=[markdown(q.question)];
- if(error)elements.push(markdown('填写提示：'+error));
+ if(error??card.validationNote)elements.push(markdown('填写提示：'+(error??card.validationNote)));
  if(q.knownValues&&Object.keys(q.knownValues).length)elements.push(markdown('已确定信息\n'+answerSummary(q,q.knownValues)));
  if(waiting){
   const fields=(q.fields??[]).filter(f=>!Object.hasOwn(q.knownValues??{},f.id));
@@ -75,12 +84,13 @@ export function renderQuestionCard(card:QuestionCard,error?:string):Record<strin
   const quick=fields.length===1&&fields[0].type==='single_select'&&fields[0].options!.length<=3;
   if(quick){for(const option of fields[0].options!)elements.push({tag:'button',text:text(option.label),type:'default',behaviors:[{type:'callback',value:{...questionAction(card),m:{questionId:q.questionId,option:option.value}}}]});}
   if(!quick)elements.push({tag:'form',name:'worker_question',elements:form});
-  else if(q.allowFreeText!==false)elements.push(markdown('如需补充其他信息，也可以直接回复这张卡片。'));
+  elements.push(markdown('也可以直接回复这张卡片，用文字补充。'));
   elements.push({tag:'button',name:'worker_cancel',text:text('取消任务'),type:'default',confirm:{title:text('取消原任务？'),text:text('取消后不再继续执行；已发生的外部操作不会回滚。')},behaviors:[{type:'callback',value:{...questionAction(card),a:WORKER_QUESTION_CANCEL}}]});
   elements.push({tag:'collapsible_panel',expanded:false,header:{title:text('提问原因与已完成工作')},elements:[markdown(q.reason),markdown(q.progress),...(q.recommendation?[markdown('建议（尚未确认）：'+q.recommendation)]:[])]});
  }else if(card.status==='cancelled'){elements.push(markdown('任务已取消，不再接受本轮补充。'));
  }else{
-  elements.push(markdown('已补充\n'+answerSummary(q,card.answers??{})+(card.note?'\n补充说明：'+card.note:'')));
+  const note=card.answerSource==='user_text'&&card.note&&card.note.length>2000?Array.from(card.note).slice(0,2000).join('')+'\n（卡片展示摘录，完整文字已保存。）':card.note;
+  elements.push(markdown('已补充\n'+answerSummary(q,card.answers??{})+(note?'\n'+(card.answerSource==='user_text'?'文字补充：':'补充说明：')+note:'')));
   elements.push(markdown(card.status==='accepted'?'答案已受理，原任务继续处理。':'答案已保存，正在交回 Main。'));
   if(error&&card.status==='submitted')elements.push({tag:'button',text:text('重试交回 Main'),type:'primary',behaviors:[{type:'callback',value:{...questionAction(card),m:{questionId:q.questionId,retry:true}}}]});
   elements.push(markdown('提交时间：'+new Date(card.submittedAt??Date.now()).toISOString()+' · 回答者为原提问者'));
