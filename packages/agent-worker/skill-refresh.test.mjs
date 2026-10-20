@@ -83,7 +83,7 @@ if(prompt.kind==='skill_catalog_refresh'){
   const before=JSON.parse((await executeQuery({action:'list'},context,runtime)).content[0].text);
   assert.equal(before.tasks[0].needsMigration,true);
   await assert.rejects(executeQuery(params,context,runtime));
-  const {readFile}=await import('node:fs/promises');let entry=JSON.parse(await readFile(file,'utf8')).one;
+  const {readFile}=await import('node:fs/promises');let entry=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one');
   assert.notEqual(entry.sessionId,legacyId);assert.ok(entry.previousSessionIds.includes(legacyId));
   assert.equal(revisionOf(entry.skillsSnapshot),revisionOf(snapshot));assert.equal(entry.skillsRefreshFailed,false);
   const result=await executeQuery({...params,task:'success'},context,runtime);
@@ -102,24 +102,24 @@ if(prompt.kind==='skill_catalog_refresh'){
   const list=await executeQuery({action:'list'},context,runtime);
   assert.equal(JSON.parse(list.content[0].text).tasks[0].needsSkillsUpdate,true);
   await executeQuery({...params,task:'success'},context,runtime);
-  entry=JSON.parse(await readFile(file,'utf8')).one;assert.equal(entry.executionPolicyVersion,executionPolicyVersion);assert.equal(entry.skillsSnapshot.skills,hash('2'));
+  entry=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one');assert.equal(entry.executionPolicyVersion,executionPolicyVersion);assert.equal(entry.skillsSnapshot.skills,hash('2'));
   await publish({...snapshot,skills:hash('3'),skillEntries:['3']});await writeFile(join(root,'mode'),JSON.stringify({bad:true}));
   await assert.rejects(executeQuery({...params,task:'success'},context,runtime),/acknowledgement mismatch/);
-  entry=JSON.parse(await readFile(file,'utf8')).one;assert.equal(entry.skillsSnapshot.skills,hash('2'));assert.equal(entry.skillsRefreshFailed,true);
+  entry=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one');assert.equal(entry.skillsSnapshot.skills,hash('2'));assert.equal(entry.skillsRefreshFailed,true);
   await writeFile(join(root,'mode'),JSON.stringify({tool:true}));
   await assert.rejects(executeQuery({...params,task:'success'},context,runtime),/Skill refresh attempted a tool action/);
-  const failedSession=JSON.parse(await readFile(file,'utf8')).one.sessionId;await rm(join(root,'mode'));
+  const failedSession=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one').sessionId;await rm(join(root,'mode'));
   await executeQuery({...params,task:'success'},context,runtime);
-  entry=JSON.parse(await readFile(file,'utf8')).one;assert.notEqual(entry.sessionId,failedSession);assert.ok(entry.previousSessionIds.includes(failedSession));
+  entry=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one');assert.notEqual(entry.sessionId,failedSession);assert.ok(entry.previousSessionIds.includes(failedSession));
   await publish({...snapshot,skills:hash('4'),skillEntries:['4']});
   await writeFile(join(root,'mode'),JSON.stringify({bump:{...snapshot,skills:hash('5'),skillEntries:['5']}}));
   await assert.rejects(executeQuery({...params,task:'success'},context,runtime),/Skills changed during refresh/);
-  entry=JSON.parse(await readFile(file,'utf8')).one;assert.equal(entry.skillsSnapshot.skills,hash('4'));
+  entry=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one');assert.equal(entry.skillsSnapshot.skills,hash('4'));
   assert.equal(JSON.parse((await executeQuery({action:'list'},context,runtime)).content[0].text).tasks[0].needsSkillsUpdate,true);
   await rm(join(root,'mode')); // concurrent topics share a binding file, not an execution lock
   await Promise.all(['parallel-a','parallel-b','parallel-c'].map(topic=>executeQuery({...params,topic,task:'success'},context,runtime)));
   const bindings=JSON.parse(await readFile(file,'utf8'));
-  assert.deepEqual(Object.keys(bindings).sort(),['one','parallel-a','parallel-b','parallel-c']);
+  assert.deepEqual(Object.values(bindings).map(entry=>entry.topic).sort(),['one','parallel-a','parallel-b','parallel-c']);
   assert.equal(new Set(Object.values(bindings).map(entry=>entry.sessionId)).size,4);
 
 

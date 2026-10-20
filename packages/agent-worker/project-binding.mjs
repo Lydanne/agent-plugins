@@ -9,11 +9,17 @@ export function matchesHistoryFilter(entry,{projectId,repository}={}) {
  return (projectId===undefined||(entry.projectId??entry.project?.projectId)===projectId)&&(repository===undefined||(entry.repository??entry.project?.repository)===repository);
 }
 export function bindingKey(topic,runtime) {
+ if(runtime.modelSessionScope)return 'model:'+createHash('sha256').update(JSON.stringify([runtime.executionScope??null,runtime.modelSessionScope,topic])).digest('hex');
  return runtime.executionScope?'project:'+createHash('sha256').update(JSON.stringify([runtime.executionScope,topic])).digest('hex'):topic;
 }
 export function compatibleLegacyBinding(entry,runtime) {
+ if(!entry||entry.modelSessionScope&&entry.modelSessionScope!==runtime.modelSessionScope)return false;
+ if(!runtime.executionScope)return !!runtime.modelSessionScope&&!entry.executionScope&&entry.cwd===runtime.cwd;
  const snapshot=entry?.skillsSnapshot,current=runtime.scopedSkillSnapshot;
  return !!runtime.executionScope&&entry?.cwd===runtime.cwd&&snapshot?.root===current?.root&&snapshot?.repository===current?.repository&&snapshot?.projectId===current?.projectId;
+}
+export function modelFields(runtime) {
+ return runtime?.modelSessionScope?{modelId:runtime.modelId,modelName:runtime.modelName,harness:runtime.harness,model:runtime.model,modelSessionScope:runtime.modelSessionScope,thinkingLevel:runtime.thinkingLevel}:{};
 }
 export function projectFields(runtime) {
  return runtime?.projectContext?{projectId:runtime.projectContext.projectId,repository:runtime.projectContext.repository,cwd:runtime.cwd,project:runtime.projectContext,executionScope:runtime.executionScope}:{};

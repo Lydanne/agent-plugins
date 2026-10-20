@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {trustedAgentId} from './dist/agent-repo-api.mjs';
 import {requestKeyFor} from './jobs.mjs';
+import {modelFields} from './project-binding.mjs';
 const states=['running','queued','awaiting_main','awaiting_user','completed','failed','timed_out','cancelled','cancelling','unknown'];
 const idPattern=/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -22,11 +23,11 @@ export function createAgentTaskInspector({state,jobs,now=()=>Date.now()}){
    const scope=request.scope;
    if(typeof scope!=='string'||!scope.startsWith('agent:'+agentId+':')||saved.scope!==hash(scope)||request.params?.topic!==saved.topic||saved.requestKey!==requestKeyFor(request.params,scope,saved.provenance))continue;
    const job=jobs.status(saved.jobId,scope);
-   all.push({jobId:job.jobId,topic:job.topic,projectId:job.projectId??null,repository:job.repository??null,executionScope:job.executionScope??null,sessionKey:scope,status:states.includes(job.status)?job.status:'unknown',createdAt:job.createdAt,finishedAt:job.finishedAt??null,taskSummary:typeof job.taskSummary==='string'?job.taskSummary.slice(0,500):null});
+   all.push({jobId:job.jobId,topic:job.topic,...modelFields(job),projectId:job.projectId??null,repository:job.repository??null,executionScope:job.executionScope??null,sessionKey:scope,status:states.includes(job.status)?job.status:'unknown',createdAt:job.createdAt,finishedAt:job.finishedAt??null,taskSummary:typeof job.taskSummary==='string'?job.taskSummary.slice(0,500):null});
   }
   const scoped=all.filter(job=>!projectId||job.projectId===projectId),counts=Object.fromEntries(states.map(status=>[status,scoped.filter(job=>job.status===status).length]));
   const terms=query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-  const filtered=scoped.filter(job=>(!status||job.status===status)&&terms.every(term=>[job.jobId,job.topic,job.taskSummary,job.projectId,job.status].join(' ').toLocaleLowerCase().includes(term))).sort((a,b)=>b.createdAt-a.createdAt||a.jobId.localeCompare(b.jobId));
+  const filtered=scoped.filter(job=>(!status||job.status===status)&&terms.every(term=>[job.jobId,job.topic,job.taskSummary,job.projectId,job.modelId,job.model,job.harness,job.status].join(' ').toLocaleLowerCase().includes(term))).sort((a,b)=>b.createdAt-a.createdAt||a.jobId.localeCompare(b.jobId));
   return {agentId,scannedAt:new Date(now()).toISOString(),counts,taskTotal:scoped.length,conversationTotal:new Set(scoped.map(job=>job.sessionKey)).size,projectIds:[...new Set(all.map(job=>job.projectId).filter(Boolean))].sort(),tasks:filtered.slice(offset,offset+limit),total:filtered.length,offset,limit,hasMore:offset+limit<filtered.length,coverage:'仅包含可核验 Agent 与会话绑定的已保存任务；无绑定的旧记录不纳入统计。'};
  };
 }

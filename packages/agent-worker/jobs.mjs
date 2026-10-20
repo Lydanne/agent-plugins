@@ -1,4 +1,4 @@
-import {projectFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
+import {projectFields,modelFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
 import {validateContextAnswers} from './context-request.mjs';
 import {workerEnvironment} from './plugin-environment.mjs';
 import {finalizeJobReport} from './task-report.mjs';
@@ -10,7 +10,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 export function readJson(path){return JSON.parse(readFileSync(path,'utf8'));}
 export function writeJson(path,value){const tmp=path+'.'+randomUUID();writeFileSync(tmp,JSON.stringify(value),{mode:0o600});renameSync(tmp,path);}
-export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
+export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
 export function normalizeTags(tags=[]) {
  if(!Array.isArray(tags)||tags.length>50)throw Error('tags must be an array of at most 50 strings');
  const unique=new Map();
@@ -31,7 +31,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   return {maxConcurrentJobs,maxQueuedJobs};};
  const legacyBusy=()=>existsSync(join(root,'active'))||existsSync(join(root,'..','lock'));
  const order=(a,b)=>(a.queueSequence??a.createdAt)-(b.queueSequence??b.createdAt)||a.createdAt-b.createdAt||a.jobId.localeCompare(b.jobId);
- const sameSession=(a,b)=>a.scope===b.scope&&a.topic===b.topic&&(!a.executionScope||!b.executionScope||a.executionScope===b.executionScope);
+ const sameSession=(a,b)=>a.scope===b.scope&&a.topic===b.topic&&(!a.executionScope||!b.executionScope||a.executionScope===b.executionScope)&&(!a.modelSessionScope||!b.modelSessionScope||a.modelSessionScope===b.modelSessionScope);
  const conflict=(a,b)=>sameSession(a,b)||(a.resourceKeys??[]).some(key=>(b.resourceKeys??[]).includes(key));
  const queued=j=>j.schedulerVersion===1&&j.status==='queued'&&(!j.startedAt||j.resumePending===true);
  const occupied=j=>(active.has(j.status)||j.status==='unknown')&&!queued(j);
@@ -129,7 +129,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const matches=readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x))
     .map(x=>readJson(join(root,x))).filter(j=>j.scope===scopeKey(scope)&&matchesHistoryFilter(j,{projectId,repository}))
     .map(j=>get(j.jobId,scope)).filter(j=>{
-     const text=[j.jobId,j.topic,j.projectId,j.repository,j.taskSummary,j.status,j.provenance?.senderId,...j.tags].filter(Boolean).join(' ').toLocaleLowerCase();
+     const text=[j.jobId,j.topic,j.projectId,j.repository,j.modelId,j.model,j.harness,j.taskSummary,j.status,j.provenance?.senderId,...j.tags].filter(Boolean).join(' ').toLocaleLowerCase();
      return terms.every(term=>text.includes(term));
     }).sort((a,b)=>b.createdAt-a.createdAt||a.jobId.localeCompare(b.jobId));
    const summaries=matches.slice(0,limit).map(j=>{const {result,reports,taskReport,...summary}=view(j);return summary;});
@@ -219,11 +219,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(prior){jobId=prior.jobId;}
     else{
      // Retries of accepted jobs succeed even when the waiting queue is full.
-     const running=all.filter(occupied),candidate={scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,resourceKeys};
+     const running=all.filter(occupied),candidate={scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,modelSessionScope:runtime?.modelSessionScope,resourceKeys};
      const canStart=!legacyBusy()&&running.length<limits().maxConcurrentJobs&&!running.some(job=>conflict(job,candidate))&&!all.some(job=>waiting.has(job.status)&&sameSession(job,candidate));
      if(!canStart&&all.filter(queued).length>=limits().maxQueuedJobs)return {status:'queue_full',accepted:false,message:'Waiting queue is full; no job was created.'};
      jobId=randomUUID();
-     const job={jobId,requestKey,...projectFields(runtime),...(runtime?.projectContext?{inputRequestKey,requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance),requestId:params.requestId}:{}),provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
+     const job={jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{inputRequestKey,requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance),requestId:params.requestId}:{}),provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
      writeJson(join(root,jobId+'.request.json'),{params,scope,runtime});
      writeJson(join(root,jobId+'.json'),job);
     }

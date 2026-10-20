@@ -2,6 +2,18 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {browserFixture,settle,uiContext,select,click,deferred} from '../../scripts/control-ui-test.mjs';
 function listing(projectId,running=0,queued=0){return {projectId:projectId??null,projectIds:['sample','demo'],sessions:[],counts:{running,queued},groupCounts:{active:running?1:0,history:0,unknown:0},hasMore:false};}
+test('same-topic model sessions show their model and open only the selected model scope',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),calls=[];
+ const sessions=['quick','deep'].map((id,index)=>({topic:'same',modelId:id,model:'fixture-'+id,harness:'codex',modelSessionScope:String(index+1).repeat(64),status:'completed',tags:[],heat:0,taskCount:1,interactionCount:1}));
+ const ctx=uiContext(async(_method,params)=>{calls.push(params.payload);return {ok:true,result:params.payload.topic?{topic:'same',session:sessions.find(row=>row.modelSessionScope===params.payload.modelSessionScope),records:[],currentTasks:[],taskHistory:[],hasMore:false}:{...listing(null),sessions,groupCounts:{active:0,history:2,unknown:0}}};},{agentId:'main',sessionKey:'agent:main:test'});
+ const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();
+ assert.match(f.container.textContent,/codex \/ fixture-quick/);assert.match(f.container.textContent,/codex \/ fixture-deep/);
+ assert.equal(new Set([...f.container.querySelectorAll('.cq-row')].map(row=>row.dataset.recordKey)).size,2);
+ f.container.querySelectorAll('.cq-row-open')[1].click();await settle();
+ assert.equal(calls.at(-1).modelSessionScope,sessions[1].modelSessionScope);
+ view.update({...ctx,props:{...ctx.props,topic:'same',modelSessionScope:sessions[0].modelSessionScope}});await settle();
+ assert.equal(calls.at(-1).modelSessionScope,sessions[0].modelSessionScope);
+});
 test('project switch clears old counts and groups while loading and failed, keeps options and can recover',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),pending=deferred();let fail=true;
  const ctx=uiContext(async(_method,params)=>{const project=params.payload.projectId;if(project==='demo'){if(fail)return pending.promise;return {ok:true,result:listing('demo',2,0)};}return {ok:true,result:listing(project,3,1)};},{agentId:'main',sessionKey:'agent:main:test',projectId:'sample'});

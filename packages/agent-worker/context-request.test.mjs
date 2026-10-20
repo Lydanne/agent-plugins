@@ -87,7 +87,8 @@ for(const legacy of [false,true])test(`real detached Worker CLI resumes the same
   const {fileURLToPath}=await import('node:url');
   const cli=join(f.state,'fixture-cli.mjs');
   writeFileSync(cli,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';import{randomUUID}from'node:crypto';let text='';for await(const c of process.stdin)text+=c;const p=JSON.parse(text);const args=process.argv.slice(2);appendFileSync('seen.jsonl',JSON.stringify({args,prompt:p})+'\\n');console.log(JSON.stringify({type:'thread.started',thread_id:args.includes('resume')?args[args.indexOf('resume')+1]:randomUUID()}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:p.mainReplies?JSON.stringify({protocol:'codex_result_v1',result:'查询完成',experienceCandidates:[],reportPaths:[]}):JSON.stringify({type:'request',question:'哪一天？',reason:'日期缺失',progress:'确认查询方式'})}}));`);chmodSync(cli,0o700);
-  const config=resolveConfiguration({state:f.state,cwd:f.state,cli,node:process.execPath,codexHome:join(f.state,'codex'),skillsEnabled:false,memoryRequired:false,approvalMode:'read-only',executorInstructions:'只读测试',pathPrefix:'',reportDirectory:'reports'});
+  const baseline=resolveConfiguration({state:f.state,cwd:f.state,cli,node:process.execPath,codexHome:join(f.state,'codex'),skillsEnabled:false,memoryRequired:false,approvalMode:'read-only',executorInstructions:'只读测试',pathPrefix:'',reportDirectory:'reports'});
+  const config=legacy?{...baseline,harness:'codex'}:baseline;
   const jobs=createJobs({root:f.root,node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:()=>config});
   // Replace the manual fixture with a genuinely scheduled task.
   rmSync(join(f.root,f.id+'.json'));rmSync(join(f.root,f.id+'.request.json'));

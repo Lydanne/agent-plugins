@@ -12,6 +12,7 @@ export function explainQueryError(error) {
   [/Waiting queue is full; question remains pending/,'CONTEXT_REPLY_QUEUE_FULL','执行队列已满，问题仍待回答；稍后用相同 jobId、questionId 和回答重试，不创建新的 run。'],
   [/^Async completion is enabled; deliveryMode=wait is not allowed/,'ASYNC_REQUIRED','插件已开启异步，run 不接受 deliveryMode=wait。请用 async 提交并结束当前轮次，结果由完成事件交付；进度用 status 立即查询。'],
   [/^list does not accept limit or offset;/,'LIST_SETTINGS_ONLY','list 不接受 limit/offset；返回数量由插件设置 jobListLimit 控制。请移除分页参数，仅传 query 搜索。'],
+  [/^Invalid modelId|^Invalid thinkingLevel|^modelId and thinkingLevel are only supported for run/,'MODEL_SELECTION_INVALID','模型选择参数无效，新任务未启动。先用 action=models 核对可用 modelId，并在 run 传 0–6 的 thinkingLevel；reply 沿用原任务模型与等级。'],
   [/model.{0,200}(not supported|not available|does not exist)|unsupported model|model_not_found/i,'MODEL_UNAVAILABLE','模型请求被拒绝：当前模型不受此 CLI 或账户支持。请管理员核对执行器版本和模型可用性；本次未因此自动切换模型或重做业务任务。'],
   [/Memory preflight required|Invalid memory handoff/i,'MEMORY_HANDOFF_REQUIRED','尚未完成记忆检索交接，新任务未启动。请先 memory_search 并提供 memory 状态、查询和相关来源；工具不可用则明确填 unavailable 及原因。已有任务请继续 status/wait，不要重做。'],
   [/^Codex query exceeded \d+ ms/,'TIMEOUT','执行超过配置的时限，已请求停止。请先核对原任务及已发生的业务操作，不要直接重做。'],

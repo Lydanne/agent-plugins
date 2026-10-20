@@ -11,7 +11,7 @@ export const defaultConfiguration = {
  state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
  node:'node', cli:'codex',
  codexHome:'~/.codex', pathPrefix:'',
- thinkingLevel:0, thinkingProfiles:{}, skillContextRoot:'', projectRouting:'auto',
+ models:[], defaultModelId:'', thinkingLevel:0, thinkingProfiles:{}, skillContextRoot:'', projectRouting:'auto',
  model:'gpt-6.1-sol', reasoningEffort:'low', approvalMode:'dangerously-bypass-approvals-and-sandbox',
  timeoutMs:600000, skillsEnabled:true, skillDirectories:['skills','.agents/skills'],
  executorInstructions, businessDataPolicy,
@@ -22,6 +22,16 @@ export const defaultConfiguration = {
 };
 // The UI and registration use the same constraints so saved values remain loadable.
 const relativePathPattern = '^(?!-)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*/$)[^\\\\\\u0000]+$';
+const modelIdPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
+const effortSchema = {type:'string',enum:['minimal','low','medium','high','xhigh','max']};
+const speedSchema = {type:'string',enum:['default','fast']};
+const commandSchema = {type:'string',pattern:'\\S',maxLength:40000};
+const levelProfilesSchema = properties=>({type:'object',additionalProperties:false,properties:Object.fromEntries(Array.from({length:7},(_,level)=>[String(level),{type:'object',additionalProperties:false,properties}]))});
+const modelSchema = {type:'object',required:['id','harness','model'],additionalProperties:false,properties:{
+ id:{type:'string',pattern:modelIdPattern},name:{type:'string',maxLength:160},description:{type:'string',maxLength:2000},
+ harness:{type:'string',enum:['codex']},model:commandSchema,cli:commandSchema,reasoningEffort:effortSchema,speed:speedSchema,
+ thinkingProfiles:levelProfilesSchema({reasoningEffort:effortSchema,speed:speedSchema}),
+}};
 export const configurationProperties = Object.fromEntries(Object.entries(defaultConfiguration).map(([key,value])=>{
  const schema={type:Array.isArray(value)?'array':typeof value==='number'?'integer':typeof value,default:value};
  if(typeof value==='string')schema.maxLength=40000;
@@ -31,8 +41,10 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='reportDirectory')schema.pattern=relativePathPattern;
  if(key==='projectRouting')schema.enum=['auto','agent-repo','legacy'];
  if(key==='skillContextRoot')schema.pattern='^(?:$|/|~/)';
- if(key==='thinkingLevel')Object.assign(schema,{minimum:0,maximum:5});
- if(key==='thinkingProfiles')Object.assign(schema,{type:'object',additionalProperties:false,properties:Object.fromEntries(Array.from({length:6},(_,level)=>[String(level),{type:'object',additionalProperties:false,properties:{harness:{type:'string',enum:['codex']},cli:{type:'string',pattern:'\\S',maxLength:40000},model:{type:'string',pattern:'\\S',maxLength:40000},reasoningEffort:{type:'string',enum:['minimal','low','medium','high','xhigh','max']},speed:{type:'string',enum:['default','fast']}}}]))});
+ if(key==='models')Object.assign(schema,{items:modelSchema,maxItems:50});
+ if(key==='defaultModelId')schema.pattern='^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$';
+ if(key==='thinkingLevel')Object.assign(schema,{minimum:0,maximum:6});
+ if(key==='thinkingProfiles')Object.assign(schema,levelProfilesSchema({harness:{type:'string',enum:['codex']},cli:commandSchema,model:commandSchema,reasoningEffort:effortSchema,speed:speedSchema}));
  if(key==='reasoningEffort')schema.enum=['minimal','low','medium','high','xhigh','max'];
  if(key==='approvalMode')schema.enum=['dangerously-bypass-approvals-and-sandbox','read-only','workspace-write'];
  if(key==='timeoutMs')Object.assign(schema,{minimum:1000,maximum:86400000});
@@ -44,7 +56,7 @@ function validValue(value,schema) {
  if(schema.type==='integer')return Number.isInteger(value)&&value>=schema.minimum&&value<=schema.maximum;
  if(schema.type==='boolean')return typeof value==='boolean';
  if(schema.type==='array')return Array.isArray(value)&&value.length<=schema.maxItems&&value.every(item=>validValue(item,schema.items));
- if(schema.type==='object')return value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.entries(value).every(([key,item])=>schema.properties[key]&&validValue(item,schema.properties[key]));
+ if(schema.type==='object')return value!==null&&typeof value==='object'&&!Array.isArray(value)&&(schema.required??[]).every(key=>Object.hasOwn(value,key))&&Object.entries(value).every(([key,item])=>Object.hasOwn(schema.properties,key)&&validValue(item,schema.properties[key]));
  return false;
 }
 const expandHome=value=>typeof value==='string'&&value.startsWith('~/')?join(homedir(),value.slice(2)):value;
@@ -53,30 +65,45 @@ export function resolveConfiguration(input={}) {
  for(const key of ['state','cwd','codexHome','skillContextRoot','node','cli'])config[key]=expandHome(config[key]);
  if(typeof config.pathPrefix==='string')config.pathPrefix=config.pathPrefix.split(delimiter).map(expandHome).join(delimiter);
  if(config.thinkingProfiles&&typeof config.thinkingProfiles==='object'&&!Array.isArray(config.thinkingProfiles))config.thinkingProfiles=Object.fromEntries(Object.entries(config.thinkingProfiles).map(([level,profile])=>[level,profile&&typeof profile==='object'&&!Array.isArray(profile)&&Object.hasOwn(profile,'cli')?{...profile,cli:expandHome(profile.cli)}:profile]));
+ if(Array.isArray(config.models))config.models=config.models.map(model=>model&&typeof model==='object'&&!Array.isArray(model)&&Object.hasOwn(model,'cli')?{...model,cli:expandHome(model.cli)}:model);
  for(const [key,schema] of Object.entries(configurationProperties))if(!validValue(config[key],schema))throw Error('Invalid '+key);
+ if(new Set(config.models.map(model=>model.id)).size!==config.models.length||new Set(config.models.map(model=>JSON.stringify([model.harness,model.model]))).size!==config.models.length)throw Error('Invalid models: duplicate ID or harness/model');
+ if(config.defaultModelId&&!modelEntries(config).some(model=>model.id===config.defaultModelId))throw Error('Invalid defaultModelId: choose a configured model');
  return config;
 }
+function modelEntries(config) {
+ return config.models.length?config.models:[{id:'default',harness:'codex',model:config.model,reasoningEffort:config.reasoningEffort,thinkingProfiles:config.thinkingProfiles}];
+}
 // Level 0 inherits the operator's baseline; it never disables reasoning.
-export function resolveExecution(input={},level) {
+export function resolveExecution(input={},level,modelId) {
  const config=resolveConfiguration(input);
  const thinkingLevel=level===undefined?config.thinkingLevel:level;
- if(!Number.isInteger(thinkingLevel)||thinkingLevel<0||thinkingLevel>5)throw Error('Invalid thinkingLevel: expected integer 0–5');
- const profile=config.thinkingProfiles[String(thinkingLevel)]??{};
- const reasoningEffort=thinkingLevel===0?config.reasoningEffort:['low','medium','high','xhigh','max'][thinkingLevel-1];
- return {...config,reasoningEffort,...profile,thinkingLevel,harness:'codex'};
+ if(!Number.isInteger(thinkingLevel)||thinkingLevel<0||thinkingLevel>6)throw Error('Invalid thinkingLevel: expected integer 0–6');
+ const models=modelEntries(config),selectedId=modelId===undefined?(config.defaultModelId||models[0].id):modelId;
+ const selected=models.find(model=>model.id===selectedId);
+ if(!selected)throw Error('Invalid modelId: choose a configured model');
+ const profile=selected.thinkingProfiles?.[String(thinkingLevel)]??{};
+ const reasoningEffort=thinkingLevel===0?(selected.reasoningEffort??config.reasoningEffort):['minimal','low','medium','high','xhigh','max'][thinkingLevel-1];
+ const execution={...config,cli:selected.cli??config.cli,model:selected.model,reasoningEffort,...(selected.speed?{speed:selected.speed}:{}),...profile,thinkingLevel,harness:selected.harness,modelId:selected.id,modelName:selected.name||selected.id};
+ return {...execution,modelSessionScope:createHash('sha256').update(JSON.stringify([execution.harness,execution.model])).digest('hex')};
+}
+export function modelCatalog(input={}) {
+ const config=resolveConfiguration(input),models=modelEntries(config);
+ return {defaultModelId:config.defaultModelId||models[0].id,defaultThinkingLevel:config.thinkingLevel,models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,levels:Array.from({length:7},(_,thinkingLevel)=>{const execution=resolveExecution(config,thinkingLevel,model.id);return {thinkingLevel,reasoningEffort:execution.reasoningEffort,...(execution.speed?{speed:execution.speed}:{})};})}))};
 }
 export function executionFingerprint(config,{policyVersion}={}) {
- const keys=['cwd','cli','codexHome','model','reasoningEffort','approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];
+ const keys=['cwd','cli','codexHome','model',...(config.modelSessionScope?['harness']:['reasoningEffort']),'approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];
  const value=keys.map(k=>[k,config[k]]);
  if(config.scopedSkillSnapshot?.projectRegistration)value.push(['projectRegistration',config.scopedSkillSnapshot.projectRegistration]);
  if(config.skillContextRoot)value.push(['skillContextRoot',config.skillContextRoot]);
- if(config.speed)value.push(['speed',config.speed]);
+ if(config.speed&&!config.modelSessionScope)value.push(['speed',config.speed]);
  const defaults=resolveConfiguration();
  const baseline=policyVersion===5 ? {...defaults,executorInstructions:defaults.executorInstructions.replace('专注执行和核验，完整报告保持客观，不按提问者的身份、部门或详略偏好裁剪；面向用户的表达由主会话负责。','')} : defaults;
  if(JSON.stringify(value)===JSON.stringify(keys.map(k=>[k,baseline[k]])))return undefined;
  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 export function cliArguments(config,{refresh=false,threadId}={}) {
+ if(config.harness!==undefined&&config.harness!=='codex')throw Error('Unsupported harness');
  const policy=refresh?['--sandbox','read-only']:config.approvalMode==='dangerously-bypass-approvals-and-sandbox'
   ?['--dangerously-bypass-approvals-and-sandbox']:['--sandbox',config.approvalMode];
  const instructions=config.executorInstructions.replaceAll('{projectDir}',config.cwd).replaceAll(defaultConfiguration.cwd,config.cwd);

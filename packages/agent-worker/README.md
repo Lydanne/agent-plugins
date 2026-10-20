@@ -48,9 +48,10 @@ Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → a
 
 | action | 何时使用 | 必要输入 |
 | --- | --- | --- |
+| models | 读取可用的 harness + 模型、用途与 0–6 级参数 | 无需 memory 或来源租约，不创建 job |
 | projects | 读取当前 Agent 的已提交项目登记 | 无项目选择器，不创建 job |
 | list | 查找同一问题的 topic 或用户要求找任务 | 可选 query；数量由 jobListLimit 控制，不传 limit/offset |
-| run | 提交明确任务 | topic、task、context、constraints；默认还要求 memory |
+| run | 提交明确任务 | topic、task、context、constraints；按任务选择 modelId、thinkingLevel，默认还要求 memory |
 | status / wait | 查询原任务 | 原 jobId；异步模式 wait 只读即时状态 |
 | cancel | 原请求人明确取消 | 原 jobId；不回滚已完成外部操作 |
 | tag | 补充检索标签 | jobId、tags，按需 tagMode |
@@ -97,13 +98,64 @@ Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内
 ## 工具与行为
 
 - `agent_worker`：默认在 `~/.openclaw/workspace` 调用本地 Codex CLI，默认模型为 `gpt-6.1-sol`、推理强度 `low`，业务轮次使用 `--dangerously-bypass-approvals-and-sandbox`；独立技能索引刷新轮次使用只读沙箱。角色由 OpenClaw 主会话的 SOUL.md 维护；本插件不读取 Agent TOML。
-- 以宿主可信会话标识隔离任务，同一 topic 复用对应 Agent Worker 会话；失败后保留会话绑定。按聊天 + topic 串行，不同 topic 可并行，单 job 执行上限 10 分钟（不含排队）。
+- 以宿主可信会话标识隔离任务，同一项目/仓库、topic 和 harness + 模型复用对应 Worker 会话；失败后保留绑定。按聊天 + 项目/仓库 + topic + 模型串行，不同模型或 topic 可并行，单 job 执行上限 10 分钟（不含排队）。
 - `feishu_group_history` 已迁移到 Feishu 插件，由 Main 按需读取当前群并提供必要的任务上下文；agent-worker 不再注册群历史工具。
 - 默认执行职责禁止 Git 写入、push 或 PR；管理员可替换 executorInstructions 用于开发，但每轮仍须满足角色政策、constraints 和当前授权。业务导出和数据修复需明确授权。
 
+## 模型与智慧等级
+
+管理员通过 `models` 添加模型，每项是一个 `harness + model`，以唯一 `id` 供 Main 选择；`name` 和 `description` 说明名称及适用任务。目前 harness 仅支持 `codex`，模型名、推理参数及账号权限须由部署方确认可被当前 CLI 使用。同一 harness + 模型不能重复配置。
+
+Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`。工具说明及 `modelId` 枚举包含已配置模型；`action=models` 可只读查看模型目录和实际等级映射。省略 modelId 使用 `defaultModelId`，该配置留空时选择 models 第一项；省略等级使用 `thinkingLevel` 配置，默认 0。
+
+| 智慧等级 | 默认推理参数 |
+| --- | --- |
+| 0 | 所选模型的默认 `reasoningEffort`；未设置时继承全局值，不表示关闭思考 |
+| 1 / 2 / 3 | `minimal` / `low` / `medium` |
+| 4 / 5 / 6 | `high` / `xhigh` / `max` |
+
+每个模型可用自己的 `thinkingProfiles` 覆盖 0–6 任一级的 `reasoningEffort` 和 `speed`；未覆盖的级别按上表解析。某模型不支持某个推理参数时，应由管理员为对应等级配置其实际支持的值。档位不能改变 harness、模型或 CLI。不同模型可使用不同 CLI 路径，并继承全局的目录、沙箱和职责策略。
+
+以下展示配置结构，模型名需按实际可用项替换：
+
+```json
+{
+  "models": [
+    {
+      "id": "quick",
+      "name": "常规模型",
+      "description": "常规查询和轻量任务",
+      "harness": "codex",
+      "model": "your-fast-model",
+      "reasoningEffort": "low",
+      "speed": "fast",
+      "thinkingProfiles": {
+        "6": { "reasoningEffort": "high", "speed": "default" }
+      }
+    },
+    {
+      "id": "deep",
+      "name": "分析模型",
+      "description": "复杂排查与跨模块分析",
+      "harness": "codex",
+      "model": "your-analysis-model",
+      "reasoningEffort": "medium"
+    }
+  ],
+  "defaultModelId": "quick",
+  "thinkingLevel": 0
+}
+```
+
+run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。模型选择与智慧等级参与请求去重；重复投递保留原参数和 requestId，查询已有任务用原 jobId，不能通过换模型或等级重做状态未知的业务。`reply` 不接受 modelId/thinkingLevel，始终续接原任务的冻结配置和会话。
+
+会话按可信聊天 + 项目/仓库 + topic + harness + 模型分别保留。改变等级或速度继续复用当前模型的会话；切换模型使用另一会话，再切回来可恢复原模型的上下文。模型 ID 改名不改变会话身份。不同模型的任务可并行，同一模型的同 topic 仍串行；业务 resourceKeys 跨模型继续串行。任务历史、会话列表及详情携带模型信息，界面按模型分别展示。
+
+为兼容旧部署，models 为空时以顶层 model/reasoningEffort 提供 ID 为 `default` 的 Codex 模型，并继续接受顶层 thinkingProfiles。新配置应把模型与推理参数迁到 models；顶层 thinkingProfiles 不影响显式模型列表。0–6 的新默认映射适用于新任务；已经受理的旧任务保留原模型及参数。旧会话在下一次真实 run 迁移到模型绑定，保留旧 ID，不重跑任务。
+
 ## 本机配置与数据
 
-默认通过宿主 PATH 中的 `codex` 和 `node` 执行。管理员可在 OpenClaw UI 显式设置程序绝对路径、工作目录、CODEX_HOME 和存储目录，不需要改源码。`state`、`cwd`、`codexHome`、`skillContextRoot`、`cli`、`node`、档位 CLI 及 PATH 前缀中的 `~/` 在运行时按宿主用户展开；发布的插件清单只保存通用默认值。
+默认通过宿主 PATH 中的 `codex` 和 `node` 执行。管理员可在 OpenClaw UI 显式设置程序绝对路径、工作目录、CODEX_HOME 和存储目录，不需要改源码。`state`、`cwd`、`codexHome`、`skillContextRoot`、`cli`、`node`、模型 CLI、兼容旧版档位 CLI 及 PATH 前缀中的 `~/` 在运行时按宿主用户展开；发布的插件清单只保存通用默认值。
 
 默认工作目录为 `~/.openclaw/workspace`，任务存储为 `~/.openclaw/codex-query-sessions`，Codex 配置目录为 `~/.codex`，PATH 前缀为空。路径约束不代表操作系统权限隔离；职责、数据规则和每轮授权仍须按部署用途配置。
 
@@ -117,7 +169,9 @@ Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内
 | --- | --- |
 | `cwd`、`cli`、`node` | 执行工作目录、Codex 命令、后台 Node 命令，默认 `~/.openclaw/workspace`、`codex`、`node`；程序可使用绝对路径或 PATH 中的命令名。 |
 | `state`、`codexHome`、`pathPrefix` | 任务存储、Codex 登录/配置目录和执行 PATH 前缀。 |
-| `model`、`reasoningEffort` | 默认 `gpt-6.1-sol` / `low`，由管理员选择当前 CLI 支持的值。 |
+| `models`、`defaultModelId` | 可添加的 harness + 模型列表及默认模型 ID；每项可配置用途、CLI、推理强度、速度及 0–6 级覆盖。留空列表兼容顶层 model。 |
+| `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
+| `model`、`reasoningEffort`、`thinkingProfiles` | 兼容 models 为空的部署；基线默认 `gpt-6.1-sol` / `low`，新配置使用 models。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
 | `timeoutMs` | 每个 job 的刷新与业务执行总时限，默认 600000 毫秒；排队时间不计入。 |
 | `executorInstructions`、`businessDataPolicy` | 完整替换执行器职责与业务数据展示规则；默认限制业务写入范围并禁止 Git 写操作；`{projectDir}` 在执行和委派提示中替换为当前 `cwd`。 |
@@ -153,7 +207,7 @@ Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内
 }
 ```
 
-已受理任务把完整配置快照写入私有请求文件，后台 worker 和重启后排队派发继续使用该快照。新配置不改变旧任务。执行目录、模型、推理强度、沙箱、职责或数据策略变化时，下次真实 run 创建新执行会话并保留旧 ID；保持原有默认配置时可继续复用已有会话。相同请求的去重仍优先，配置变化不代表授权重新执行业务。
+已受理任务把完整配置快照写入私有请求文件，后台 worker 和重启后排队派发继续使用该快照。新配置不改变旧任务。同一 harness + 模型的执行目录、CLI、Codex 用户目录、沙箱、职责或数据策略变化时，下次真实 run 创建新执行会话并保留旧 ID；仅改变智慧等级或速度继续复用该模型会话。模型切换分别保留绑定。相同请求的去重仍优先，配置变化不代表授权重新执行业务。
 
 修改 `state` 会选择另一套任务存储，不自动迁移旧数据。技能刷新启用时，Feishu 的 `workspaceSync.executorStateDir` 应与本插件 `state` 相同，`workspaceSync.skillDirectories` 应与本插件 `skillDirectories` 相同。来源和完成通知的版本化进程内协议保持兼容；异步交付目前仍需要 Feishu 适配器。
 
@@ -184,7 +238,7 @@ OpenClaw 主会话决定角色、能力、授权范围与任务。新的 run 传
 
 CLI 使用少于 1000 字符的固定 developer_instructions 作为执行底线，刷新与业务轮次传入完全相同的开发者规则。当前输入的 `kind` 明确阶段：`skill_catalog_refresh` 仅确认索引，禁用工具和业务操作；`business_task` 表示刷新限制结束，仍按当前 task/constraints 的授权范围执行。每轮业务用户消息包含 kind/task/constraints/context、独立的 memory 交接对象及 memoryPolicy/dataPolicy。详细流程按需读取项目技能。不再加载 .codex/agents，不读取或注入整份业务角色。Codex 进程拥有本机用户权限，Codex 沙箱与审批提示均被绕过；developer_instructions、task constraints 和 OpenClaw 授权流程仍是软件层规则，不构成操作系统权限隔离或安全边界。
 
-原有 topic 映射保留。执行策略升级至版本 6，新增执行与客观报告的职责边界。旧会话的开发者规则及历史风格可能残留，新的真实 run 迁移；已受理并暂停的版本 5 任务，在原会话、冻结配置指纹、目录和技能版本全部核验一致时可继续原 job，不重跑。版本 4 及更早执行禁令不兼容，仍拒绝续接。只在下一次真实 run 迁移，不批量重跑任务；旧会话 ID 保留，已有 job 的等待和取消不受影响。由于旧 Agent Worker 会话含旧的开发者规则，executionPolicyVersion 不匹配时仅迁移一次：新建轻量执行会话，并将旧 ID 保存在 previousSessionIds；之后继续按同一 OpenClaw sessionKey + topic 复用。list 标记 needsMigration，主会话需传入必要旧结论。创建失败且未取得新 ID 时不覆盖原绑定；新会话已创建而执行失败时保留新 ID 供重试。不会删除旧 Codex 对话。
+原有 topic 映射保留。执行策略升级至版本 6，新增执行与客观报告的职责边界。旧会话的开发者规则及历史风格可能残留，新的真实 run 迁移；已受理并暂停的版本 5 任务，在原会话、冻结配置指纹、目录和技能版本全部核验一致时可继续原 job，不重跑。版本 4 及更早执行禁令不兼容，仍拒绝续接。只在下一次真实 run 迁移，不批量重跑任务；旧会话 ID 保留，已有 job 的等待和取消不受影响。由于旧 Agent Worker 会话含旧的开发者规则，executionPolicyVersion 不匹配时仅迁移一次：新建轻量执行会话，并将旧 ID 保存在 previousSessionIds；之后继续按同一 OpenClaw sessionKey + 项目/仓库 + topic + harness/模型复用。list 标记 needsMigration，主会话需传入必要旧结论。创建失败且未取得新 ID 时不覆盖原绑定；新会话已创建而执行失败时保留新 ID 供重试。不会删除旧 Codex 对话。
 
 ## 执行会话技能刷新
 
@@ -205,7 +259,7 @@ main 成功同步并刷新工作区后，将 `skills/`、`.agents/skills/` 的 G
 ## 后台任务
 
 run 由独立 Node worker 执行，默认等待 20 秒、最多 30 秒；status/wait 仅当前可信会话可访问；cancel 还必须匹配宿主可信发送者及账号与任务发起人，缺少发起人的旧飞书任务需管理员核验，wait 不启动任务。外层等待终止不会取消后台任务，cancel 才请求终止；取消不回滚外部已接受的操作。后台仍限制 10 分钟。
-状态、待执行请求和结果保存在 codex-query-sessions/jobs，目录 0700、文件 0600。短调度锁保护受理和 worker 启动，默认最多 3 个并行 job、100 个等待 job。排队请求先持久化再返回 queued/jobId，由插件服务每 500ms 检查空位；同一聊天 + topic 串行，不同 topic 可并行。调度按受理顺序选择可执行任务，跳过仍受会话/资源锁阻塞的请求。来源撤回或取消的排队任务在启动前终止。运行时不依赖主轮次持续 wait。
+状态、待执行请求和结果保存在 codex-query-sessions/jobs，目录 0700、文件 0600。短调度锁保护受理和 worker 启动，默认最多 3 个并行 job、100 个等待 job。排队请求先持久化再返回 queued/jobId，由插件服务每 500ms 检查空位；同一聊天 + 项目/仓库 + topic + 模型串行，不同模型或 topic 可并行。调度按受理顺序选择可执行任务，跳过仍受会话/资源锁阻塞的请求。来源撤回或取消的排队任务在启动前终止。运行时不依赖主轮次持续 wait。
 
 同一会话、发起人及完整请求摘要匹配时返回已有 job；去重键不包含来源消息 taskId/revision、标签和资源键。跨消息重试保留 requestId，不重新执行，已取消任务也返回原状态。明确重做才换 requestId；新的 run 仍须通过当前来源租约授权。队列满时 queue_full/accepted=false，不创建 job、不承诺通知；已受理请求的幂等查询不受队列容量限制。升级前任务按原 jobId 查询，旧版全局锁存在时不启动新 worker、不删除旧锁。
 
@@ -404,7 +458,7 @@ Main 调用同一个工具：`{"action":"reply","jobId":"原任务 ID","question
 
 ## 侧边栏任务信息
 
-会话详情的“任务信息”展示当前进行中、排队或等待补充的任务摘要，每个任务只有一张卡片，点击卡片即可在卡片内部展开或收起完整目标、上下文、执行限制、状态和时间。历史任务按新到旧分页展示，每页 30 条；点击任务按 jobId 读取对应详情，可切换查看该任务的对话和执行过程，也可弹窗查看脱敏的原始任务 JSON。摘要来自受理时保存的任务记录，旧任务缺少正文时明确显示不可用，不补造历史内容。
+会话列表按 harness + 模型分别展示，选择模型会话后只读取该模型的任务；任务深链接由原 jobId 定位模型范围。会话详情的“任务信息”展示当前进行中、排队或等待补充的任务摘要，每个任务只有一张卡片，点击卡片即可在卡片内部展开或收起完整目标、上下文、执行限制、状态和时间。历史任务按新到旧分页展示，每页 30 条；点击任务按 jobId 读取对应详情，可切换查看该任务的对话和执行过程，也可弹窗查看脱敏的原始任务 JSON。摘要来自受理时保存的任务记录，旧任务缺少正文时明确显示不可用，不补造历史内容。
 
 Agent Repo 模式可以配置 `skillContextRoot` 为角色仓库绝对路径，`cwd` 为其独立 `projects/<项目ID>/`。`skillDirectories` 使用相对于 skillContextRoot 的 `skills` 和 `projects/demo/.agents/skills`，须与 Feishu 发布设置一致。留空继续使用 cwd；改变上下文根会迁移执行会话，已受理任务保留原配置。
 

@@ -41,3 +41,10 @@ test('matching project jobs do not expose same-name topics from another project 
  assert.deepEqual(discoverTopics(topics,{query:'business-record',jobTopics:[topics[1]]}).tasks,[topics[1]]);
  assert.deepEqual(discoverTopics(topics,{query:'projects/a'}).tasks,[topics[0]]);
 });
+
+test('model-specific job matches discover only that model session for the same topic',()=>{
+ const topics=[{topic:'same',modelId:'quick',model:'fast-model',modelSessionScope:'quick-scope'},{topic:'same',modelId:'deep',model:'analysis-model',modelSessionScope:'deep-scope'}];
+ assert.deepEqual(discoverTopics(topics,{query:'record-id',jobTopics:[topics[1]]}).tasks,[topics[1]]);
+ assert.deepEqual(discoverTopics(topics,{query:'fast-model'}).tasks,[topics[0]]);
+ assert.equal(discoverTopics(topics).tasks.length,2);
+});

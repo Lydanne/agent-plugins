@@ -19,9 +19,9 @@ export async function waitForQueryJob(params, context, jobs) {
 export function discoverTopics(topics, {query='', limit=10, jobTopics=[],projectId,repository}={}) {
  validateHistoryFilter({projectId,repository});
  const terms=query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
- const key=value=>typeof value==='string'?value:JSON.stringify([value.topic,value.projectId??null,value.repository??null]);
+ const key=value=>typeof value==='string'?value:JSON.stringify([value.topic,value.projectId??null,value.repository??null,value.modelSessionScope??null]);
  const fromJobs=new Set(jobTopics.filter(t=>typeof t==='string'?projectId===undefined&&repository===undefined:matchesHistoryFilter(t,{projectId,repository})).map(key));
- const matches=topics.filter(t=>matchesHistoryFilter(t,{projectId,repository})&&(fromJobs.has(t.topic)||fromJobs.has(key(t)) || terms.every(term=>[t.topic,t.projectId,t.repository].filter(Boolean).join(' ').toLocaleLowerCase().includes(term))))
+ const matches=topics.filter(t=>matchesHistoryFilter(t,{projectId,repository})&&(fromJobs.has(t.topic)||fromJobs.has(key(t)) || terms.every(term=>[t.topic,t.projectId,t.repository,t.modelId,t.model,t.harness].filter(Boolean).join(' ').toLocaleLowerCase().includes(term))))
   .sort((a,b)=>(Date.parse(b.updatedAt)||0)-(Date.parse(a.updatedAt)||0)||a.topic.localeCompare(b.topic));
  return {tasks:matches.slice(0,limit), topicPage:{total:matches.length,limit,hasMore:matches.length>limit}};
 }

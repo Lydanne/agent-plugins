@@ -18,3 +18,5 @@ description: 解释 agent_worker 的后台完成、补充请求、卡片答案�
 来源 sourceMessageIds 为完整追踪集合，requestMessageIds 为真人请求子集；引用和完成事件不是新请求。跨会话的资料或任务不因此获得转发权限。旧 AgentWorkerResult:/CodexQueryResult:/AgentWorkerRequest:/FeishuAnswer: 长标题仍按相同语义读取；event.type 的旧 codex_query.completed 不改变结果性质。
 
 CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机器协议，不因展示块改名改变任务阶段。主会话工具参数和返回信封保持实际 schema。新增可选字段保留 false/0/null 与原始来源；未知字段不执行、不推断授权，操作语义变更须由宿主合同与验证共同支持。
+
+新任务通过 `agent_worker action=models` 或工具说明核对可用模型，由 Main 按任务选择 modelId，并按难度传 thinkingLevel=0–6。模型是管理员配置的 harness + 模型，0 使用所选模型默认参数；等级不切换模型。同一聊天、项目/仓库和 topic 按模型分别保留会话，等级变化复用会话。已受理、等待补充或状态未知的任务继续使用原 jobId；reply 不改变模型及等级，不通过切换模型重跑业务。

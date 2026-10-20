@@ -1,6 +1,6 @@
 import {createAgentTaskInspector} from './agent-task-inspector.mjs';
 import {trustedAgentId} from './dist/agent-repo-api.mjs';
-import {bindingKey} from './project-binding.mjs';
+import {bindingKey,modelFields} from './project-binding.mjs';
 import {requestKeyFor} from './jobs.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import {inspectionChunkSize,inspectionMaxChunks} from './inspection-transport.mjs';
@@ -49,10 +49,10 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
  async function sessionSummaries(scope,all){
   const groups=new Map();
    const bindings=await optionalJson(join(state,hash(scope)+'.json'));
-   for(const entry of Object.values(bindings??{}))groups.set(bindingKey(entry.topic,entry),{topic:entry.topic,...(entry.project?{projectId:entry.project.projectId,repository:entry.project.repository,executionScope:entry.executionScope}:{}),sessionId:entry.sessionId,tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:Date.parse(entry.updatedAt)||0,status:'unknown',progress:'历史任务记录不可用'});
+   for(const entry of Object.values(bindings??{}))groups.set(bindingKey(entry.topic,entry),{topic:entry.topic,...modelFields(entry),...(entry.project?{projectId:entry.project.projectId,repository:entry.project.repository,executionScope:entry.executionScope}:{}),sessionId:entry.sessionId,tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:Date.parse(entry.updatedAt)||0,status:'unknown',progress:'历史任务记录不可用'});
    for(const job of all){
     const group=bindingKey(job.topic,job);
-    const row=groups.get(group)??{topic:job.topic,...(job.project?{projectId:job.projectId,repository:job.repository,executionScope:job.executionScope}:{}),tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:0};
+    const row=groups.get(group)??{topic:job.topic,...modelFields(job),...(job.project?{projectId:job.projectId,repository:job.repository,executionScope:job.executionScope}:{}),tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:0};
     row.createdAt=row.createdAt?Math.min(row.createdAt,job.createdAt):job.createdAt;row.taskCount++;row.interactionCount+=1+(job.status==='completed'?1:0);
     // Only accepted work and terminal Worker replies contribute; polls and heartbeats do not.
     row.heat+=10*Math.pow(0.5,Math.max(0,now()-job.createdAt)/(7*86400000));
@@ -73,16 +73,19 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
    const unfiltered=await scoped(scope),all=projectId?unfiltered.filter(job=>job.projectId===projectId):unfiltered;
    const allSummaries=await sessionSummaries(scope,all),summaries=projectId?allSummaries.filter(row=>row.projectId===projectId):allSummaries;
    const terms=query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-   const rows=summaries.filter(row=>terms.every(term=>[row.topic,row.projectId,row.repository,row.status,...row.tags].join(' ').toLocaleLowerCase().includes(term))).sort((a,b)=>groupPriority[listGroup(b)]-groupPriority[listGroup(a)]||(sort==='heat'?b.heat-a.heat:b.updatedAt-a.updatedAt)||a.topic.localeCompare(b.topic));
+   const rows=summaries.filter(row=>terms.every(term=>[row.topic,row.projectId,row.repository,row.modelId,row.model,row.harness,row.status,...row.tags].join(' ').toLocaleLowerCase().includes(term))).sort((a,b)=>groupPriority[listGroup(b)]-groupPriority[listGroup(a)]||(sort==='heat'?b.heat-a.heat:b.updatedAt-a.updatedAt)||a.topic.localeCompare(b.topic));
    return redactInspection({projectId:projectId??null,projectIds:[...new Set([...unfiltered.map(job=>job.projectId),...allSummaries.map(row=>row.projectId)].filter(Boolean))].sort(),sessions:rows.slice(offset,offset+limit).map(row=>({...row,heat:Math.round(row.heat*10)/10})),total:rows.length,hasMore:offset+limit<rows.length,offset,limit,groupCounts:{active:rows.filter(row=>listGroup(row)==='active').length,unknown:rows.filter(row=>listGroup(row)==='unknown').length,history:rows.filter(row=>listGroup(row)==='history').length},counts:{awaitingUser:all.filter(j=>j.status==='awaiting_user').length,awaitingMain:all.filter(j=>j.status==='awaiting_main').length,running:all.filter(j=>j.status==='running').length,queued:all.filter(j=>j.status==='queued').length},heatPolicy:'任务受理 +10，Worker 完成 +5；7天半衰期。交互次数为受理任务及已完成回复次数；查询、等待和心跳不计入。'});
   },
-  async detail(scope,{topic,offset=0,limit=1,historyOffset=0,jobId,executionScope,projectId}={}){
+  async detail(scope,{topic,offset=0,limit=1,historyOffset=0,jobId,executionScope,modelSessionScope,projectId}={}){
    if(typeof topic!=='string'||!topic||topic.length>160||!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>1||!Number.isInteger(historyOffset)||historyOffset<0)throw Error('Invalid detail parameters');
    if(executionScope!==undefined&&executionScope!==null&&(typeof executionScope!=='string'||!/^[a-f0-9]{64}$/.test(executionScope)))throw Error('Invalid execution scope');
    const all=await scoped(scope),selected=jobId?all.find(job=>job.jobId===jobId&&job.topic===topic):undefined,chosenScope=executionScope!==undefined?executionScope:selected?selected.executionScope??null:undefined;
-   const inScope=entry=>chosenScope===undefined||chosenScope===null&&!entry.executionScope||entry.executionScope===chosenScope;
+   if(modelSessionScope!==undefined&&modelSessionScope!==null&&(typeof modelSessionScope!=='string'||!/^[a-f0-9]{64}$/.test(modelSessionScope)))throw Error('Invalid model session scope');
+   const chosenModel=modelSessionScope!==undefined?modelSessionScope:selected?selected.modelSessionScope??null:undefined;
+   const inScope=entry=>(chosenScope===undefined||chosenScope===null&&!entry.executionScope||entry.executionScope===chosenScope)&&(chosenModel===undefined||chosenModel===null&&!entry.modelSessionScope||entry.modelSessionScope===chosenModel);
    if(projectId!==undefined&&(typeof projectId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(projectId)))throw Error('Invalid project filter');
    const matches=all.filter(j=>j.topic===topic&&inScope(j)&&(!projectId||j.projectId===projectId)),records=[];
+   if(chosenModel===undefined&&new Set(matches.map(job=>job.modelSessionScope??null)).size>1)throw Error('Choose a model session scope for this topic');
    if(jobId!==undefined){if(typeof jobId!=='string'||!uuid.test(jobId))throw Error('Invalid job identifier');offset=matches.findIndex(job=>job.jobId===jobId);if(offset<0)throw Error('Task not found in conversation');}
    const summary=(await sessionSummaries(scope,all)).find(row=>row.topic===topic&&inScope(row)&&(!projectId||row.projectId===projectId));
    const session=summary?{...summary,heat:Math.round(summary.heat*10)/10,awaitingUserCount:matches.filter(job=>job.status==='awaiting_user').length,awaitingMainCount:matches.filter(job=>job.status==='awaiting_main').length,runningCount:matches.filter(job=>job.status==='running').length,queuedCount:matches.filter(job=>job.status==='queued').length}:null;
@@ -99,7 +102,7 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
     }catch(e){if(e.code!=='ENOENT')availability='unreadable';}
     let result;try{result=JSON.parse(job.result?.content?.find(c=>c.type==='text')?.text??'null')?.result;}catch{ /* Raw invalid output is not displayed as a final reply. */ }
     if(typeof result==='string'){try{const nested=JSON.parse(result);if(nested.protocol==='codex_result_v1'&&typeof nested.result==='string')result=nested.result;}catch{ /* Plain text replies remain intact. */ }}
-    records.push({jobId:job.jobId,...(job.project?{projectId:job.projectId,repository:job.repository,cwd:job.cwd}:{}),status:job.status,createdAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt,progress:job.progress,error:job.error,notificationState:job.notification?.state,notificationKind:['awaiting_main','awaiting_user'].includes(job.status)?'context_request':'result',questions:job.questions??[],executionRounds:job.executionRounds??[],request:bound?{availability:'available',task:request.params.task,context:request.params.context,constraints:request.params.constraints}:{availability:'unavailable'},result,events,eventsAvailability:availability,omitted});
+    records.push({jobId:job.jobId,...modelFields(job),...(job.project?{projectId:job.projectId,repository:job.repository,cwd:job.cwd}:{}),status:job.status,createdAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt,progress:job.progress,error:job.error,notificationState:job.notification?.state,notificationKind:['awaiting_main','awaiting_user'].includes(job.status)?'context_request':'result',questions:job.questions??[],executionRounds:job.executionRounds??[],request:bound?{availability:'available',task:request.params.task,context:request.params.context,constraints:request.params.constraints}:{availability:'unavailable'},result,events,eventsAvailability:availability,omitted});
    }
    // Summaries come from accepted jobs; full requests and logs remain lazy and bound above.
    const taskSummary=(job,index)=>({jobId:job.jobId,index,status:job.status,task:typeof job.taskSummary==='string'?redactInspection(job.taskSummary).slice(0,500):null,createdAt:job.createdAt,finishedAt:job.finishedAt});

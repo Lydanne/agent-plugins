@@ -1,7 +1,7 @@
 {
   "id": "agent-worker",
   "name": "本地智能体执行器 / Local agent worker",
-  "description": "按 0–5 档位路由本地 CLI、模型及执行参数的 agent_worker。 / Agent worker with level-based local CLI routing.",
+  "description": "按 harness + 模型配置执行器，为每次任务选择模型和 0–6 智慧等级。 / Agent worker with model selection and per-task thinking levels 0–6.",
   "contracts": {
     "tools": [
       "agent_worker"
@@ -183,8 +183,8 @@
         "type": "integer",
         "default": 0,
         "minimum": 0,
-        "maximum": 5,
-        "description": "默认思维档位 / Default thinking level"
+        "maximum": 6,
+        "description": "默认智慧等级 / Default thinking level"
       },
       "thinkingProfiles": {
         "type": "object",
@@ -430,9 +430,49 @@
                 ]
               }
             }
+          },
+          "6": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "harness": {
+                "type": "string",
+                "enum": [
+                  "codex"
+                ]
+              },
+              "cli": {
+                "type": "string",
+                "pattern": "\\S",
+                "maxLength": 40000
+              },
+              "model": {
+                "type": "string",
+                "pattern": "\\S",
+                "maxLength": 40000
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": [
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "speed": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "fast"
+                ]
+              }
+            }
           }
         },
-        "description": "思维档位配置 / Thinking profiles"
+        "description": "旧版档位配置（兼容） / Legacy thinking profiles"
       },
       "skillContextRoot": {
         "type": "string",
@@ -451,6 +491,250 @@
           "legacy"
         ],
         "description": "项目路由模式 / Project routing mode"
+      },
+      "models": {
+        "type": "array",
+        "default": [],
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "harness",
+            "model"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "harness": {
+              "type": "string",
+              "enum": [
+                "codex"
+              ]
+            },
+            "model": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 40000
+            },
+            "cli": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 40000
+            },
+            "reasoningEffort": {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            "speed": {
+              "type": "string",
+              "enum": [
+                "default",
+                "fast"
+              ]
+            },
+            "thinkingProfiles": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "0": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "1": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "2": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "3": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "4": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "5": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "6": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "maxItems": 50,
+        "description": "可用模型 / Available models"
+      },
+      "defaultModelId": {
+        "type": "string",
+        "default": "",
+        "maxLength": 40000,
+        "pattern": "^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$",
+        "description": "默认模型 ID / Default model ID"
       }
     }
   },
@@ -544,12 +828,12 @@
       "help": "未配置时保留当前行为。 / Unset values preserve existing behavior."
     },
     "thinkingLevel": {
-      "label": "默认思维档位 / Default thinking level",
-      "help": "0 使用基线模型及推理参数，1–5 默认映射 low、medium、high、xhigh、max；不代表关闭思考。 / 0 inherits baseline settings; 1–5 default to low through max."
+      "label": "默认智慧等级 / Default thinking level",
+      "help": "0 使用所选模型默认推理参数；1–6 映射 minimal、low、medium、high、xhigh、max，具体值可在每个模型中覆盖。等级变化不创建新会话。 / 0 uses model defaults; 1–6 map minimal through max."
     },
     "thinkingProfiles": {
-      "label": "思维档位配置 / Thinking profiles",
-      "help": "按 0–5 配置 harness（首批 codex）、cli、model、reasoningEffort、speed（default 或 fast）。省略项继承基线；已有任务使用受理时快照。 / Per-level Codex CLI, model, effort and service tier overrides; admitted jobs keep snapshots."
+      "label": "旧版档位配置（兼容） / Legacy thinking profiles",
+      "help": "仅在 models 为空时兼容旧配置；新配置应使用 models，每项单独设置 0–6 级推理强度和速度。已受理任务保留原配置快照。 / Legacy fallback only; configure new per-model profiles in models."
     },
     "skillContextRoot": {
       "label": "技能上下文根目录 / Skill context root",
@@ -558,12 +842,20 @@
     "projectRouting": {
       "label": "项目路由模式 / Project routing mode",
       "help": "auto 按可信 Agent 使用 Agent Repo API；agent-repo 强制依赖服务；legacy 使用原有固定目录。已有 Agent Repo 绑定但服务缺失时不回退。 / Auto discovers the Agent-bound API; agent-repo requires it; legacy preserves fixed workspace configuration."
+    },
+    "models": {
+      "label": "可用模型 / Available models",
+      "help": "添加模型配置：唯一 id、harness=codex、model；可选名称、用途描述、CLI、默认推理强度、速度和 thinkingProfiles（0–6）。同一 harness + 模型只能添加一次；档位仅覆盖推理强度与速度，不能切换模型。 / Add named harness/model entries with per-model effort and tier profiles."
+    },
+    "defaultModelId": {
+      "label": "默认模型 ID / Default model ID",
+      "help": "填写 models 中的 id；留空使用第一项。models 为空时使用兼容默认模型 default。 / Select a configured ID; empty selects the first entry."
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/2d7e2d6f0f9c1fd266a5/index.js",
+    "entry": "dist/control-ui/b8741ea5ea62e554ea7f/index.js",
     "styles": [
-      "dist/control-ui/2d7e2d6f0f9c1fd266a5/index.css"
+      "dist/control-ui/b8741ea5ea62e554ea7f/index.css"
     ]
   },
   "skills": [
