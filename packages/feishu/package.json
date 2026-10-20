@@ -1,0 +1,89 @@
+{
+  "name": "@x-lyda/openclaw-feishu",
+  "version": "2026.9.5-local.14",
+  "description": "OpenClaw Feishu/Lark channel plugin for chats and workplace tools (community maintained by @m1heng).",
+  "type": "module",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.73.3",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-gfm-table": "2.0.0",
+    "micromark-extension-gfm-table": "2.1.1",
+    "typebox": "1.3.30",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "openclaw": "2026.9.5"
+  },
+  "peerDependencies": {
+    "openclaw": "2026.9.5"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "feishu",
+      "configuredState": {
+        "env": {
+          "anyOf": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET",
+            "FEISHU_VERIFICATION_TOKEN",
+            "FEISHU_ENCRYPT_KEY"
+          ]
+        },
+        "specifier": "./dist/configured-state.js",
+        "exportName": "hasConfiguredFeishuChannelState"
+      },
+      "label": "Feishu",
+      "selectionLabel": "Feishu/Lark (\u98de\u4e66)",
+      "docsPath": "/channels/feishu",
+      "docsLabel": "feishu",
+      "blurb": "\u98de\u4e66/Lark enterprise messaging with doc/wiki/drive tools.",
+      "aliases": [
+        "lark"
+      ],
+      "order": 35,
+      "quickstartAllowFrom": true,
+      "setup": {
+        "fields": []
+      }
+    },
+    "compat": {
+      "pluginApi": ">=2026.9.5"
+    },
+    "build": {
+      "bundledDist": false,
+      "openclawVersion": "2026.9.5"
+    }
+  },
+  "private": true,
+  "scripts": {
+    "build": "node ../../scripts/build.mjs",
+    "test": "node ../../scripts/test.mjs",
+    "typecheck": "node ../../scripts/check-sdk-types.mjs && tsc -p tsconfig.json && tsc -p tsconfig.type-tests.json"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "skills",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lydanne/agent-plugins.git",
+    "directory": "packages/feishu"
+  },
+  "engines": {
+    "node": ">=24.19.0"
+  }
+}

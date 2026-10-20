@@ -1,0 +1,212 @@
+{
+  "id": "agent-repo",
+  "skills": [
+    "./skills"
+  ],
+  "name": "Agent Repo 支持 / Agent Repo support",
+  "description": "按可信智能体绑定 Agent Repo，提供项目登记、可选原生调度前同步及有效技能范围。 / Agent-scoped project registry, optional native dispatch synchronization and effective skill scopes.",
+  "contracts": {
+    "tools": [
+      "agent_repo",
+      "agent_entity_sync"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agents": {
+        "type": "object",
+        "default": {},
+        "maxProperties": 100,
+        "propertyNames": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repo"
+          ],
+          "properties": {
+            "repo": {
+              "type": "string",
+              "pattern": "^/[^\\u0000\\r\\n]+$"
+            },
+            "defaultProject": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+            },
+            "sync": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 1000,
+                  "maximum": 60000,
+                  "default": 30000
+                },
+                "branch": {
+                  "type": "string",
+                  "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$",
+                  "default": "main",
+                  "not": {
+                    "pattern": "[\\u0000\\r\\n]"
+                  }
+                },
+                "remote": {
+                  "type": "string",
+                  "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$",
+                  "default": "origin",
+                  "not": {
+                    "pattern": "[\\u0000\\r\\n]"
+                  }
+                },
+                "preserveLocalMemory": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "inboundChannels": {
+                  "type": "object",
+                  "maxProperties": 20,
+                  "default": {
+                    "feishu": {
+                      "messageIdPrefix": "om_"
+                    }
+                  },
+                  "propertyNames": {
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                    "not": {
+                      "pattern": "[\\u0000\\r\\n]"
+                    }
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "messageIdPrefix"
+                    ],
+                    "properties": {
+                      "messageIdPrefix": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100,
+                        "not": {
+                          "pattern": "[\\u0000\\r\\n]"
+                        }
+                      }
+                    }
+                  },
+                  "minProperties": 1
+                },
+                "submoduleSchedule": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "time",
+                    "timeZone"
+                  ],
+                  "properties": {
+                    "time": {
+                      "type": "string",
+                      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                      "not": {
+                        "pattern": "[\\r\\n]"
+                      }
+                    },
+                    "timeZone": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    }
+                  }
+                },
+                "gitEnvironment": {
+                  "type": "object",
+                  "maxProperties": 100,
+                  "propertyNames": {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "not": {
+                      "pattern": "[\\u0000\\r\\n]"
+                    }
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 40000,
+                    "not": {
+                      "pattern": "\\u0000"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "agents": {
+      "label": "智能体仓库绑定 / Agent Repo bindings",
+      "help": "键是 OpenClaw agentId；repo 是管理员绑定的绝对目录，defaultProject 为可选登记项目 ID。 / Keys are trusted agent IDs; repo is an absolute path and defaultProject an optional registered ID."
+    },
+    "agents.*.repo": {
+      "label": "智能体仓库目录 / Agent Repo directory",
+      "help": "不自动切换 OpenClaw workspace。 / Does not change the host workspace."
+    },
+    "agents.*.defaultProject": {
+      "label": "迁移规划项目 / Migration planning project",
+      "help": "用于管理员迁移规划；不替代 Main 的任务项目选择。单项目自动选择，多项目必须明确选择。 / Used for operator migration planning; a single project is automatic, multiple projects require explicit task selection."
+    },
+    "agents.*.sync": {
+      "label": "调度前仓库同步 / Repository synchronization before dispatch",
+      "help": "默认关闭，显式启用后在模型调度前等待同步；不得同时启用旧 Feishu 同步。 / Opt-in barrier before model dispatch; do not also enable legacy Feishu synchronization."
+    },
+    "agents.*.sync.enabled": {
+      "label": "启用同步 / Enable synchronization",
+      "help": "关闭时不执行 Git 同步。 / No Git synchronization while disabled."
+    },
+    "agents.*.sync.timeoutMs": {
+      "label": "同步超时毫秒 / Synchronization timeout milliseconds",
+      "help": "每仓库 1000–60000 毫秒，默认 30000。 / Per repository, 1000–60000 milliseconds; default 30000."
+    },
+    "agents.*.sync.branch": {
+      "label": "角色仓库分支 / Agent Repo branch",
+      "help": "默认 main；项目分支来自 projects.json。 / Default main; project branches come from projects.json."
+    },
+    "agents.*.sync.remote": {
+      "label": "角色仓库远端 / Agent Repo remote",
+      "help": "默认 origin；项目使用登记 URL 对应 origin。 / Default origin; projects use registered URLs and origin."
+    },
+    "agents.*.sync.preserveLocalMemory": {
+      "label": "保留本地原生记忆 / Preserve local native memory",
+      "help": "只保留未暂存且与远端不冲突的原生记忆文件，冲突仍阻止执行。 / Preserve unstaged native memory only when disjoint from remote changes; conflicts block execution."
+    },
+    "agents.*.sync.inboundChannels": {
+      "label": "入站渠道筛选 / Inbound channel filter",
+      "help": "仅登记渠道且真实消息 ID 匹配指定前缀时触发；默认 feishu / om_，内部后台完成事件不触发。 / Only registered channels with matching real message IDs trigger synchronization; default feishu / om_. Internal worker completions are excluded."
+    },
+    "agents.*.sync.submoduleSchedule": {
+      "label": "每日子仓库同步 / Daily submodule synchronization",
+      "help": "设置 time（如 08:00）和 timeZone（如 Asia/Shanghai）后，wiki 和业务子仓库仅每日同步一次。根仓库保持按请求同步；停机错过时间时启动后补一次，失败当天不自动重试。省略则保留按请求同步。"
+    },
+    "agents.*.sync.gitEnvironment": {
+      "label": "Git 同步环境 / Git synchronization environment",
+      "help": "仅传给当前 Agent 的根仓库、项目及定时子仓库 Git 同步进程。省略时使用通用同步标记；{} 清空额外标记。部署专用 Hook 环境在私有宿主配置中提供，不写入源码。 / Per-Agent Git subprocess overrides for root, project and scheduled sync; omit for the generic marker, use {} for none."
+    }
+  },
+  "controlUi": {
+    "entry": "dist/control-ui/5a25154d5667bacad190/index.js",
+    "styles": [
+      "dist/control-ui/5a25154d5667bacad190/index.css"
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/openclaw-sdk-compat.d.ts", "type-tests/**/*.ts"],
+  "exclude": []
+}

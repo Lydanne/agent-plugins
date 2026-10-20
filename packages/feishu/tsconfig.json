@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "*.ts",
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "src/test-support/**",
+    "**/*.test-support.ts",
+    "**/*.test-helpers.ts",
+    "**/*.test-mocks.ts",
+    "**/*.test-fixtures.ts"
+  ]
+}

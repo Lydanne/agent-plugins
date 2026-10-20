@@ -1,0 +1,54 @@
+import {mountPeoplePage} from './people-page.mjs';
+import {readInspectionResponse} from './dist/inspection-transport.mjs';
+import {currentUiTarget} from './dist/ui-navigation.mjs';
+const el=(tag,text,cls)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;};
+const button=(text,action,cls)=>{const node=el('button',text,cls);node.type='button';node.onclick=action;return node;};
+const kinds={channel:'渠道采集',program:'程序同步',ai:'AI 同步'};
+export function mountEntitiesPage(container,initial){
+ let context=initial,disposed=false,generation=0,agentId='',read,write,presented,types=[],sources=[],page=null,selected=null,typeId='',query='',source='',offset=0,loading=false,error='',people=null,personMode=false;
+ const root=el('section',undefined,'ar-entities');root.setAttribute('aria-label','Agent 实体资料库');container.append(root);
+ const safe=value=>context.host.redact(String(value??''));
+ const owner=()=>currentUiTarget({...context,props:{agentId:context.props.agentId}}).agentId;
+ async function invoke(action,payload,epoch){
+  return readInspectionResponse(async(name,data)=>{context.signal.throwIfAborted();if(disposed||epoch!==generation||!context.presented||!context.host.connection.canRead)throw Error('实体资料库已切换');return context.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,agentId,sessionKey:'agent:'+agentId+':agent-repo-entities',payload:data});},action,payload);
+ }
+ async function refresh(){
+  if(disposed||!presented||!read||!agentId||personMode)return;
+  const epoch=++generation;loading=true;error='';page=null;selected=null;render();
+  try{
+   const [catalog,next]=await Promise.all([invoke('entityTypes',{},epoch),invoke('entities',{...(typeId?{typeId}:{}),...(query.trim()?{query:query.trim()}:{}),...(source.trim()?{source:source.trim()}:{}),offset,limit:20},epoch)]);
+   if(disposed||epoch!==generation)return;types=catalog.types;sources=catalog.sources??[...new Set(next.entities.map(record=>record.source.namespace))].map(namespace=>({namespace}));page=next;selected=page.entities[0]??null;
+  }catch(failure){if(disposed||epoch!==generation)return;error=safe(failure.message);}
+  loading=false;render();
+ }
+ function openPeople(){generation++;personMode=true;render();}
+ function render(){
+  people?.dispose();people=null;root.replaceChildren();root.setAttribute('aria-busy',String(loading));
+  const header=el('header',undefined,'ar-entities-header'),copy=el('div');copy.append(el(context.props.embeddedManagement?'h2':'h1','实体资料库'),el('p','AI 与程序共同维护的结构化资料，按类型组织，跨会话查询。'));header.append(copy);root.append(header);
+  if(!presented)return;if(!read){root.append(el('p','需要 operator.read 权限才能查看实体资料库。','ar-error'));return;}if(!agentId){root.append(el('p','请先选择一个 Agent。'));return;}
+  if(!context.props.embeddedManagement){const picker=el('select');picker.setAttribute('aria-label','实体资料库所属 Agent');for(const agent of context.host.agents.rows??[{id:agentId}]){const option=el('option',safe(agent.name??agent.id));option.value=agent.id;picker.append(option);}picker.value=agentId;picker.onchange=()=>{context.host.agents.select(picker.value);if(context.props.agentId)context.host.navigation.openPage({id:'entities',params:{agentId:picker.value}});};header.append(picker);}
+  if(!context.props.embeddedManagement)root.append(el('p',safe('Agent '+agentId+' · 跨会话共享 · 与其他 Agent 隔离'),'ar-meta'));
+  if(personMode){root.append(button('返回实体资料库',()=>{personMode=false;refresh();},'ar-entities-back'));const body=el('div');root.append(body);people=mountPeoplePage(body,{...context,props:{agentId,embeddedManagement:true}});return;}
+  const toolbar=el('form',undefined,'ar-entities-toolbar'),search=el('input'),sourceInput=el('select');search.setAttribute('aria-label','搜索实体');search.placeholder='搜索名称、摘要或属性';search.value=query;sourceInput.setAttribute('aria-label','实体来源');for(const item of [{namespace:'',label:'全部来源'},...sources]){const option=el('option',item.label??safe(item.namespace==='feishu'?'飞书':item.namespace));option.value=item.namespace;sourceInput.append(option);}sourceInput.value=source;
+  const submit=el('button','搜索'),reload=button('刷新资料',refresh);submit.type='submit';submit.disabled=loading;reload.disabled=loading;
+  toolbar.onsubmit=event=>{event.preventDefault();query=search.value;source=sourceInput.value;offset=0;refresh();};toolbar.append(search,sourceInput,submit,reload);root.append(toolbar);
+  const layout=el('div',undefined,'ar-entities-layout'),nav=el('nav',undefined,'ar-entity-types');nav.setAttribute('aria-label','实体类型');
+  for(const type of [{id:'',label:'全部资料',count:types.reduce((n,t)=>n+t.count,0)},...types]){const tab=button('',()=>{typeId=type.id;offset=0;refresh();});tab.setAttribute('aria-current',typeId===type.id?'page':'false');tab.append(el('span',safe(type.label)),el('span',String(type.count)));nav.append(tab);}
+  nav.append(el('p','按类型整理人员、组织与资源，资料随来源同步更新。','ar-description'));layout.append(nav);
+  const workspace=el('div',undefined,'ar-entities-workspace'),top=el('div',undefined,'ar-entities-result-heading');top.append(el('strong',safe(types.find(t=>t.id===typeId)?.label??'全部资料')),el('span',page?page.total+' 条资料':loading?'正在读取…':'未读取','ar-meta'));if(typeId==='person')top.append(button('飞书人员同步与更正',openPeople));workspace.append(top);layout.append(workspace);root.append(layout);
+  const notice=el('p',error||'资料由各来源同步维护，可在详情中查看采集时间与来源。',error?'ar-error':'ar-entities-notice');notice.setAttribute('role',error?'alert':'status');workspace.append(notice);
+  if(error){workspace.append(button('重试读取',refresh));return;}
+  if(!page?.entities.length){workspace.append(el('div',loading?'正在加载资料…':query||source?'没有匹配资料，请调整搜索条件。':'此分类暂无资料。AI 或程序完成同步后会自动出现在这里。','ar-entities-empty'));return;}
+  const content=el('div',undefined,'ar-entities-content'),list=el('div',undefined,'ar-entities-list');list.setAttribute('aria-label','实体列表');
+  for(const record of page.entities){const row=button('',()=>{selected=record;render();});row.setAttribute('aria-pressed',String(selected?.id===record.id));row.append(el('strong',safe(record.name)),el('span',safe((types.find(t=>t.id===record.typeId)?.label??record.typeId)+' · '+record.source.namespace)),el('small',safe(record.summary||'暂无摘要')));list.append(row);}content.append(list);
+  if(selected){const record=selected,detail=el('article',undefined,'ar-entity-detail'),heading=el('div',undefined,'ar-entity-detail-heading');heading.append(el('h3',safe(record.name)),el('span',kinds[record.source.kind]??'未知来源','ar-entity-origin'));detail.append(heading,el('p',safe(record.summary||'暂无摘要')));
+   const fields=el('dl');const fact=(label,value)=>{const cell=el('div');cell.append(el('dt',safe(label)),el('dd',safe(Array.isArray(value)?value.join('、'):value===null||value===undefined||value===''?'暂未获取':String(value))));fields.append(cell);};
+   const type=types.find(t=>t.id===record.typeId);for(const [name,value] of Object.entries(record.attributes))fact(type?.fields[name]?.label??({giteaUsername:'Gitea 账号',giteaSource:'账号映射来源'}[name]??name),value);
+   detail.append(fields);const provenance=el('details'),meta=el('dl');provenance.append(el('summary','来源与同步信息'));for(const [label,value] of [['来源标识',record.source.namespace],['来源记录 ID',record.source.externalId],['采集时间',record.observedAt],['更新时间',record.updatedAt],['实体 ID',record.id],['修订版本',record.revision]]){const cell=el('div');cell.append(el('dt',label),el('dd',safe(value)));meta.append(cell);}provenance.append(meta);detail.append(provenance);
+   if(record.legacyPersonId)detail.append(button('打开飞书人员管理',openPeople));else detail.append(el('p','由来源同步更新。相同来源记录会更新原实体，不按名称自动合并。','ar-description'));content.append(detail);
+  }workspace.append(content);
+  const paging=el('div',undefined,'ar-entities-pagination');if(offset)paging.append(button('上一页',()=>{offset=Math.max(0,offset-20);refresh();}));if(page.nextOffset!==null)paging.append(button('下一页',()=>{offset=page.nextOffset;refresh();}));workspace.append(paging);
+ }
+ function update(next){if(disposed)return;context=next;const id=owner(),nextRead=context.host.connection.canRead,nextWrite=context.host.connection.canWrite,nextPresented=context.presented;if(id!==agentId||read!==nextRead||write!==nextWrite||presented!==nextPresented){generation++;agentId=id;read=nextRead;write=nextWrite;presented=nextPresented;types=[];sources=[];page=null;selected=null;typeId='';query='';source='';offset=0;personMode=false;loading=false;error='';render();refresh();}}
+ const stop=context.host.subscribe(()=>update(context));update(initial);return {update,dispose(){disposed=true;generation++;people?.dispose();stop();root.remove();}};
+}

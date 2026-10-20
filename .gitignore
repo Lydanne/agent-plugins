@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.tmp/
+coverage/
+*.sqlite*
+.env*
+
+# Local runtime state, exports and credentials
+.openclaw/
+.runtime/
+*.db
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
+credentials.json

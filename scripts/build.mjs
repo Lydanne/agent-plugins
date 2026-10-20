@@ -1,0 +1,11 @@
+import { build } from "esbuild";
+import { readdir } from "node:fs/promises";
+const entryPoints = (await readdir(".")).filter(x => x.endsWith(".ts") && !x.endsWith(".test.ts"));
+await build({entryPoints, outdir:"dist", bundle:true, splitting:true, format:"esm", platform:"node", target:"node24", packages:"external", sourcemap:true});
+const {readFile,writeFile} = await import('node:fs/promises');
+const {pathToFileURL} = await import('node:url');
+const {resolve} = await import('node:path');
+const {FeishuChannelConfigSchema} = await import(pathToFileURL(resolve('dist/config-schema-api.js')).href);
+const manifest = JSON.parse(await readFile('openclaw.plugin.json','utf8'));
+manifest.channelConfigs = {feishu:{schema:FeishuChannelConfigSchema.schema,uiHints:FeishuChannelConfigSchema.uiHints}};
+await writeFile('openclaw.plugin.json',JSON.stringify(manifest,null,2)+'\n');

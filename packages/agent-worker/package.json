@@ -1,0 +1,52 @@
+{
+  "name": "agent-worker",
+  "version": "1.0.1",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ]
+  },
+  "private": true,
+  "description": "Local Codex CLI delegation with Agent Repo project and repository skill routing",
+  "scripts": {
+    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check index.mjs && node --check jobs.mjs && node --check worker.mjs && node --check task-report.mjs && node --check source-tasks.mjs && node --check diagnostics.mjs && node --check skill-refresh.mjs && node --check memory-context.mjs && node --check experience.mjs && node --check completion.mjs && node --check context-request.mjs && node --check question-bridge.mjs && node --check locks.mjs && node --check dispatch-policy.mjs && node --check configuration.mjs && node config-schema.mjs && node --check session-inspector.mjs && node --check agent-task-inspector.mjs && node build-ui.mjs && node --check repository-scope.mjs && node --check project-binding.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "openclaw.plugin.json",
+    "README.md",
+    "jobs.mjs",
+    "worker.mjs",
+    "task-report.mjs",
+    "source-tasks.mjs",
+    "diagnostics.mjs",
+    "skill-refresh.mjs",
+    "memory-context.mjs",
+    "experience.mjs",
+    "completion.mjs",
+    "context-request.mjs",
+    "question-bridge.mjs",
+    "locks.mjs",
+    "dispatch-policy.mjs",
+    "configuration.mjs",
+    "config-schema.mjs",
+    "session-inspector.mjs",
+    "agent-task-inspector.mjs",
+    "inspection-transport.mjs",
+    "control-ui.mjs",
+    "control-ui.css",
+    "build-ui.mjs",
+    "dist/control-ui",
+    "repository-scope.mjs",
+    "project-binding.mjs",
+    "dist/agent-repo-api.mjs",
+    "dist/ui-navigation.mjs",
+    "dist/context-blocks.mjs",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=24.19.0"
+  }
+}

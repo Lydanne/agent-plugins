@@ -1,0 +1,39 @@
+{
+  "name": "@openclaw-plugins/agent-repo-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    },
+    "./entities": {
+      "types": "./entities.d.mts",
+      "import": "./entities.mjs"
+    },
+    "./context-blocks": {
+      "types": "./context-blocks.d.mts",
+      "import": "./context-blocks.mjs"
+    }
+  },
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "ui-navigation.mjs",
+    "people.mjs",
+    "people.d.mts",
+    "entities.mjs",
+    "entities.d.mts",
+    "context-blocks.mjs",
+    "context-blocks.d.mts"
+  ],
+  "scripts": {
+    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs",
+    "test": "node --test *.test.mjs",
+    "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck entities.type-test.mts"
+  },
+  "engines": {
+    "node": ">=24.19.0"
+  }
+}

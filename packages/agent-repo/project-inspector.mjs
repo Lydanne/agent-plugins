@@ -1,0 +1,172 @@
+import {createEntityStore} from './entities.mjs';
+import {getPeopleGroupSync} from './dist/people-api.mjs';
+import {createPeopleStore} from './people.mjs';
+import {queryPeople} from './people-query.mjs';
+import {readdir,readFile,realpath,lstat} from 'node:fs/promises';
+import {dirname,relative} from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
+import {bindingFor} from './configuration.mjs';
+import {containedPath,readProjects,inspectProject} from './repositories.mjs';
+import {readSkillSource,git} from './repository-skills.mjs';
+import {subagentInventory,resolveSubagentCatalog} from './subagents.mjs';
+import {repositorySyncTaskId,repositorySyncTasks} from './scheduled-tasks.mjs';
+import {readRepositoryLogs,clearRepositoryLogs} from './repository-log.mjs';
+import {readSyncHistory} from './sync-history.mjs';
+import {registryRevision} from './project-service.mjs';
+import {trustedAgentId} from './dist/agent-repo-api.mjs';
+import {inspectionChunkSize,inspectionMaxChunks} from './dist/inspection-transport.mjs';
+const hash=value=>createHash('sha256').update(value).digest('hex');
+const rules={agent:'当前 Agent 的所有项目共享；同名时优先于项目及子仓库技能。',project:'仅在选择当前项目时生效；进入该项目子仓库时继承，同名可被子仓库覆盖。',repository:'仅选择此子仓库范围时生效；覆盖同名项目根技能，不适用于兄弟仓库或其他项目。'};
+async function registration(binding){
+ const root=await realpath(binding.repo),file=await containedPath(root,'projects.json'),metadata=await lstat(file);
+ if(!metadata.isFile()||metadata.size>256*1024||file!==root+'/projects.json')throw Error('Invalid project registration');
+ const text=await readFile(file,'utf8');
+ return {root,digest:hash(text),head:(await git(root,['rev-parse','HEAD'])).trim(),registryRevision:await registryRevision(binding).catch(()=>null)};
+}
+async function checkRegistration(binding,before){const after=await registration(binding);if(before.digest!==after.digest||before.head!==after.head)throw Error('项目登记在扫描中改变，请刷新后重试');}
+async function inventory(root,directory,agentRoot,kind,hostConfig,agentId){
+ try{
+  const source=await readSkillSource(root,directory,agentRoot,kind,{inspection:true}),allowed=hostConfig.agents?.list?.find(agent=>agent.id===agentId)?.skills;
+  const skills=[];
+  // Bound Git process concurrency independently of the catalog size.
+  for(let offset=0;offset<source.entries.length;offset+=4){
+   skills.push(...await Promise.all(source.entries.slice(offset,offset+4).map(async entry=>{
+    const local=relative(source.root,agentRoot+'/'+entry.path),folder=dirname(local);
+    const [updatedAt,updatedCommit]=(await git(source.root,['log',source.head,'-1','--format=%cI%x00%H','--',':(literal)'+folder])).trim().split('\0');
+    const disabledReason=entry.modelInvocationDisabled?'技能声明禁止模型调用':hostConfig.skills?.entries?.[entry.name]?.enabled===false?'宿主配置已禁用':Array.isArray(allowed)&&!allowed.includes(entry.name)?'不在当前 Agent 技能允许列表':null;
+    return {...entry,updatedAt:updatedAt||null,updatedCommit:updatedCommit||null,disabledReason,appliesWhen:rules[kind]};
+   })));
+  }
+  if((await git(source.root,['rev-parse','HEAD'])).trim()!==source.head)throw Error('Repository changed during scan');
+  return {source:kind,repository:relative(agentRoot,source.root)||null,directory,head:source.head,state:source.dirty?'dirty':'available',skills};
+ }catch{return {source:kind,repository:relative(agentRoot,root)||null,directory,state:'unavailable',skills:[],warning:'无法读取此范围的已提交技能；检查 Git 根、路径、技能格式和目录权限。'};}
+}
+async function checkSourceVersions(root,sources){
+ const versions=new Map();
+ for(const source of sources){
+  if(!source.head)continue;
+  const path=source.repository?await containedPath(root,source.repository):root;
+  if(versions.has(path)&&versions.get(path)!==source.head)throw Error('仓库版本在扫描中改变，请刷新重试');
+  versions.set(path,source.head);
+ }
+ for(const [path,head] of versions)if((await git(path,['rev-parse','HEAD'])).trim()!==head)throw Error('仓库版本在扫描中改变，请刷新重试');
+}
+async function scopes(root,project){
+ const result=[{repository:project.repository,label:'项目根',source:'project'}],directory=await containedPath(root,project.repository+'/repositories');
+ if(directory!==root+'/'+project.repository+'/repositories')return result;
+ let entries;try{entries=await readdir(directory,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return result;throw error;}
+ if(entries.length>200)throw Error('子仓库数量超过扫描上限');
+ for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
+  if(!entry.isDirectory()||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(entry.name))continue;
+  const path=directory+'/'+entry.name;
+  try{if(await realpath(path)!==path||await realpath((await git(path,['rev-parse','--show-toplevel'])).trim())!==path)continue;}catch{continue;}
+  result.push({repository:project.repository+'/repositories/'+entry.name,label:entry.name,source:'repository'});
+ }
+ return result;
+}
+export function createProjectInspector(config,getHostConfig,now=()=>Date.now()){
+ async function context(ctx){const agentId=trustedAgentId(ctx),binding=bindingFor(config,{agentId});if(!binding)throw Error('当前 Agent 未绑定 Agent Repo');return {agentId,binding};}
+ return {
+  async entityTypes(ctx){const {binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('实体类型查询不接受范围参数');return createEntityStore(binding.repo).types();},
+  async entities(ctx){const {binding}=await context(ctx);return createEntityStore(binding.repo).list(ctx.payload??{});},
+  async entity(ctx){const {binding}=await context(ctx),params=ctx.payload??{};if(Object.keys(params).some(key=>key!=='id'))throw Error('实体查询参数无效');return createEntityStore(binding.repo).get(params.id);},
+  async peopleSyncInfo(ctx){
+   const {agentId}=await context(ctx),params=ctx.payload??{};
+   if(Object.keys(params).some(key=>key!=='accountId')||params.accountId!==undefined&&typeof params.accountId!=='string')throw Error('人员同步参数无效');
+   const service=getPeopleGroupSync();if(!service)return {available:false,accounts:[],reason:'飞书人员同步服务尚未加载'};
+   const input={agentId,sessionKey:ctx.sessionKey??'',...params};const info=service.info(input);return {...info,run:info.available?service.status(input):null};
+  },
+  async syncPeople(ctx){
+   const {agentId}=await context(ctx),params=ctx.payload??{};
+   if(!ctx.client?.scopes?.some(scope=>['operator.write','operator.admin'].includes(scope)))throw Error('人员同步需要写入权限');
+   if(Object.keys(params).some(key=>key!=='accountId')||params.accountId!==undefined&&typeof params.accountId!=='string')throw Error('人员同步参数无效');
+   const service=getPeopleGroupSync();if(!service)throw Error('飞书人员同步服务尚未加载');
+   return service.start({agentId,sessionKey:ctx.sessionKey??'',...params});
+  },
+  async people(ctx){
+   const {binding}=await context(ctx),params=ctx.payload??{};
+   if(Object.keys(params).some(key=>!['query','offset','accountId','giteaSource','missing'].includes(key)))throw Error('人员查询参数无效');
+   const {offset=0,query,...filters}=params;
+   if(query!==undefined&&typeof query!=='string')throw Error('人员查询参数无效');
+   if(query?.trim())filters.query=query;
+   return {...queryPeople(binding.repo,{...filters,action:'people',offset,limit:50}),stats:queryPeople(binding.repo,{...filters,action:'people_stats'})};
+  },
+  async updatePerson(ctx){
+   const {binding}=await context(ctx),params=ctx.payload??{};
+   if(!ctx.client?.scopes?.some(scope=>['operator.write','operator.admin'].includes(scope)))throw Error('人员管理需要写入权限');
+   if(Object.keys(params).some(key=>!['id','revision','patch'].includes(key)))throw Error('人员修改参数无效');
+   return createPeopleStore(binding.repo).update(params);
+  },
+  async deletePerson(ctx){
+   const {binding}=await context(ctx),params=ctx.payload??{};
+   if(!ctx.client?.scopes?.some(scope=>['operator.write','operator.admin'].includes(scope)))throw Error('人员管理需要写入权限');
+   if(Object.keys(params).some(key=>!['id','revision','confirmed'].includes(key))||params.confirmed!==true)throw Error('请确认删除人员资料');
+   return createPeopleStore(binding.repo).remove(params);
+  },
+  async list(ctx){
+   const {agentId,binding}=await context(ctx);if(ctx.payload&&Object.keys(ctx.payload).length)throw Error('项目列表不接受路径或 Agent 参数');
+   const before=await registration(binding),projects=await readProjects(before.root),agentSkills=await inventory(before.root,'skills',before.root,'agent',getHostConfig(),agentId);
+   const agentSubagents=await subagentInventory(before.root,before.root,'agent');resolveSubagentCatalog([agentSubagents]);
+   const history=await readSyncHistory(before.root,agentId),scannedAt=now();
+   await checkRegistration(binding,before);
+   return {scheduledTasks:repositorySyncTasks(binding,agentId,history,projects,scannedAt),syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
+  },
+  async repositoryLogs(ctx){
+   const {agentId,binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('日志不接受其他范围参数');
+   return readRepositoryLogs(binding.repo,agentId);
+  },
+  async clearRepositoryLogs(ctx){
+   const {agentId,binding}=await context(ctx),params=ctx.payload??{};
+   if(!ctx.client?.scopes?.some(scope=>['operator.write','operator.admin'].includes(scope)))throw Error('清空日志需要写入权限');
+   if(Object.keys(params).some(key=>key!=='confirmed')||params.confirmed!==true)throw Error('请确认清空当前 Agent 的仓库日志');
+   return clearRepositoryLogs(binding.repo,agentId);
+  },
+  async taskRecord(ctx){
+   const {agentId,binding}=await context(ctx),params=ctx.payload??{},taskId=repositorySyncTaskId(agentId);
+   if(Object.keys(params).some(key=>!['taskId','runId'].includes(key))||params.taskId!==taskId||typeof params.runId!=='string'||!params.runId.startsWith(taskId+':'))throw Error('同步记录范围无效');
+   const record=await readSyncHistory(binding.repo,agentId,params.runId.slice(taskId.length+1));
+   if(record.runId!==params.runId)throw Error('同步记录来源无效');
+   return record;
+  },
+  async syncRecord(ctx){
+   const {agentId,binding}=await context(ctx),params=ctx.payload??{};
+   if(Object.keys(params).some(key=>key!=='date')||typeof params.date!=='string')throw Error('同步记录参数无效');
+   return readSyncHistory(binding.repo,agentId,params.date);
+  },
+  async detail(ctx){
+   const {agentId,binding}=await context(ctx),params=ctx.payload??{};
+   if(Object.keys(params).some(key=>!['projectId','repository'].includes(key)))throw Error('项目详情参数无效');
+   const before=await registration(binding),projects=await readProjects(before.root);
+   if(typeof params.projectId!=='string'||!Object.hasOwn(projects,params.projectId))throw Error('选择已登记项目');
+   const project=projects[params.projectId],availableScopes=await scopes(before.root,project),repository=params.repository??project.repository;
+   if(!availableScopes.some(scope=>scope.repository===repository))throw Error('选择此项目下的仓库范围');
+   const projectRoot=await containedPath(before.root,project.repository);if(projectRoot!==before.root+'/'+project.repository)throw Error('项目路径不能经过软链接');
+   const host=getHostConfig(),sources=[await inventory(projectRoot,'.agents/skills',before.root,'project',host,agentId)];
+   if(repository!==project.repository)sources.push(await inventory(await containedPath(before.root,repository),'.agents/skills',before.root,'repository',host,agentId));
+   sources.push(await inventory(before.root,'skills',before.root,'agent',host,agentId));
+   const effective=new Map();for(const source of sources)for(const skill of source.skills)if(!skill.disabledReason)effective.set(skill.name,skill);
+   for(const source of sources)for(const skill of source.skills){skill.status=skill.disabledReason?'disabled':effective.get(skill.name)!==skill?'shadowed':source.state==='dirty'?'pending_commit':'candidate';if(skill.status==='shadowed')skill.overriddenBy=effective.get(skill.name).path;}
+   const subagentSources=[await subagentInventory(projectRoot,before.root,'project')];
+   if(repository!==project.repository)subagentSources.push(await subagentInventory(await containedPath(before.root,repository),before.root,'repository'));
+   subagentSources.push(await subagentInventory(before.root,before.root,'agent'));
+   const candidateSubagentCount=resolveSubagentCatalog(subagentSources);
+   const inspection=await inspectProject(project);await checkSourceVersions(before.root,[...sources,...subagentSources]);await checkRegistration(binding,before);
+   return {agentId,projectId:project.projectId,name:project.name,root:before.root,repository,cwd:projectRoot,scopeDirectory:before.root+'/'+repository,registryRevision:before.registryRevision,registrationCommitted:!!before.registryRevision,scannedAt:now(),inspection,scopes:availableScopes,sources,subagentSources,candidateSubagentCount,effectiveSkillCount:effective.size,rules:Object.values(rules)};
+  },
+ };
+}
+export function registerProjectInspector(api,inspector,{now=()=>Date.now()}={}){
+ const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);if(!register){api.logger?.warn?.('Agent Repo panel unavailable: host lacks public session actions');return;}
+ const transfers=new Map(),owner=ctx=>JSON.stringify([trustedAgentId(ctx),ctx.sessionKey??null]);
+ const part=(id,value,index)=>({encoding:'json-chunks',transferId:id,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
+ for(const action of ['list','detail','chunk','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity'])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['clearRepositoryLogs','syncPeople','updatePerson','deletePerson'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
+  try{
+   const scope=owner(ctx);for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);
+   if(action==='chunk'){const {transferId,index}=ctx.payload??{},value=transfers.get(transferId);if(!value||value.owner!==scope||!Number.isInteger(index)||index<0||index>=Math.ceil(value.text.length/inspectionChunkSize))throw Error('Invalid transfer');return {ok:true,result:part(transferId,value,index)};}
+   const text=JSON.stringify(await inspector[action](ctx));if(text.length>inspectionChunkSize*inspectionMaxChunks)throw Error('Catalog exceeds transfer budget');
+   const id=randomUUID(),value={owner:scope,text,expiresAt:now()+120000};
+   if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,value);}
+   return {ok:true,result:part(id,value,0)};
+  }catch{return ['entityTypes','entities','entity'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
+ }});
+}
