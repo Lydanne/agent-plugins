@@ -86,7 +86,9 @@ async function previousSkill(codexHome,agentId) {
  const revisionPath=join(directory,'revisions',marker.revision+'.md');
  if(await realpath(join(directory,'revisions'))!==join(await realpath(directory),'revisions'))throw Error('Invalid cached Worker skill revisions');
  const body=await readFile(revisionPath,'utf8');
- if(hash(body)!==marker.revision||await readFile(path,'utf8')!==body||await readFile(join(directory,'agents/openai.yaml'),'utf8')!==yaml)throw Error('Invalid cached Worker skill contents');
+ // The marker commits an immutable revision. SKILL.md is a mutable entrypoint
+ // and may already contain an uncommitted update when publication is interrupted.
+ if(hash(body)!==marker.revision||await readFile(join(directory,'agents/openai.yaml'),'utf8')!==yaml)throw Error('Invalid cached Worker skill contents');
  return {name,path,revision:marker.revision,revisionPath,agentId};
 }
 export function createWorkerSkillPublisher(getConfig,request,{logger}={}) {

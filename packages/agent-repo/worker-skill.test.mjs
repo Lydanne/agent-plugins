@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,mkdir,writeFile,rm,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 import {renderWorkerSkill,publishWorkerSkill,createWorkerSkillPublisher} from './worker-skill.mjs';
 import {createProjectService} from './project-service.mjs';
 const plugins={plugins:[{id:'feishu',name:'Feishu',version:'1.0',runtime:{state:'active'},config:{secret:'never-export'}},{id:'off',runtime:{state:'disabled'}},{id:'broken',runtime:{state:'service-failed'}}]};
@@ -58,4 +60,37 @@ test('catalog outages reuse only a verified previous skill and subsequent refres
   version='2.0';const next=await publisher('main');assert.notEqual(next.revision,first.revision);
   offline=true;assert.deepEqual(await publisher('main'),next);
  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('an interrupted update falls back to the committed immutable revision and later publishes normally',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'repo-worker-interrupted-update-'));
+ let child;
+ try {
+  const body=renderWorkerSkill('main',plugins,catalog),first=await publishWorkerSkill(root,'main',body),updated=body+'\nUpdated catalog.\n';
+  const module=new URL('./worker-skill.mjs',import.meta.url).href;
+  // Pause after SKILL.md replacement but before the commit marker rename.
+  const code=`import fs from 'node:fs';import{syncBuiltinESMExports}from'node:module';const rename=fs.promises.rename;fs.promises.rename=async(a,b)=>{if(b.endsWith('/.agent-repo.json')){console.log('ready');await new Promise(()=>{});}return rename(a,b);};syncBuiltinESMExports();const{publishWorkerSkill}=await import(${JSON.stringify(module)});setInterval(()=>{},1000);await publishWorkerSkill(${JSON.stringify(root)},'main',${JSON.stringify(updated)});`;
+  child=spawn(process.execPath,['--input-type=module','-e',code],{stdio:['ignore','pipe','inherit']});
+  await Promise.race([once(child.stdout,'data',{signal:AbortSignal.timeout(10000)}),once(child,'exit').then(()=>{throw Error('update exited before commit');})]);
+  const exited=once(child,'exit');child.kill('SIGKILL');await exited;
+  assert.equal(await readFile(first.path,'utf8'),updated);
+  const marker=JSON.parse(await readFile(join(root,'skills/openclaw-main-main/.agent-repo.json'),'utf8'));
+  assert.equal(marker.revision,first.revision);
+  let offline=true;
+  const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),async method=>{
+   if(offline)throw Error('catalog unavailable');return method==='plugins.list'?plugins:catalog;
+  });
+  const cached=await publisher('main');assert.deepEqual(cached,first);
+  assert.equal(await readFile(cached.revisionPath,'utf8'),body);
+  // A valid uncommitted newer file must not mask corruption of the committed revision.
+  await writeFile(first.revisionPath,'tampered');await assert.rejects(publisher('main'),/catalog unavailable/);
+  await writeFile(first.revisionPath,body);
+  offline=false;assert.deepEqual(await publisher('main'),first);
+  assert.equal(await readFile(first.path,'utf8'),body);
+  const next=await publishWorkerSkill(root,'main',updated);assert.notEqual(next.revision,first.revision);
+  offline=true;assert.deepEqual(await publisher('main'),next);
+ }finally{
+  if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
+  await rm(root,{recursive:true,force:true});
+ }
 });
