@@ -64,6 +64,23 @@ test('failure after send started becomes uncertain instead of an automatic dupli
  const j=job();writeJson(join(root,j.jobId+'.json'),j);let calls=0;const service=createCompletionService({root,pollMs:100000,logger:{warn(){}},bridge:{deliver:async(_,c)=>{calls++;c.beforeSend();throw Error('lost receipt');}}});
  service.start();await flush();service.tick();await flush();await service.stop();assert.equal(calls,1);assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'uncertain');
 }));
+test('a question rejected before Main starts retries the original event without creating or resuming a job',()=>fixture(async root=>{
+ const j={...job(),status:'awaiting_main',contextRequest:{questionId:'same-question',question:'CLI version?',expiresAt:Date.now()+60000}};
+ j.notification.eventKey=j.contextRequest.questionId;writeJson(join(root,j.jobId+'.json'),j);
+ const events=[];const service=createCompletionService({root,pollMs:100000,logger:{warn(){}},bridge:{deliver:async(e,c)=>{
+  events.push(e);
+  if(events.length===1)throw Object.assign(Error('not admitted'),{name:'GatewayDrainingError'});
+  c.beforeSend();c.onReceipt({kind:'main_context_turn',eventId:e.eventId});return {};
+ }}});
+ service.start();await flush();let saved=readJson(join(root,j.jobId+'.json'));
+ assert.equal(saved.notification.state,'pending');assert.equal(saved.status,'awaiting_main');
+ writeJson(join(root,j.jobId+'.json'),{...saved,notification:{...saved.notification,retryAt:0}});
+ service.tick();await flush();service.tick();await flush();await service.stop();saved=readJson(join(root,j.jobId+'.json'));
+ assert.equal(events.length,2);assert.equal(events[0].eventId,'agent_worker:question:same-question');
+ assert.deepEqual(events[1],events[0]);assert.equal(saved.notification.state,'delivered');
+ assert.equal(saved.status,'awaiting_main');assert.deepEqual(saved.contextRequest,j.contextRequest);assert.deepEqual(saved.result,j.result);
+ assert.equal(saved.notification.attempts,2);
+}));
 test('captures reports inside workspace .tmp and excludes outside symlinks and oversized reports',()=>fixture(async root=>{
  mkdirSync(join(root,'.tmp'));const report=join(root,'.tmp','report.md'),outside=join(root,'secret.txt'),link=join(root,'.tmp','link.md'),large=join(root,'.tmp','large.md');
  writeFileSync(report,'完整报告');writeFileSync(outside,'private');symlinkSync(outside,link);writeFileSync(large,'x'.repeat(200));

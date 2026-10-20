@@ -462,12 +462,35 @@ it('skips a reminder when an accepted earlier chunk has a native mention',async(
 });
 it('context request enters original Main FIFO, accepts a tool-only reply and does not complete its card',async()=>{
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',eventId:'question-event',reportPaths:[],contextRequest:{questionId:'q',question:'日期？',reason:'缺失',progress:'已检查',expiresAt:Date.now()+60000}};
- mocks.run.mockImplementation(async()=>{});
- const receipt=vi.fn();await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:receipt});
+ mocks.run.mockImplementation(async({adapter})=>{adapter.resolveTurn().replyOptions.onAgentRunStart('main-run');});
+ const before=vi.fn(),receipt=vi.fn();await deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt});
  expect(mocks.run).toHaveBeenCalledOnce();expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();
+ expect(before).toHaveBeenCalledOnce();
  expect(receipt).toHaveBeenCalledWith({kind:'main_context_turn',eventId:'question-event'});
  expect(buildCodexCompletionText(sample).startsWith('[AgentWorkerRequest]')).toBe(true);
  expect(completionRules).toContain('不发送聊天消息');expect(completionRules).toContain('不推测或向用户说明加急是否成功');expect(buildCodexCompletionText(sample)).not.toContain('只发简短原生 @');expect(completionRules).toContain('action=reply');expect(completionRules).toContain('不创建新的 run');
+});
+it('a context request rejected before Main starts remains safe to retry without a send marker',async()=>{
+ const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',eventId:'draining-question',reportPaths:[],contextRequest:{questionId:'q',question:'目录？',reason:'协作验收',progress:'已读技能',expiresAt:Date.now()+60000}};
+ const before=vi.fn(),receipt=vi.fn();
+ mocks.run.mockImplementation(async({adapter})=>{
+  adapter.resolveTurn();
+  throw Object.assign(Error('Gateway is temporarily unavailable'),{name:'GatewayDrainingError'});
+ });
+ await expect(deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt})).rejects.toThrow('Gateway is temporarily unavailable');
+ expect(before).not.toHaveBeenCalled();expect(receipt).not.toHaveBeenCalled();
+ expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();
+});
+it('a context request marks uncertain execution once Main starts even without visible prose',async()=>{
+ const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',eventId:'started-question',reportPaths:[],contextRequest:{questionId:'q',question:'目录？',reason:'协作验收',progress:'已读技能',expiresAt:Date.now()+60000}};
+ const before=vi.fn(),receipt=vi.fn();
+ mocks.run.mockImplementation(async({adapter})=>{
+  adapter.resolveTurn().replyOptions.onAgentRunStart('main-run');
+  throw Error('Main outcome unknown');
+ });
+ await expect(deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt})).rejects.toThrow('Main outcome unknown');
+ expect(before).toHaveBeenCalledOnce();expect(receipt).not.toHaveBeenCalled();
+ expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();
 });
 it('expired and recalled context questions never reach Main',async()=>{
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'日期？',reason:'缺失',progress:'已检查',expiresAt:0}};

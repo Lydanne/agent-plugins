@@ -341,6 +341,8 @@ Labels and help are shipped through public `uiHints` in both the runtime schema 
 
 后台卡片编辑结果不明时，不另发重复结果或提前 @，通知记录进入 uncertain，需核对原卡片；结果已确认而 @ 失败时不重发结果或重试不确定的提醒。超长结果保留原卡片的分段说明，完整结果在下方分段交付，成功后再提醒。源码构建与模拟测试不代表已通过真实飞书验收。
 
+Worker 上下文请求在 Main 真正开始执行时才标记可能已处理；Gateway 排空期间拒绝受理、尚未启动 Main 且没有可见发送时，原通知保留 pending 重试，沿用原 job 和 questionId。Main 已启动或消息发送开始后发生错误仍进入 uncertain，不能自动重放。旧版留下的 uncertain 必须先核对原会话执行、reply 事件及飞书消息/卡片回执，确认未处理、未发送后才由管理员恢复原通知；不得重建业务任务或重发已确认的结果。
+
 启用步骤：构建打包，按仓库安装流程加载新版本，再配置 `workingCard.enabled`。代码提交不会修改运行中 Gateway 的配置或自动重启服务。
 
 ### 等待卡片的队列边界

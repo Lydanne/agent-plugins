@@ -217,12 +217,16 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
     text=buildCodexCompletionText(event,recipientContext);
     if (!isCompletionSourceCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
     const ctxPayload=contextPayload();
-    if(questionTurn)callbacks.beforeSend();
     await core.channel.inbound.run({channel: "feishu", accountId: p.accountId, raw: event, adapter: {
      ingest: () => ({id: event.eventId, rawText: text, textForAgent: text, textForCommands: "", raw: event}),
      resolveTurn: () => ({cfg: completionCfg, channel: "feishu", accountId: p.accountId,
       route: {agentId, sessionKey: p.sessionKey}, ctxPayload,
-      replyOptions: {abortSignal: signal, disableBlockStreaming: true}, delivery: {deliver, onError: error => {deliveryError ??= error; throw error;}}}),
+      // A queued/rejected inbound call has not run Main. Quarantine only once
+      // the agent can act (or deliverResult starts a visible send), so a drain
+      // rejection before admission remains retryable without replaying a turn.
+      replyOptions: {abortSignal: signal, disableBlockStreaming: true,
+       onAgentRunStart: () => {if(questionTurn)callbacks.beforeSend();}},
+      delivery: {deliver, onError: error => {deliveryError ??= error; throw error;}}}),
     }});
     if (deliveryError) throw deliveryError;
     if(questionTurn&&!sent&&!suppressed&&!signal.aborted){callbacks.onReceipt({kind:"main_context_turn",eventId:event.eventId});sent=true;}
