@@ -32,7 +32,7 @@ export function mountWorkerPage(container,context,agentId){
  }
  function render(){
   root.replaceChildren();root.setAttribute('aria-busy',String(loading));
-  const header=el('header',undefined,'ar-overview-heading'),copy=el('div');copy.append(el('h2','Worker 任务'),el('p','查看此 Agent 跨会话的委派任务；执行与历史由 agent-worker 维护。','ar-description'));const refreshButton=button('刷新任务',refresh);refreshButton.disabled=loading;header.append(copy,refreshButton);root.append(header);
+  const header=el('header',undefined,'ar-overview-heading ar-section-heading'),copy=el('div');copy.append(el('h2','Worker 任务'),el('p','查看此 Agent 跨会话的委派任务；执行与历史由 agent-worker 维护。','ar-description'));const refreshButton=button('刷新任务',refresh);refreshButton.disabled=loading;header.append(copy,refreshButton);root.append(header);
   renderWorkerSummary(root,{value:data,error},loading,null,safe);
   const form=el('form',undefined,'ar-worker-filters');
   const select=(label,options,value,change)=>{const wrap=el('label'),input=el('select');input.setAttribute('aria-label',label);wrap.append(el('span',label),input);for(const [key,text] of options){const option=el('option',text);option.value=key;input.append(option);}input.value=value;input.onchange=()=>{change(input.value);offset=0;refresh();};form.append(wrap);};

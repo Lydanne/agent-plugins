@@ -24,14 +24,14 @@ export function mountEntitiesPage(container,initial){
  function openPeople(){generation++;personMode=true;render();}
  function render(){
   people?.dispose();people=null;root.replaceChildren();root.setAttribute('aria-busy',String(loading));
-  const header=el('header',undefined,'ar-entities-header'),copy=el('div');copy.append(el(context.props.embeddedManagement?'h2':'h1','实体资料库'),el('p','AI 与程序共同维护的结构化资料，按类型组织，跨会话查询。'));header.append(copy);root.append(header);
+  const header=el('header',undefined,'ar-entities-header'+(context.props.embeddedManagement?' ar-section-heading':'')),copy=el('div');copy.append(el(context.props.embeddedManagement?'h2':'h1','实体资料库'),el('p','AI 与程序共同维护的结构化资料，按类型组织，跨会话查询。'));header.append(copy);root.append(header);
   if(!presented)return;if(!read){root.append(el('p','需要 operator.read 权限才能查看实体资料库。','ar-error'));return;}if(!agentId){root.append(el('p','请先选择一个 Agent。'));return;}
   if(!context.props.embeddedManagement){const picker=el('select');picker.setAttribute('aria-label','实体资料库所属 Agent');for(const agent of context.host.agents.rows??[{id:agentId}]){const option=el('option',safe(agent.name??agent.id));option.value=agent.id;picker.append(option);}picker.value=agentId;picker.onchange=()=>{context.host.agents.select(picker.value);if(context.props.agentId)context.host.navigation.openPage({id:'entities',params:{agentId:picker.value}});};header.append(picker);}
   if(!context.props.embeddedManagement)root.append(el('p',safe('Agent '+agentId+' · 跨会话共享 · 与其他 Agent 隔离'),'ar-meta'));
   if(personMode){root.append(button('返回实体资料库',()=>{personMode=false;refresh();},'ar-entities-back'));const body=el('div');root.append(body);people=mountPeoplePage(body,{...context,props:{agentId,embeddedManagement:true}});return;}
   const toolbar=el('form',undefined,'ar-entities-toolbar'),search=el('input'),sourceInput=el('select');search.setAttribute('aria-label','搜索实体');search.placeholder='搜索名称、摘要或属性';search.value=query;sourceInput.setAttribute('aria-label','实体来源');for(const item of [{namespace:'',label:'全部来源'},...sources]){const option=el('option',item.label??safe(item.namespace==='feishu'?'飞书':item.namespace));option.value=item.namespace;sourceInput.append(option);}sourceInput.value=source;
   const submit=el('button','搜索'),reload=button('刷新资料',refresh);submit.type='submit';submit.disabled=loading;reload.disabled=loading;
-  toolbar.onsubmit=event=>{event.preventDefault();query=search.value;source=sourceInput.value;offset=0;refresh();};toolbar.append(search,sourceInput,submit,reload);root.append(toolbar);
+  toolbar.onsubmit=event=>{event.preventDefault();query=search.value;source=sourceInput.value;offset=0;refresh();};toolbar.append(search,sourceInput,submit);if(context.props.embeddedManagement)header.append(reload);else toolbar.append(reload);root.append(toolbar);
   const layout=el('div',undefined,'ar-entities-layout'),nav=el('nav',undefined,'ar-entity-types');nav.setAttribute('aria-label','实体类型');
   for(const type of [{id:'',label:'全部资料',count:types.reduce((n,t)=>n+t.count,0)},...types]){const tab=button('',()=>{typeId=type.id;offset=0;refresh();});tab.setAttribute('aria-current',typeId===type.id?'page':'false');tab.append(el('span',safe(type.label)),el('span',String(type.count)));nav.append(tab);}
   nav.append(el('p','按类型整理人员、组织与资源，资料随来源同步更新。','ar-description'));layout.append(nav);

@@ -55,3 +55,17 @@ test('overview never publishes stale Agent results after switching Agent or losi
  pending.resolve({ok:true,result:{total:999,stats:{}}});await settle();assert.ok(!f.container.textContent.includes('999'));
  ctx.host.connection.canRead=false;ctx.notify();assert.equal(f.container.querySelector('.ar-overview'),null);assert.match(f.container.textContent,/operator.read/);
 });
+
+test('module switches retain the management shell, navigation focus and consistent section headings',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
+ const header=f.container.querySelector('.ar-management-header'),nav=f.container.querySelector('.ar-management-nav'),region=f.container.querySelector('.ar-management-body');
+ for(const [label,title] of [['项目与技能','项目与技能'],['Worker 任务','Worker 任务'],['实体资料库','实体资料库'],['定时任务','定时任务'],['仓库日志','仓库日志'],['概览','管理概览']]){
+  const control=[...nav.querySelectorAll('button')].find(button=>button.textContent===label);control.focus();control.click();await settle();
+  assert.equal(f.container.querySelector('.ar-management-header'),header);assert.equal(f.container.querySelector('.ar-management-nav'),nav);assert.equal(f.container.querySelector('.ar-management-body'),region);
+  assert.equal(f.window.document.activeElement,control);assert.equal(control.getAttribute('aria-current'),'page');assert.equal(control.getAttribute('aria-controls'),region.id);
+  assert.equal(region.getAttribute('aria-label'),label+'内容');assert.equal(region.querySelector('.ar-section-heading h2').textContent,title);
+  assert.equal(region.querySelectorAll('.ar-section-heading').length,1);
+  const before=calls.length;control.click();await settle();assert.equal(calls.length,before,'selecting the active module must not reload data');
+ }
+});

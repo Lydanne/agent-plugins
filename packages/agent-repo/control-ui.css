@@ -413,12 +413,8 @@
 .ar-maintenance-event{padding:16px 0;border-bottom:1px solid var(--ar-line)}.ar-maintenance-event p{font-size:13px;margin:6px 0}.ar-maintenance-notice{color:var(--ar-accent);font-size:13px}
 .ar-maintenance pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;font:12px/1.65 ui-monospace,monospace}.ar-maintenance details>summary{cursor:pointer}
 
-.ar-management-body>.ar-panel[data-management-section=projects]{padding:0;border:0;border-radius:0}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header{padding:0 0 12px}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-tabs{margin-top:0}.ar-management-body .ar-maintenance{margin-top:12px}.ar-management-body .ar-maintenance h2{font-size:20px}.ar-management-body .ar-maintenance button{font-size:13px}.ar-management-body .ar-maintenance-list input{font-size:14px}.ar-maintenance-detail p{font-size:14px;line-height:1.7}
+.ar-management-body>.ar-panel[data-management-section=projects]{padding:0;border:0;border-radius:0}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-tabs{margin-top:0}.ar-management-body .ar-maintenance{margin-top:12px}.ar-management-body .ar-maintenance h2{font-size:20px}.ar-management-body .ar-maintenance button{font-size:13px}.ar-management-body .ar-maintenance-list input{font-size:14px}.ar-maintenance-detail p{font-size:14px;line-height:1.7}
 
-/* Keep the existing product shell compact while working in skills. */
-.ar-management[data-section=projects] .ar-management-eyebrow,.ar-management[data-section=projects] .ar-management-header p,.ar-management[data-section=projects]>.ar-meta{display:none}
-.ar-management[data-section=projects] .ar-management-nav{margin:8px 0 18px}
-.ar-management[data-section=projects] .ar-maintenance-heading{display:none}
 .ar-maintenance-detail{max-height:720px;overflow-y:auto;scrollbar-gutter:stable;padding-right:10px}
 .ar-maintenance-actions{position:sticky;bottom:0;background:var(--ar-surface);padding-bottom:12px}
 .ar-maintenance-linked-skill{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px!important;padding:10px 0!important}
@@ -455,7 +451,7 @@
 .ar-management-header h1{font-size:22px;letter-spacing:-.02em}
 .ar-management-nav{margin:16px 0 20px;gap:22px}
 .ar-management-body>.ar-panel[data-management-section=projects]{background:transparent}
-.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header{justify-content:flex-end;padding-bottom:4px}.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header>strong{display:none}
+
 .ar-management-body .ar-maintenance{margin-top:0}
 .ar-management-body .ar-maintenance-views{margin-top:0}
 .ar-management-body>.ar-panel[data-management-section=projects]>.ar-tabs{margin-bottom:8px}
@@ -466,9 +462,36 @@
  .ar-overview-heading{align-items:flex-start}.ar-overview-tools{flex-direction:column;align-items:flex-end;gap:6px}
 }
 
-.ar-management-body>.ar-panel[data-management-section=projects]>.ar-panel-header{display:none}
+
 .ar-management .ar-tabs>.ar-panel-actions{margin-left:auto;align-self:center}
 .ar-management .ar-tabs>.ar-panel-actions button{padding:6px 10px;min-height:32px;border:1px solid var(--ar-line);border-radius:6px;font-size:12px}
 .ar-management .ar-scroll>.ar-meta{margin:6px 0 10px;font-size:12px}
 
 .ar-maintenance-associations{margin-top:20px;border-top:1px solid var(--ar-line);padding-top:16px}.ar-maintenance-associations>summary{font-size:13px;font-weight:600;min-height:32px}
+
+/* Management modules share one page frame; only their working content changes. */
+.ar-management-body{min-width:0;min-height:320px}
+.ar-management-body>.ar-panel{padding:0;border:0;border-radius:0;background:transparent;min-height:0;overflow:visible}
+.ar-management .ar-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;min-height:64px;padding:0;margin:0 0 20px;border:0;flex:none}
+.ar-management .ar-section-heading>div:first-child{min-width:0}
+.ar-management .ar-section-heading h2{font-size:20px!important;line-height:1.4;font-weight:650;letter-spacing:-.02em;margin:0}
+.ar-management .ar-section-heading p{font-size:13px;line-height:1.6;color:var(--ar-muted);margin:6px 0 0;max-width:620px}
+.ar-management .ar-section-heading button{font:inherit;white-space:nowrap;min-height:36px;padding:7px 12px;border:1px solid var(--ar-line);border-radius:7px;background:var(--ar-surface);color:inherit}
+.ar-management .ar-section-heading>.ar-panel-actions{margin-left:auto}
+.ar-management .ar-section-heading .ar-overview-tools{flex-direction:row;align-items:center}
+.ar-management-body>.ar-log-inline{padding:0;margin:0;border:0;border-radius:0;background:transparent;overflow:visible;max-height:none}
+.ar-management-body>.ar-log-inline>.ar-sync-dialog-body{padding:0;max-height:none;overflow:visible}
+.ar-management-body>.ar-log-inline>.ar-section-heading{padding:0}
+.ar-management .ar-entities{display:block}
+.ar-management .ar-entities-toolbar{margin:0 0 20px}
+.ar-management .ar-panel[data-management-section=tasks]>.ar-sync-history{margin-top:0;padding-top:0;border-top:0}
+.ar-management .ar-panel[data-management-section=projects]>.ar-tabs{margin-top:0}
+.ar-management .ar-panel[data-management-section=projects] .ar-maintenance-heading{display:none}
+@container agent-management (max-width:560px){
+ .ar-management .ar-section-heading{flex-wrap:wrap;gap:10px;min-height:64px;margin-bottom:16px}
+ .ar-management .ar-section-heading>div:first-child{flex:1;min-width:180px}
+ .ar-management .ar-section-heading .ar-overview-tools{flex-direction:column;align-items:flex-end;gap:6px}
+ .ar-management .ar-section-heading .ar-meta{font-size:11px;max-width:120px;text-align:right}
+}
+
+.ar-management .ar-tabs button[aria-selected=true]{border-bottom-color:var(--ar-accent);color:var(--ar-accent)}
