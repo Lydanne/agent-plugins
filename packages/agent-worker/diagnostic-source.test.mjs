@@ -27,3 +27,11 @@ test('oversized partial records produce an omission notice and do not corrupt th
  const source=installWorkerDiagnostics({root},Symbol()),hub=createDiagnosticHub();t.after(()=>{hub.dispose();source.dispose();});const lease=await hub.actions.diagnosticStart(ctx({sourceIds:['agent-worker.events']}));await appendFile(join(root,id+'.events.jsonl'),JSON.stringify({event:'large',payload:'x'.repeat(100000)})+'\n'+JSON.stringify({event:'turn.completed'})+'\n');
  let cursor=0,rows=[];for(let i=0;i<3;i++){const result=await hub.actions.diagnosticRead(ctx({leaseId:lease.leaseId,afterSeq:cursor}));cursor=result.nextSeq;rows.push(...result.rows);}assert.equal(rows.filter(row=>row.eventName==='capture.omitted').length,1);assert.ok(rows.some(row=>row.eventName==='turn.completed'));assert.equal(rows.some(row=>row.eventName==='capture.invalid'),false);
 });
+test('hundreds of idle historical jobs do not delay the first newly active Worker event',async t=>{
+ const root=await mkdtemp(join(tmpdir(),'worker-debug-idle-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ for(let n=0;n<400;n++){const id=String(n).padStart(8,'0')+'-0000-0000-0000-000000000000';await writeFile(join(root,id+'.json'),'{}');await writeFile(join(root,id+'.events.jsonl'),JSON.stringify({event:'old'})+'\n');}
+ const source=installWorkerDiagnostics({root},Symbol()),hub=createDiagnosticHub();t.after(()=>{hub.dispose();source.dispose();});const lease=await hub.actions.diagnosticStart(ctx({sourceIds:['agent-worker.events']}));
+ const id='ffffffff-ffff-ffff-ffff-ffffffffffff',scope='agent:main:new',params={topic:'new',task:'task',context:'context',constraints:'readonly'},provenance={agentId:'main'};
+ await writeFile(join(root,id+'.json'),JSON.stringify({jobId:id,scope:createHash('sha256').update(scope).digest('hex'),topic:'new',provenance,requestKey:requestKeyFor(params,scope,provenance)}));await writeFile(join(root,id+'.request.json'),JSON.stringify({scope,params}));await writeFile(join(root,id+'.events.jsonl'),JSON.stringify({event:'turn.started'})+'\n');
+ const result=await hub.actions.diagnosticRead(ctx({leaseId:lease.leaseId}));assert.equal(result.rows.length,1);assert.equal(result.rows[0].jobId,id);assert.equal(result.rows[0].eventName,'turn.started');
+});

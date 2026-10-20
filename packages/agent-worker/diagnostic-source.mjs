@@ -33,7 +33,12 @@ export function installWorkerDiagnostics({root},owner){
      // is rechecked in Main for each bounded group immediately before reading bytes.
      for(let from=0;from<ids.length;from+=16){signal.throwIfAborted();await Promise.all(ids.slice(from,from+16).map(async jobId=>{try{await safeFile(join(root,jobId+'.events.jsonl'),6*1024*1024,async(_,metadata)=>{cursors.set(jobId,{offset:metadata.size,tail:'',skip:false,identity:String(metadata.dev)+':'+metadata.ino});});}catch{}}));}return [];
     }
-    const selected=Array.from({length:Math.min(ids.length,16)},(_,i)=>ids[(rotation+i)%ids.length]);if(ids.length)rotation=(rotation+16)%ids.length;
+    // Scan cheap file metadata first: hundreds of idle historical jobs must not
+    // impose a full round-robin delay on a newly active job. Event bodies and
+    // ownership metadata are still read only for a bounded changed set.
+    const changed=[];
+    for(let from=0;from<ids.length;from+=16){signal.throwIfAborted();await Promise.all(ids.slice(from,from+16).map(async jobId=>{try{await safeFile(join(root,jobId+'.events.jsonl'),6*1024*1024,async(_,metadata)=>{const prior=cursors.get(jobId),identity=String(metadata.dev)+':'+metadata.ino;if(!prior||prior.identity!==identity||prior.offset!==metadata.size)changed.push(jobId);});}catch(error){if(error.code!=='ENOENT')changed.push(jobId);}}));}
+    changed.sort();const selected=Array.from({length:Math.min(changed.length,16)},(_,i)=>changed[(rotation+i)%changed.length]);if(changed.length)rotation=(rotation+16)%changed.length;
     const batch=await authorized(selected);
     for(const {jobId,job} of batch){if(closed||signal.aborted)break;
      try{await safeFile(join(root,jobId+'.events.jsonl'),6*1024*1024,async(handle,metadata)=>{
