@@ -2083,7 +2083,7 @@ export async function handleFeishuMessage(params: {
         ...effectiveCfg,
         messages: { ...effectiveCfg.messages, queue: { ...effectiveCfg.messages?.queue, mode: "steer" as const } },
       } : effectiveCfg;
-      const makeSourceTask = () => new SourceTask({accountId: account.accountId, chatId: ctx.chatId, sessionKey: route.sessionKey, senderId: ctx.senderOpenId, rootId:ctx.rootId, replyInThread, people:taskPeopleByAgent.get(route.agentId)}, [
+      const makeSourceTask = () => new SourceTask({accountId: account.accountId, chatId: ctx.chatId, chatType:ctx.chatType, sessionKey: route.sessionKey, senderId: ctx.senderOpenId, rootId:ctx.rootId, replyInThread, people:taskPeopleByAgent.get(route.agentId)}, [
         ...(params.sourceMessages ?? [{messageId: ctx.messageId, text: ctx.content, kind: "request" as const}]),
         ...quoteChainMessages.map(message => ({messageId: message.messageId, text: message.content, kind: "reference" as const})),
       ]);

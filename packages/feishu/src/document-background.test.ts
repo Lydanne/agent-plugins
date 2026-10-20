@@ -42,6 +42,24 @@ it("creates a readable target-scoped placeholder without loading the full report
  expect(mocks.permission).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({member_type:"openchat",member_id:"chat"}),params:{type:"docx",need_notification:false}}));
  expect(mocks.prepare).not.toHaveBeenCalled();expect(rows()[0].status).toBe("draft");
 });
+it.each(['p2p','private'] as const)('shares a %s placeholder with its trusted requester and carries the same grant into upload',async chatType=>{
+ const privateSource={...source,chatType,senderId:'ou_requester'};
+ const pending=(await stageBackgroundDocument({cfg:{},stateDir:root,source:privateSource,agentId:'main',sessionId:'current',to:'chat:chat',text:`总结 [报告](${file})`}))!;
+ expect(mocks.permission).toHaveBeenCalledWith(expect.objectContaining({data:{member_type:'openid',member_id:'ou_requester',perm:'view'}}));
+ activateBackgroundDocument(root,pending,'original');start();
+ await vi.waitFor(()=>expect(rows()[0].status).toBe('done'));
+ expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({recipientContext:privateSource,confirmedGrant:{documentId:'cloud',memberType:'openid',memberId:'ou_requester',permission:'view'}}));
+ expect(mocks.permission).toHaveBeenCalledOnce();
+});
+it('records the failing staging phase and API code without retaining SDK credentials',async()=>{
+ const secret='MUST_NOT_STORE';
+ mocks.permission.mockRejectedValue(Object.assign(Error(secret),{response:{data:{code:1063002,msg:secret},config:{headers:{Authorization:secret}}}}));
+ const onFailure=vi.fn();
+ await expect(stageBackgroundDocument({cfg:{},stateDir:root,source,agentId:'main',to:'chat:chat',text:`总结 [报告](${file})`,onFailure})).rejects.toThrow(secret);
+ expect(rows()[0]).toMatchObject({status:'staging_failed',uploadFailure:{stage:'grant_access',code:1063002}});
+ expect(onFailure).toHaveBeenCalledWith({stage:'grant_access',code:1063002});expect(JSON.stringify(rows())).not.toContain(secret);
+ start();await new Promise(r=>setTimeout(r,300));expect(mocks.prepare).not.toHaveBeenCalled();
+});
 it("skips disabled delivery and nonexistent files before creating cloud documents",async()=>{
  mocks.enabled=false;expect(await stage()).toBeUndefined();mocks.enabled=true;rmSync(file);expect(await stage()).toBeUndefined();expect(mocks.create).not.toHaveBeenCalled();
 });

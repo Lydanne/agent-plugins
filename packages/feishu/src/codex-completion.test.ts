@@ -290,13 +290,14 @@ it('passes account presentation settings through actual async delivery and overs
 
 it('replaces asynchronous local-file results with a document link before editing the original task card',async()=>{
  const prepare=vi.spyOn(documentDelivery,'prepareFeishuDocumentDelivery').mockResolvedValue({text:'[Report](https://feishu.cn/docx/doc)',documentId:'doc',url:'https://feishu.cn/docx/doc',mediaUrls:[]});
+ const privateEvent={...event,provenance:{...event.provenance,chatType:'p2p' as const,senderId:'ou_requester'}};
  try {
-  bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original-card'});
+  bindAsyncTaskCard(cardStateDir,privateEvent.provenance,[event.jobId],{messageId:'original-card'});
   mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'[Report](/tmp/report.md)',mediaUrls:['/tmp/evidence.csv']},{kind:'final'}));
-  await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
-  expect(prepare).toHaveBeenCalledWith(expect.objectContaining({text:'[Report](/tmp/report.md)',mediaUrls:['/tmp/evidence.csv'],agentId:'main',mediaRuntime:runtime.media}));
+  await deliverCodexCompletion(privateEvent,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+  expect(prepare).toHaveBeenCalledWith(expect.objectContaining({text:'[Report](/tmp/report.md)',mediaUrls:['/tmp/evidence.csv'],agentId:'main',mediaRuntime:runtime.media,recipientContext:expect.objectContaining({chatType:'p2p',senderId:'ou_requester'})}));
   expect(JSON.stringify(mocks.edit.mock.calls)).toContain('https://feishu.cn/docx/doc');expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain('/tmp/');
-  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe('[Report](https://feishu.cn/docx/doc)');
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,privateEvent.provenance)?.result).toBe('[Report](https://feishu.cn/docx/doc)');
  } finally {prepare.mockRestore();}
 });
 

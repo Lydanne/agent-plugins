@@ -8,7 +8,7 @@ import {resolveFeishuRuntimeAccount} from "./accounts.js";
 import {createFeishuClient} from "./client.js";
 import {createDoc,writeDoc} from "./docx.js";
 import {assertFeishuApiSuccess} from "./api-response.js";
-import {splitMessageImages,resolveLocalFilePath,isExistingLocalFile,findLocalFileReferences,pendingDocumentText,failedDocumentText,prepareFeishuDocumentDelivery,type DeliveryParams,type DocumentDeliveryFailure,type ConfirmedDocumentGrant} from "./document-delivery.js";
+import {splitMessageImages,resolveLocalFilePath,isExistingLocalFile,findLocalFileReferences,pendingDocumentText,failedDocumentText,prepareFeishuDocumentDelivery,resolveDocumentPermissionRecipient,documentDeliveryFailure,type DeliveryParams,type DocumentDeliveryFailure,type ConfirmedDocumentGrant} from "./document-delivery.js";
 import {isCompletionSourceCurrent,type TaskLease} from "./source-task.js";
 import {withFeishuRequestContext} from "./send-context.js";
 import {editMessageFeishu} from "./send.js";
@@ -17,8 +17,8 @@ import {readAsyncTaskCard,prepareAsyncCardResult,acceptAsyncCardResult} from "./
 import {runFeishuWorkingTurn} from "./working-turn-queue.js";
 import {withinCardTableLimit} from "./presentation-card.js";
 
-type Source=Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"sessionKey"|"senderId"|"sourceMessageIds">;
-type Job={confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
+type Source=Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds">;
+type Job={confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"staging_failed"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
 export type StagedDocument={id:string;text:string};
 function database(stateDir:string) {
   const dir=join(stateDir,"feishu-document-uploads");mkdirSync(dir,{recursive:true,mode:0o700});
@@ -52,17 +52,29 @@ export async function stageBackgroundDocument(params:DeliveryParams & {stateDir:
   const check=()=>{params.signal?.throwIfAborted();if(!isCompletionSourceCurrent(params.source,params.stateDir))throw new DOMException("Task source invalid","AbortError");};
   const started=Date.now();
   const client=createFeishuClient(account);
+  const recipient=config?.grantToTarget!==false?resolveDocumentPermissionRecipient(params.to,params.source):undefined;
   return withFeishuRequestContext(check,async()=>{
     const title=(config?.titleTemplate ?? "{filename}").replaceAll("{filename}",basename(localPaths[0])).slice(0,200);
     check();const doc=await createDoc(client,title,config?.folderToken,{grantToRequester:false});
     const url=(config?.urlBase ?? (account.domain==="lark"?"https://www.larksuite.com":"https://feishu.cn")).replace(/\/$/,"")+"/docx/"+doc.document_id;
     const job:Job={id:randomUUID(),source:params.source,agentId:params.agentId,sessionId:params.sessionId,text:params.text ?? "",mediaUrls:params.mediaUrls,documentId:doc.document_id,url,workspaceDir,completionJobId:params.completionJobId,status:"draft"};
     save(params.stateDir,job);
-    check();await writeDoc(client,doc.document_id,"上传中\n\n总结已生成，完整报告正在上传，请稍后刷新。",20*1024*1024,30000);
-    if(config?.grantToTarget!==false) {
-      check();const permission=await client.drive.permissionMember.create({path:{token:doc.document_id},params:{type:"docx",need_notification:false},data:{member_type:"openchat",member_id:params.source.chatId,perm:config?.permission ?? "view"}});
-      assertFeishuApiSuccess(permission,"Placeholder permission failed");
-      job.confirmedGrant={documentId:doc.document_id,memberType:"openchat",memberId:params.source.chatId,permission:config?.permission ?? "view"};save(params.stateDir,job);
+    let phase="write_placeholder";
+    try {
+      check();await writeDoc(client,doc.document_id,"上传中\n\n总结已生成，完整报告正在上传，请稍后刷新。",20*1024*1024,30000);
+      if(recipient) {
+        phase="grant_access";
+        check();const permission=await client.drive.permissionMember.create({path:{token:doc.document_id},params:{type:"docx",need_notification:false},data:{member_type:recipient.memberType,member_id:recipient.memberId,perm:config?.permission ?? "view"}});
+        assertFeishuApiSuccess(permission,"Placeholder permission failed");
+        job.confirmedGrant={documentId:doc.document_id,...recipient,permission:config?.permission ?? "view"};save(params.stateDir,job);
+      }
+      check();
+    } catch(error) {
+      job.status=error instanceof DOMException && error.name==="AbortError"?"cancelled":"staging_failed";
+      job.uploadFailure=documentDeliveryFailure(error,phase);save(params.stateDir,job);
+      params.onFailure?.(job.uploadFailure);
+      console.warn(`Feishu document placeholder failed: stage=${job.uploadFailure.stage} code=${job.uploadFailure.code ?? "unknown"}`);
+      throw error;
     }
     check();console.info(`Feishu document placeholder ready (${Date.now()-started}ms)`);return {id:job.id,text:pendingDocumentText(job.text,url,workspaceDir)};
   });
@@ -96,7 +108,7 @@ export function registerDocumentBackground(api:OpenClawPluginApi) {
       await withFeishuRequestContext(check,async()=>{
         let text=job.finalText ?? (job.displayPrefix ?? "")+failedDocumentText(job.text,job.url,job.workspaceDir),success=false,skippedNotice="";
         if(!job.finalText && !interrupted) {
-          const document=await prepareFeishuDocumentDelivery({cfg,accountId:job.source.accountId,agentId:job.agentId,mediaRuntime:core.media,to:"chat:"+job.source.chatId,text:job.text,mediaUrls:job.mediaUrls,workspaceDir:job.workspaceDir,existingDocumentId:job.documentId,confirmedGrant:job.confirmedGrant,signal,onFailure:failure=>{job.uploadFailure=failure;save(stateDir,job);console.warn(`Feishu background document upload failed: stage=${failure.stage} code=${failure.code ?? "unknown"}`);}});
+          const document=await prepareFeishuDocumentDelivery({cfg,accountId:job.source.accountId,agentId:job.agentId,mediaRuntime:core.media,to:"chat:"+job.source.chatId,recipientContext:job.source,text:job.text,mediaUrls:job.mediaUrls,workspaceDir:job.workspaceDir,existingDocumentId:job.documentId,confirmedGrant:job.confirmedGrant,signal,onFailure:failure=>{job.uploadFailure=failure;save(stateDir,job);console.warn(`Feishu background document upload failed: stage=${failure.stage} code=${failure.code ?? "unknown"}`);}});
           success=Boolean(document?.documentId);
           if(success)text=(job.displayPrefix ?? "")+document!.text;
           else {skippedNotice=document?.skippedAttachmentNotice ?? "";text+=skippedNotice;}

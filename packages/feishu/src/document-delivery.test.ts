@@ -10,7 +10,7 @@ vi.mock("./accounts.js",()=>({resolveFeishuRuntimeAccount:mocks.account}));
 vi.mock("./docx.js",()=>({createDoc:mocks.create,writeDoc:mocks.write}));
 vi.mock("./runtime.js",()=>({getFeishuRuntime:()=>({media:{loadWebMedia:mocks.load}})}));
 vi.mock("./client.js",()=>({createFeishuClient:()=>({im:{message:{create:mocks.messageCreate,reply:mocks.messageReply,get:mocks.messageGet,patch:mocks.messagePatch}},docx:{documentBlockChildren:{create:mocks.childrenCreate,get:mocks.childrenGet},documentBlock:{patch:mocks.patch}},drive:{media:{uploadAll:mocks.upload},permissionMember:{create:mocks.permission}}})}));
-import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile} from "./document-delivery.js";
+import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient} from "./document-delivery.js";
 import {withFeishuSendContext} from "./send-context.js";
 import {createFeishuClient} from "./client.js";
 import {sendMessageFeishu,sendCardFeishu,editMessageFeishu} from "./send.js";
@@ -67,6 +67,23 @@ it('preserves the main summary and signed downloads while replacing only the rep
  expect(result?.text).toBe(summary.replace('[完整报告](/workspace/report.md)','[完整报告](https://feishu.cn/docx/doc-test)'));
  expect(mocks.write.mock.calls[0][2]).toContain(download);expect(mocks.write.mock.calls[0][2]).toContain('# Report\nVerified');
  expect(result?.text).not.toContain('# Report');
+});
+it.each(['p2p','private'] as const)('grants a %s report to its trusted requester rather than the conversation ID',async chatType=>{
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_private',recipientContext:{chatId:'oc_private',chatType,senderId:'ou_requester'},text:'[报告](/workspace/report.md)'});
+ expect(result?.documentId).toBe('doc-test');
+ expect(mocks.permission).toHaveBeenCalledWith(expect.objectContaining({data:{member_type:'openid',member_id:'ou_requester',perm:'view'}}));
+});
+it('uses a confirmed private-recipient grant for the same document without granting twice',async()=>{
+ const confirmedGrant={documentId:'private-doc',memberType:'openid',memberId:'ou_requester',permission:'view'};
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_private',recipientContext:{chatId:'oc_private',chatType:'p2p',senderId:'ou_requester'},existingDocumentId:'private-doc',confirmedGrant,text:'[报告](/workspace/report.md)'});
+ expect(result?.documentId).toBe('private-doc');expect(mocks.permission).not.toHaveBeenCalled();
+});
+it('keeps group targets and explicit recipient targets independent of a private conversation context',()=>{
+ const context={chatId:'oc_private',chatType:'p2p' as const,senderId:'ou_requester'};
+ expect(resolveDocumentPermissionRecipient('chat:oc_group',{...context,chatType:'group'})).toEqual({memberType:'openchat',memberId:'oc_group'});
+ expect(resolveDocumentPermissionRecipient('chat:oc_other',context)).toEqual({memberType:'openchat',memberId:'oc_other'});
+ expect(resolveDocumentPermissionRecipient('open_id:ou_explicit',context)).toEqual({memberType:'openid',memberId:'ou_explicit'});
+ expect(()=>resolveDocumentPermissionRecipient('chat:oc_private',{...context,senderId:''})).toThrow('trusted requester');
 });
 it('does not rewrite fenced examples sharing the same path as the uploaded report',async()=>{
  const example='```md\n[完整报告](/workspace/report.md)\n```';

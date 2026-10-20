@@ -15,6 +15,7 @@ import { assertFeishuApiSuccess } from "./api-response.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { normalizeFeishuTarget, resolveReceiveIdType } from "./targets.js";
 import { runBeforeFeishuMessageDispatch, captureFeishuSendAuthority } from "./send-context.js";
+import type {FeishuChatType} from "./types.js";
 
 function replaceLocalReferences(text:string,refs:Reference[]):string {
  return transformLocalReferences(text,refs,(ref,label,kind)=>{
@@ -169,8 +170,8 @@ export function failedDocumentText(text:string,url:string,workspaceDir?:string):
 
 export type DocumentDeliveryFailure = { stage: string; code?: string | number };
 /** Keep diagnostics bounded: SDK errors can contain credentials and file contents. */
-function deliveryFailure(error:unknown):DocumentDeliveryFailure {
- let stage="read_files",code:string|number|undefined;
+export function documentDeliveryFailure(error:unknown,stage="read_files"):DocumentDeliveryFailure {
+ let code:string|number|undefined;
  const seen=new Set<unknown>();
  while(error && typeof error==="object" && !seen.has(error)) {
   seen.add(error);
@@ -186,12 +187,24 @@ async function deliveryStep<T>(stage:string,action:()=>Promise<T>):Promise<T> {
  try{return await action();}catch(cause){throw Object.assign(new Error("Document delivery step failed",{cause}),{deliveryStage:stage});}
 }
 export type ConfirmedDocumentGrant={documentId:string;memberType:string;memberId:string;permission:string};
+type DocumentRecipientContext={chatId:string;senderId:string;chatType?:FeishuChatType};
+/** A private conversation is not a group collaborator. Use its trusted requester. */
+export function resolveDocumentPermissionRecipient(to:string,context?:DocumentRecipientContext):{memberType:"openchat"|"openid"|"userid";memberId:string} {
+ const target=normalizeFeishuTarget(to),kind=resolveReceiveIdType(to.replace(/^(feishu|lark):/i,""));
+ if(!target)throw Error("Cannot grant document access to this recipient");
+ if(kind==="chat_id" && target===context?.chatId && (context.chatType==="p2p" || context.chatType==="private")) {
+  if(!/^ou_[A-Za-z0-9_-]+$/.test(context.senderId))throw Object.assign(new Error("Private document delivery requires the trusted requester OpenID"),{code:"DOCUMENT_REQUESTER_MISSING"});
+  return {memberType:"openid",memberId:context.senderId};
+ }
+ return {memberType:kind==="chat_id"?"openchat":kind==="open_id"?"openid":"userid",memberId:target};
+}
 export type DeliveryParams = {
   cfg: ClawdbotConfig; accountId?: string; to: string; text?: string; mediaUrls?: string[];
   workspaceDir?: string; mediaLocalRoots?: readonly string[]; mediaAccess?: OutboundMediaAccess;
   mediaReadFile?: OutboundMediaAccess["readFile"]; signal?: AbortSignal;
   existingDocumentId?: string;
   confirmedGrant?: ConfirmedDocumentGrant;
+  recipientContext?: DocumentRecipientContext;
   onFailure?: (failure:DocumentDeliveryFailure)=>void;
   agentId?: string; mediaRuntime?: Pick<PluginRuntime["media"], "loadWebMedia">;
 };
@@ -236,7 +249,7 @@ export async function prepareFeishuDocumentDelivery(params: DeliveryParams): Pro
  } catch(error) {
   // File preparation cannot restore a withdrawn task's right to send a reply.
   assertDeliveryCurrent(params,error);
-  params.onFailure?.(deliveryFailure(error));
+  params.onFailure?.(documentDeliveryFailure(error));
   return {text:[fallbackText,"附件未成功交付，已改为文字结果。"].filter(Boolean).join("\n\n")+skippedNotice,mediaUrls:split.images,...(skippedNotice?{skippedAttachmentNotice:skippedNotice}:{})};
  }
 }
@@ -314,7 +327,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   // This expanded body belongs only in the document. Upload failure must never
   // turn a quoted report, source file or role manual into additional chat prose.
   const exceedsTextLimit=markdown.length > (config?.maxTextChars ?? 200000);
-  const key=createHash("sha256").update(JSON.stringify([account.accountId,account.appId,params.to,config,params.existingDocumentId,params.confirmedGrant,params.text,markdown,files.map(file=>[file.name,createHash("sha256").update(file.buffer).digest("hex")])])).digest("hex");
+  const key=createHash("sha256").update(JSON.stringify([account.accountId,account.appId,params.to,[params.recipientContext?.chatId,params.recipientContext?.chatType,params.recipientContext?.senderId],config,params.existingDocumentId,params.confirmedGrant,params.text,markdown,files.map(file=>[file.name,createHash("sha256").update(file.buffer).digest("hex")])])).digest("hex");
   const existing=prepared.get(key);
   if(existing){const result=await existing;params.signal?.throwIfAborted();captureFeishuSendAuthority()?.();return result;}
   const operation = (async()=>{
@@ -336,7 +349,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
         // Retirement/cancellation cannot grant permission for fallback mutations.
         assertDeliveryCurrent(params,error);
         if(!files.some(file=>/\.m(?:d|arkdown)$/i.test(file.name)))throw error;
-        params.onFailure?.(deliveryFailure(error));
+        params.onFailure?.(documentDeliveryFailure(error));
         bodyFallback=true;
         // Do not retry the failed converter or clear partially inserted content.
         // This small plain-text block is independent of Markdown conversion.
@@ -350,9 +363,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       }
       for(const file of files){check();await deliveryStep("attach_file",()=>runBeforeFeishuMessageDispatch(()=>attachDocumentFile(client,documentId,file,check)));}
       if(config?.grantToTarget !== false){
-        const target=normalizeFeishuTarget(params.to),kind=resolveReceiveIdType(params.to.replace(/^(feishu|lark):/i,""));
-        if(!target || !["chat_id","open_id","email","user_id","union_id"].includes(kind))throw Error("Cannot grant document access to this recipient");
-        const memberType=kind==="chat_id"?"openchat":kind==="open_id"?"openid":kind==="user_id"?"userid":kind==="union_id"?"unionid":"email",perm=config?.permission ?? "view";
+        const {memberType,memberId:target}=resolveDocumentPermissionRecipient(params.to,params.recipientContext),perm=config?.permission ?? "view";
         const grant=params.confirmedGrant;
         if(grant?.documentId!==documentId || grant.memberType!==memberType || grant.memberId!==target || grant.permission!==perm) {
          check();await deliveryStep("grant_access",async()=>{const permission=await runBeforeFeishuMessageDispatch(()=>client.drive.permissionMember.create({path:{token:documentId},params:{type:"docx",need_notification:false},data:{member_type:memberType,member_id:target,perm}}));

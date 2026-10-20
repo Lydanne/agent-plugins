@@ -97,6 +97,11 @@ it("directory refresh does not change source-task identity for the same message"
  const plain=new SourceTask(scope,[{messageId:'same',text:'create issue'}]);opened.push(plain);expect(first.id).toBe(second.id);expect(first.id).toBe(plain.id);
  expect(first.begin().people?.requester.giteaUsername).toBe('reporter');
 });
+it('retains authenticated chat type for document grants without changing task identity',()=>{
+ const typed=new SourceTask({...scope,chatType:'p2p'},[{messageId:'same',text:'report'}]);opened.push(typed);
+ const legacy=new SourceTask(scope,[{messageId:'same',text:'report'}]);opened.push(legacy);
+ expect(typed.id).toBe(legacy.id);expect(typed.begin().chatType).toBe('p2p');
+});
 
 it("keeps native source tracking and reference separation without repeated field instructions",()=>{
  const t=new SourceTask(scope,[{messageId:'single',text:'你好',kind:'request'}]);opened.push(t);

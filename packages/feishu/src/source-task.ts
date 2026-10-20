@@ -5,12 +5,14 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getFeishuRuntime } from "./runtime.js";
+import type {FeishuChatType} from "./types.js";
 
 export type TaskSource = { messageId: string; text: string; kind?: "request" | "reference" };
 export type RecallIdentity = { accountId: string; chatId: string; messageId: string };
 export type TaskLease = {
   taskId: string; revision: number; accountId: string; chatId: string;
   sessionKey: string; senderId: string; sourceMessageIds: string[]; requestMessageIds?: string[]; rootId?: string; replyInThread?: boolean;
+  chatType?: FeishuChatType;
   people?: TaskPeople;
   signal: AbortSignal;
   /** Trusted executor acknowledgements only; never filled from model prose. */
@@ -76,8 +78,8 @@ export class SourceTask {
   private controller?: AbortController;
   private lease?: TaskLease;
   private status = "queued";
-  constructor(readonly scope: { accountId: string; chatId: string; sessionKey: string; senderId: string; rootId?: string; replyInThread?: boolean; people?:TaskPeople }, sources: TaskSource[]) {
-    const {people: _people, ...sourceIdentity} = scope;
+  constructor(readonly scope: { accountId: string; chatId: string; sessionKey: string; senderId: string; chatType?:FeishuChatType; rootId?: string; replyInThread?: boolean; people?:TaskPeople }, sources: TaskSource[]) {
+    const {people: _people, chatType: _chatType, ...sourceIdentity} = scope;
     this.id = "ada_" + createHash("sha256").update(JSON.stringify([sourceIdentity, sources.map(s => s.messageId).sort()])).digest("hex").slice(0, 24);
     for (const source of sources) {
       this.sources.set(source.messageId, source);
@@ -144,7 +146,7 @@ export class SourceTask {
 }
 
 /** Completion events remain reference results, never new business authorization. */
-export function isCompletionSourceCurrent(p: {taskId: string; revision: number; accountId: string; chatId: string; sessionKey: string; senderId: string; sourceMessageIds: string[]}, stateDir?: string): boolean {
+export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds">, stateDir?: string): boolean {
  const db = database(stateDir);
  try {
   const row = db.prepare("SELECT metadata FROM tasks WHERE id=?").get(p.taskId) as {metadata: string} | undefined;

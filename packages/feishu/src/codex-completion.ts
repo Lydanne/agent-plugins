@@ -139,7 +139,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       staged=canStage ? await stageBackgroundDocument({cfg:completionCfg,accountId:p.accountId,agentId,stateDir,source:p,sessionId,completionJobId:event.jobId,to:"chat:"+p.chatId,text:finalText,
        mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal}) : undefined;
      } catch {signal.throwIfAborted();stagingFailed=true;}
-     const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,text:finalText,
+     const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,
       mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal});
      if (!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
      const deliveryText=document?.text ?? finalText;

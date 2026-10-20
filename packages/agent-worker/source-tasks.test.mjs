@@ -113,3 +113,12 @@ test('provenance freezes original requester and native mention profiles for back
  try{const source=taskProvenance(lease);lease.people.requester.giteaUsername='later-edit';assert.equal(source.people.requester.giteaUsername,'reporter');assert.equal(source.people.mentions[0].giteaUsername,'developer');assert.equal(source.senderId,'ou_requester');}
  finally{sourceTaskBridge.leases.delete(key);}
 });
+test('background provenance preserves authenticated conversation type without changing legacy sources',()=>{
+ const lease={taskId:'private-task',revision:0,accountId:'a',chatId:'c',sessionKey:'private-session',senderId:'ou_requester',sourceMessageIds:['m'],signal:new AbortController().signal};
+ const key=JSON.stringify(['a',lease.sessionKey]);sourceTaskBridge.leases.set(key,lease);
+ try{
+  assert.equal(Object.hasOwn(taskProvenance(lease),'chatType'),false);
+  for(const chatType of ['p2p','private','group','topic_group']){lease.chatType=chatType;assert.equal(taskProvenance(lease).chatType,chatType);}
+  lease.chatType='unexpected';assert.equal(Object.hasOwn(taskProvenance(lease),'chatType'),false);
+ }finally{sourceTaskBridge.leases.delete(key);}
+});

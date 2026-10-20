@@ -1479,7 +1479,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
       }
       if (!inputPayload.isReasoning) {
-        const document = await prepareFeishuDocumentDelivery({cfg,accountId,agentId,to:sendTarget,text:inputPayload.text,
+        const document = await prepareFeishuDocumentDelivery({cfg,accountId,agentId,to:sendTarget,recipientContext:params.getSourceTaskLease?.(),text:inputPayload.text,
           mediaUrls:[...(inputPayload.mediaUrls ?? []),...(inputPayload.mediaUrl ? [inputPayload.mediaUrl] : [])],signal:params.sourceSignal});
         if(document) inputPayload={...inputPayload,text:document.text,mediaUrl:undefined,mediaUrls:document.mediaUrls,presentation:undefined,interactive:undefined,channelData:undefined};
       }

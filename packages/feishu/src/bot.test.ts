@@ -841,13 +841,16 @@ describe("handleFeishuMessage ACP routing", () => {
 
   it("keeps private sender identity in the native lease without guessing prose identities", async () => {
     let leaseSender: string | undefined;
+    let leaseChatType: string | undefined;
     mockDispatchInboundMessage.mockImplementationOnce(async () => {
-      leaseSender=[...sourceTaskBridge.leases.values()].find(lease=>lease.sourceMessageIds.includes('person-map'))?.senderId;
+      const lease=[...sourceTaskBridge.leases.values()].find(lease=>lease.sourceMessageIds.includes('person-map'));
+      leaseSender=lease?.senderId;leaseChatType=lease?.chatType;
       return {queuedFinal:false,counts:{final:1}};
     });
     await dispatchMessage({cfg:createFeishuTestConfig({enabled:true,allowFrom:["ou_sender_1"],dmPolicy:"open"}),event:createFeishuTestEvent({messageId:"person-map",senderOpenId:"ou_sender_1",chatId:"oc_dm",message:{content:JSON.stringify({text:"请测试用户同学核对"})}})});
     const call=lastMockCallArg<{ctx:{agentText:string}}>(mockDispatchInboundMessage);
     expect(leaseSender).toBe("ou_sender_1");
+    expect(leaseChatType).toBe("p2p");
     expect(call.ctx.agentText).not.toContain('"openId":"ou_sender_1"');
     expect(call.ctx.agentText).not.toContain('[RelatedPeople]');
     expect(call.ctx.agentText).not.toContain("人员资料使用规则");
