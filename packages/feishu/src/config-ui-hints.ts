@@ -36,6 +36,14 @@ const groupHints: Hints = {
   "tools.deny": hint("禁止的工具 / Denied tools"),
 };
 
+const cliHints: Hints = {
+  cli: hint('飞书 CLI / Feishu CLI', '插件托管 CLI、动态技能和认证。 / Plugin-managed CLI, skills and authentication.'),
+  'cli.enabled': hint('启用 CLI / Enable CLI', '默认开启；配置应用后后台安装。 / Enabled by default; installs after app configuration.'),
+  'cli.autoUpdate': hint('自动更新 CLI 与技能 / Auto-update CLI and skills', '默认开启，失败保留旧版本；关闭仍支持首次安装和手动更新。 / Default on; failures retain the current release.'),
+  'cli.updateCheckIntervalHours': hint('更新检查间隔（小时） / Update interval (hours)', '默认 24，范围 1–720。 / Default 24; range 1–720.'),
+  'cli.version': hint('固定 CLI 版本 / Pin CLI version', '留空跟随兼容的稳定 1.x；填写明确版本号。 / Empty follows compatible stable 1.x; otherwise use an exact version.'),
+  'cli.userAuth': hint('允许用户 OAuth / Allow user OAuth', '默认关闭；开启后仍需每位请求人单独授权。 / Default off; each requester must authorize separately.'),
+};
 const sharedHints: Hints = {
   enabled: hint("启用 / Enabled"),
   appId: hint("应用 ID / App ID"),
@@ -261,6 +269,7 @@ Object.assign(sharedHints, {
 });
 
 export const FeishuConfigUiHints: Hints = {
+  ...cliHints,
   ...sharedHints,
   defaultAccount: hint("默认账号 / Default account"),
   stickerSets: hint("贴纸集合 / Sticker sets", "按机器人应用 ID 配置 file_key 与关键词列表。 / Map file_key values to keyword lists under each bot app ID."),

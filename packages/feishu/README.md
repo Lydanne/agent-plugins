@@ -8,6 +8,44 @@
 
 在飞书开发者后台创建企业自建应用、启用机器人，按照 [官方 Feishu 接入说明](https://docs.openclaw.ai/channels/feishu) 配置消息权限、事件订阅及应用可用范围，并发布版本。使用 WebSocket 时选择长连接接收事件；需要连续接话或历史读取时，应用还须有接收非 @ 群消息及相应历史读取权限。交互问题须配置卡片回调，文档交付须开通文档创建、编辑、文件上传及授权所需能力。权限名称及审核状态以当前飞书后台为准，不要为普通聊天一次性开启全部文档权限。
 
+### CLI、动态技能与自动更新
+
+插件启用且已有可用飞书应用配置后，在后台安装官方 `@larksuite/cli`，从其内置技能生成轻量索引。首次安装不依赖 npm 生命周期脚本，也不修改机器全局 CLI 或 `~/.agents/skills`。单独安装插件 tarball 尚不代表 CLI 已就绪；查看 `openclaw feishu-cli status`，离线环境可稍后执行 `update` 重试。目录位于宿主状态目录的 `feishu-cli/`，与插件代码分离；不写入插件安装目录或角色仓库。
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "cli": {
+        "enabled": true,
+        "autoUpdate": true,
+        "updateCheckIntervalHours": 24,
+        "userAuth": false
+      }
+    }
+  }
+}
+```
+
+`enabled`、`autoUpdate` 默认 true，检查间隔默认 24 小时；关闭自动更新仍进行首次安装，并保留手动更新。`enabled=false` 关闭后台服务、动态目录注入和调用工具。变更更新策略后重启/重新加载插件以重建定时器。可选 `version` 为明确的稳定版本号，例如 `1.0.96`，设置后自动与手动更新均以该版本为目标；不设置则选择 npm 稳定标签。当前集成验证范围为 >=1.0.96 的 1.x，2.x 不自动升级。
+
+```sh
+openclaw feishu-cli status
+openclaw feishu-cli check
+openclaw feishu-cli update
+openclaw feishu-cli rollback
+```
+
+更新器在独立目录安装指定版本的 npm 包（依赖脚本禁用），显式执行该版本官方二进制安装器（含上游校验），验证程序版本及全部技能可枚举、可读取，再一起切换 CLI 与索引。失败记录状态并保留原版本。`update` 对相同版本也核验并修复索引；`rollback` 恢复上一版本，并至少等待下个检查周期再自动更新。已开始的调用固定使用捕获的版本目录。历史版本目录暂不自动清理，管理员应关注磁盘占用；不要删除仍被任务使用的版本。进程异常中止遗留 `update.lock` 时先确认没有安装进程，再清理这个锁目录重试。
+
+Main 在可信飞书会话获取当前技能目录，并通过 `feishu_cli` 列举、读取技能或执行类型化业务命令。上游技能正文与 references 始终读取同版本 CLI 的内置内容；scripts/assets 不在内置内容中，不承诺这些资源可执行。`apps` 部署、常驻事件、原始 API、本地文件输入输出不开放给此入口，沿用相应现有工具。与旧 `feishu-doc/drive/wiki/perm` 重叠时，已有工具继续服务原流程，CLI 操作先读 `feishu-cli` 接入规则；消息、群历史、卡片、后台交付由原插件能力负责。
+
+应用凭证仅从可信消息账号的运行时配置解析（包括已解析的 SecretRef），通过子进程环境提供，清除操作员 CLI profile/token/sidecar 环境，不写入 CLI profile。业务命令无法选择其他账号、改变身份策略或管理凭证；风险操作保留 CLI 的 exit 10 确认流程。当前仅支持标准 feishu/lark 域名，自定义 API 域名不接入 CLI。
+
+个人资源由管理员显式开启 `userAuth`，并由每位请求人通过 `feishu_cli_auth` 按 scope 授权。插件使用与 CLI 相同的公开 OAuth device flow，单次检查有截止时间；先展示链接与二维码，后续再完成授权。完成及刷新时核对真实 user_info.open_id，拒绝他人扫码；本地状态按账号、App ID、品牌和请求人隔离。授权文件目录 0700、文件 0600，包含运行时 token，须按私有凭证管理，不能提交或分享。只支持 Bearer token；服务端要求 DPoP 时明确失败，不降级绕过要求。退出只删除本地状态，不撤销服务端授权。
+
+Worker 不运行飞书 CLI、不安装技能、不持有凭证，也不直接调用宿主插件。需要能力或技能内容时沿用原任务 `request → awaiting_main → Main 调用 → reply → Worker 恢复`；授权、权限及调用结果由 Main 处理，不把认证状态发送给 Worker。此限制属于执行协议，不能把提示规则描述为操作系统沙箱隔离。
+
 ### 消息上下文与字段扩展
 
 `feishu-context` 随插件交付，解释人员、偏好、部门风格、提及、历史和任务来源。消息携带本轮 JSON 数据；`before_prompt_build` 按可信飞书渠道每轮补充 `feishu-context/v3` 的短权限与来源边界，压缩后也重新生效，不依赖 AgentRepo 或 Ada 角色文件。历史原文、读取状态、引用链缺口和摘要统一放在 `[GroupChatHistory]` 的对象中，读取兼容旧数组；当前人员、部门配置与任务来源仍是独立数据段。未知可选字段在历史合并、去重和摘要时保留，完整字段解释见技能引用。

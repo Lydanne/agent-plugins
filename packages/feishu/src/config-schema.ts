@@ -13,6 +13,7 @@ import {
 import { z } from "zod";
 import { FeishuConfigUiHints } from "./config-ui-hints.js";
 import { FEISHU_EXTERNAL_KEY_PATTERN } from "./external-keys.js";
+import { FeishuCliConfigSchema } from './cli-config.js';
 import { buildSecretInputSchema, hasConfiguredSecretInput } from "./secret-input.js";
 import { DEFAULT_FEISHU_WEBHOOK_PATH, normalizeFeishuWebhookPath } from "./webhook-path.js";
 export { z };
@@ -334,6 +335,7 @@ export const FeishuAccountConfigSchema = z
 
 const FeishuConfigSchemaBase = z
   .object({
+    cli: FeishuCliConfigSchema,
     enabled: z.boolean().optional(),
     defaultAccount: z.string().optional(),
     stickerSets: FeishuStickerSetsSchema.optional(),

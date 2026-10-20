@@ -1,5 +1,6 @@
 import {projectFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
 import {validateContextAnswers} from './context-request.mjs';
+import {workerEnvironment} from './plugin-environment.mjs';
 import {finalizeJobReport} from './task-report.mjs';
 import {tryLock,acquireLock} from './locks.mjs';
 import {memoryHandoffSummary} from './memory-context.mjs';
@@ -97,7 +98,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    writeJson(file,claimed);running.push(claimed);
    let child;
    const failed=()=>{terminalJob({...claimed,status:'failed',error:'Could not start job worker',finishedAt:Date.now(),heartbeatAt:Date.now()},request);};
-   try{child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore']});}
+   try{child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
    catch{failed();continue;}
    child.stdin.on('error',()=>{});child.once('error',failed);
    child.stdin.end(JSON.stringify({...request,params:request.resumeParams??request.params}));child.unref();

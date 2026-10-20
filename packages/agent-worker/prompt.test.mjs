@@ -1,5 +1,5 @@
 import {workerReportInstructions,delegationReportInstructions,defaultConfiguration} from './configuration.mjs';
-import {contextRequestInstructions} from './context-request.mjs';
+import {contextRequestInstructions,pluginCapabilityInstructions} from './context-request.mjs';
 import {experienceInstructions} from './experience.mjs';
 import {normalizeMemoryContext,memoryPolicy} from './memory-context.mjs';
 import {test} from 'node:test';
@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {buildTaskPrompt,selectExecutionSession,executionPolicyVersion,executorInstructions,businessDataPolicy,delegationDescription} from './index.mjs';
 const params={task:'查询任务进度',context:'已知任务 ID',constraints:'development3，只读查询，不创建导出'};
 test('delegates only structured task, constraints and context',()=>{
- assert.deepEqual(JSON.parse(buildTaskPrompt(params)),{kind:'business_task',reportInstructions:workerReportInstructions,contextRequestInstructions,...params,memory:normalizeMemoryContext(undefined),memoryPolicy,dataPolicy:businessDataPolicy,experienceInstructions});
+ assert.deepEqual(JSON.parse(buildTaskPrompt(params)),{kind:'business_task',reportInstructions:workerReportInstructions,contextRequestInstructions,pluginCapabilityInstructions,...params,memory:normalizeMemoryContext(undefined),memoryPolicy,dataPolicy:businessDataPolicy,experienceInstructions});
  assert.ok(executorInstructions.length<1000);
  assert.ok(executorInstructions.includes('push'));
  assert.ok(!buildTaskPrompt(params).includes(executorInstructions));
@@ -19,6 +19,13 @@ test('delegates only structured task, constraints and context',()=>{
  assert.ok(experienceInstructions.guidance.includes('遵守 reportInstructions'));
  assert.ok(!experienceInstructions.guidance.includes('无报告返回'));
  assert.equal(isolated.constraints,params.constraints);
+});
+test('routes Feishu plugin and CLI capabilities through Main using the existing request/reply protocol',()=>{
+ const prompt=JSON.parse(buildTaskPrompt(params));
+ assert.match(prompt.pluginCapabilityInstructions,/必须请求 Main/);
+ assert.match(prompt.pluginCapabilityInstructions,/type=request/);
+ assert.match(prompt.pluginCapabilityInstructions,/reply/);
+ assert.match(prompt.pluginCapabilityInstructions,/不直接执行 lark-cli/);
 });
 test('requires explicit bounded execution restrictions',()=>{
  for(const constraints of [undefined,'','  ','x'.repeat(4001)]) assert.throws(()=>buildTaskPrompt({...params,constraints}));

@@ -11,6 +11,13 @@
   "activation": {
     "onStartup": false
   },
+  "cliCommands": [
+    {
+      "name": "feishu-cli",
+      "description": "管理飞书 CLI、技能索引与自动更新",
+      "hasSubcommands": true
+    }
+  ],
   "channels": [
     "feishu"
   ],
@@ -32,7 +39,9 @@
       "feishu_perm",
       "feishu_wiki",
       "feishu_group_history",
-      "feishu_user"
+      "feishu_user",
+      "feishu_cli",
+      "feishu_cli_auth"
     ]
   },
   "toolMetadata": {
@@ -339,6 +348,44 @@
           ]
         }
       ]
+    },
+    "feishu_cli": {
+      "configSignals": [
+        {
+          "rootPath": "channels.feishu",
+          "required": [
+            "appId",
+            "appSecret"
+          ]
+        },
+        {
+          "rootPath": "channels.feishu",
+          "overlayMapPath": "accounts",
+          "required": [
+            "appId",
+            "appSecret"
+          ]
+        }
+      ]
+    },
+    "feishu_cli_auth": {
+      "configSignals": [
+        {
+          "rootPath": "channels.feishu",
+          "required": [
+            "appId",
+            "appSecret"
+          ]
+        },
+        {
+          "rootPath": "channels.feishu",
+          "overlayMapPath": "accounts",
+          "required": [
+            "appId",
+            "appSecret"
+          ]
+        }
+      ]
     }
   },
   "skills": [
@@ -355,6 +402,30 @@
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
+          "cli": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "autoUpdate": {
+                "type": "boolean"
+              },
+              "updateCheckIntervalHours": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 720
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^\\d+\\.\\d+\\.\\d+$"
+              },
+              "userAuth": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -3634,6 +3705,30 @@
         "additionalProperties": false
       },
       "uiHints": {
+        "cli": {
+          "label": "飞书 CLI / Feishu CLI",
+          "help": "插件托管 CLI、动态技能和认证。 / Plugin-managed CLI, skills and authentication."
+        },
+        "cli.enabled": {
+          "label": "启用 CLI / Enable CLI",
+          "help": "默认开启；配置应用后后台安装。 / Enabled by default; installs after app configuration."
+        },
+        "cli.autoUpdate": {
+          "label": "自动更新 CLI 与技能 / Auto-update CLI and skills",
+          "help": "默认开启，失败保留旧版本；关闭仍支持首次安装和手动更新。 / Default on; failures retain the current release."
+        },
+        "cli.updateCheckIntervalHours": {
+          "label": "更新检查间隔（小时） / Update interval (hours)",
+          "help": "默认 24，范围 1–720。 / Default 24; range 1–720."
+        },
+        "cli.version": {
+          "label": "固定 CLI 版本 / Pin CLI version",
+          "help": "留空跟随兼容的稳定 1.x；填写明确版本号。 / Empty follows compatible stable 1.x; otherwise use an exact version."
+        },
+        "cli.userAuth": {
+          "label": "允许用户 OAuth / Allow user OAuth",
+          "help": "默认关闭；开启后仍需每位请求人单独授权。 / Default off; each requester must authorize separately."
+        },
         "enabled": {
           "label": "启用 / Enabled"
         },

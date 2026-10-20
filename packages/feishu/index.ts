@@ -9,6 +9,7 @@ import { registerCodexCompletion } from "./src/codex-completion.js";
 import { registerWorkspaceContextHooks } from "./src/workspace-context.js";
 import { registerFeishuContextProtocol } from "./src/context-protocol.js";
 import { registerFeishuSubagentHooks } from "./subagent-hooks-api.js";
+import { registerFeishuCli, registerFeishuCliCommands } from './src/cli-integration.js';
 
 import {registerFeishuPeopleGroupSync} from './src/people-group-sync.js';
 import {registerFeishuPeopleResolver} from './src/people-resolver.js';
@@ -32,6 +33,7 @@ export default defineBundledChannelEntry({
     exportName: "setFeishuRuntime",
   },
   registerFull(api) {
+    registerFeishuCli(api);
     registerFeishuContextProtocol(api);
     registerFeishuPeopleResolver(api);
     registerFeishuPeopleTool(api);
@@ -57,4 +59,5 @@ export default defineBundledChannelEntry({
       register(api);
     }
   },
+  registerCliMetadata: registerFeishuCliCommands,
 });

@@ -98,3 +98,9 @@ The Agent Repo API implementation is embedded into each plugin build from its si
 
 - Agent Repo 增加按 Agent 的 sync.gitEnvironment 配置及中英 UI 帮助，将部署专用 Git Hook 标记传给入站、Worker 与定时同步；省略时保留通用默认，显式空对象关闭默认额外标记。
 - schema 与运行时校验保持一致，配置防御性复制；文档明确 Worker 路径/政策、项目 Git URL、同步环境分别由部署方私有配置提供。仓库不包含真实机器补丁或凭证。
+
+## Feishu CLI integration
+
+The Feishu plugin installs the official MIT-licensed @larksuite/cli at runtime and generates skill indexes from its embedded catalog. Integration baseline: 1.0.96; compatible stable 1.x releases are eligible for default-on updates. Upstream: https://github.com/larksuite/cli. No upstream CLI or skill bodies are vendored. The upstream binary installer and its checksum validation are retained.
+
+Local integration owns release selection, atomic CLI/catalog activation, rollback, Main-only execution, environment credential binding, and requester-scoped Bearer OAuth device authorization using the public accounts endpoints. Worker uses the existing Main request/reply protocol. Scripts/assets, raw API calls, app deployment, long-running event consumers and arbitrary file IO are not exposed through this adapter.

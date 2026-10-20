@@ -10,7 +10,7 @@
   "private": true,
   "description": "Local Codex CLI delegation with Agent Repo project and repository skill routing",
   "scripts": {
-    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check index.mjs && node --check jobs.mjs && node --check worker.mjs && node --check task-report.mjs && node --check source-tasks.mjs && node --check diagnostics.mjs && node --check skill-refresh.mjs && node --check memory-context.mjs && node --check experience.mjs && node --check completion.mjs && node --check context-request.mjs && node --check question-bridge.mjs && node --check locks.mjs && node --check dispatch-policy.mjs && node --check configuration.mjs && node config-schema.mjs && node --check session-inspector.mjs && node --check agent-task-inspector.mjs && node build-ui.mjs && node --check repository-scope.mjs && node --check project-binding.mjs",
+    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check index.mjs && node --check jobs.mjs && node --check worker.mjs && node --check task-report.mjs && node --check source-tasks.mjs && node --check diagnostics.mjs && node --check skill-refresh.mjs && node --check memory-context.mjs && node --check experience.mjs && node --check completion.mjs && node --check context-request.mjs && node --check plugin-environment.mjs && node --check question-bridge.mjs && node --check locks.mjs && node --check dispatch-policy.mjs && node --check configuration.mjs && node config-schema.mjs && node --check session-inspector.mjs && node --check agent-task-inspector.mjs && node build-ui.mjs && node --check repository-scope.mjs && node --check project-binding.mjs",
     "test": "node --test *.test.mjs"
   },
   "files": [
@@ -27,6 +27,7 @@
     "experience.mjs",
     "completion.mjs",
     "context-request.mjs",
+    "plugin-environment.mjs",
     "question-bridge.mjs",
     "locks.mjs",
     "dispatch-policy.mjs",

@@ -12,6 +12,8 @@
 
 ## Main 如何提交任务
 
+Worker 使用宿主插件能力必须沿用原任务的 `request → awaiting_main → Main 调用 → reply → Worker 恢复`。需要飞书 CLI 技能正文、文档、表格、日历或授权时，由 Main 处理并返回必要结果；Worker 不直接运行飞书 CLI、不自行安装更新或发起 OAuth。宿主启动 Worker 与执行 CLI 两个子进程边界均移除飞书应用凭证、飞书 CLI 登录态/代理配置及 Gateway token 环境变量，不影响独立的 Codex 执行配置。这不是文件系统或操作系统沙箱，运行用户仍须管理本地文件访问权限。
+
 参数示例用于模型工具调用。复用已明确的同一问题 topic；尚未找到时用 list 的具体关键词发现一次，不例行加载所有历史。以下示例在无记忆工具的会话中使用 unavailable，实际部署须如实传检索结果。
 
 ```json
