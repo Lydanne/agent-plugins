@@ -14,3 +14,5 @@ await writeFile('dist/entities-api.mjs',(await readFile(new URL('../packages/age
 await copyFile(new URL('../packages/agent-repo-api/context-blocks.mjs',import.meta.url),'dist/context-blocks.mjs');
 
 await copyFile(new URL('../packages/agent-repo-api/maintenance.mjs',import.meta.url),'dist/maintenance-api.mjs');
+
+await writeFile('dist/diagnostics-api.mjs',(await readFile(new URL('../packages/agent-repo-api/diagnostics.mjs',import.meta.url),'utf8')).replace("from './index.mjs'","from './agent-repo-api.mjs'"));

@@ -1,3 +1,4 @@
+import {mountLogConsole} from './log-console.mjs';
 import {mountSkillMaintenance} from './skill-maintenance-page.mjs';
 import {mountWorkerPage,renderWorkerSummary} from './worker-page.mjs';
 import {mountPeopleDialog} from './people-ui.mjs';
@@ -16,7 +17,7 @@ export function mountProjects(container,initial){
  const root=element('section',undefined,'ar-panel');root.setAttribute('aria-label','Agent Repo 项目、技能与子代理');container.append(root);
  const safe=value=>context.host.redact(String(value??'')),target=()=>currentUiTarget(context);
  const panelId='ar-skills-'+(++panelSequence);
- let logDialog=null,peopleDialog=null;
+ let logDialog=null,logConsole=null,peopleDialog=null;
  let maintenanceView=null;
  function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
@@ -97,55 +98,19 @@ export function mountProjects(container,initial){
   return section;
  }
  function closeLogDialog(restore=true){
-  const dialog=logDialog;logDialog=null;if(dialog){if(dialog.open)dialog.close();dialog.remove();}
+  const dialog=logDialog;logDialog=null;logConsole?.dispose();logConsole=null;if(dialog){if(dialog.open)dialog.close();dialog.remove();}
   if(restore)root.querySelector('[data-repository-logs]')?.focus({preventScroll:true});
  }
  async function openLogDialog(){
   closeSyncDialog(false);closeLogDialog(false);
-  const inline=context.props.managementSection==='logs';
-  const dialog=element(inline?'section':'dialog',undefined,'ar-sync-dialog ar-log-dialog'+(inline?' ar-log-inline':'')),header=element('header',undefined,'ar-sync-dialog-header'+(inline?' ar-section-heading':'')),heading=element('div'),title=element('h2','仓库日志');title.id=panelId+'-log-title';dialog.setAttribute('aria-labelledby',title.id);heading.append(title,element('p',safe(inline?'查看仓库同步与准备异常，复制或导出诊断记录。':'Agent '+target().agentId+' · 同步与准备异常'),'ar-log-subtitle'));
-  const close=button('关闭',()=>closeLogDialog());close.className='ar-log-close';header.append(heading,inline?button('刷新日志',openLogDialog):close);dialog.append(header);logDialog=dialog;
+  const inline=context.props.managementSection==='logs',current=context,selected=projectInspectionTarget(context);
+  const dialog=element(inline?'section':'dialog',undefined,'ar-sync-dialog ar-log-dialog'+(inline?' ar-log-inline':'')),header=element('header',undefined,'ar-sync-dialog-header'+(inline?' ar-section-heading':'')),heading=element('div'),title=element('h2','日志');title.id=panelId+'-log-title';dialog.setAttribute('aria-labelledby',title.id);heading.append(title,element('p','统一查看插件与 Worker 日志；实时调试默认关闭。','ar-log-subtitle'));
+  const close=button('关闭',()=>closeLogDialog());header.append(heading);if(!inline)header.append(close);dialog.append(header);logDialog=dialog;
   dialog.addEventListener('cancel',event=>{event.preventDefault();closeLogDialog();});dialog.addEventListener('close',()=>{if(logDialog===dialog)closeLogDialog();});
-  const body=element('div',undefined,'ar-sync-dialog-body');body.append(element('p','正在读取日志…','ar-muted'));dialog.append(body);container.append(dialog);if(!inline){dialog.showModal();close.focus();}
-  function showLogs(result,feedback=''){
-   if(result.agentId!==target().agentId)throw Error('日志来源与当前 Agent 不一致');
-   body.replaceChildren();
-   const content=safe(JSON.stringify(result,null,2)),toolbar=element('div',undefined,'ar-log-toolbar'),actions=element('div',undefined,'ar-log-actions'),message=element('p',undefined,'ar-log-feedback');message.setAttribute('role','status');message.textContent=feedback;toolbar.append(element('span',result.records.length+' 条记录 · 最多保留 100 条','ar-meta'),actions);
-   actions.append(button('复制日志',async()=>{try{await document.defaultView.navigator.clipboard.writeText(content);if(logDialog===dialog)message.textContent='日志已复制';}catch{if(logDialog===dialog)message.textContent='无法访问剪贴板，请选择下方日志复制或下载。';}}),button('下载日志',()=>{const browser=document.defaultView,url=browser.URL.createObjectURL(new browser.Blob([content],{type:'application/json'}));const link=element('a');link.href=url;link.download='agent-repo-'+result.agentId+'-logs.json';link.click();document.defaultView.setTimeout(()=>browser.URL.revokeObjectURL(url),0);}));body.append(toolbar,message);
-   const clearButton=button('清空日志',()=>{
-    if(disposed||logDialog!==dialog||target().agentId!==result.agentId||!context.presented)return;
-    if(context.host.connection.canWrite!==true){message.textContent='清空日志需要写入权限。';return;}
-    clearButton.disabled=true;
-    const confirmation=element('section',undefined,'ar-log-confirm'),controls=element('div',undefined,'ar-log-actions');confirmation.setAttribute('role','group');confirmation.setAttribute('aria-label','确认清空仓库日志');
-    confirmation.append(element('p','清空当前 Agent 的仓库日志？清空后无法恢复。'),controls);toolbar.after(confirmation);
-    const cancel=button('取消',()=>{confirmation.remove();clearButton.disabled=!context.host.connection.canWrite;clearButton.focus();});
-    const confirm=button('确认清空',async()=>{
-     if(disposed||logDialog!==dialog||context.host.connection.canWrite!==true||target().agentId!==result.agentId||!context.presented)return;
-     for(const control of [...actions.querySelectorAll('button'),cancel,confirm])control.disabled=true;
-     message.textContent='正在清空日志…';
-     try{
-      const next=await invoke('clearRepositoryLogs',{confirmed:true});if(disposed||logDialog!==dialog)return;
-      showLogs(next,'已清空 '+next.cleared+' 条日志。');
-     }catch(failure){
-      if(logDialog!==dialog)return;message.textContent=safe(failure.message);
-      for(const control of [...actions.querySelectorAll('button'),cancel,confirm])control.disabled=false;clearButton.disabled=true;
-     }
-    });confirm.className='ar-log-clear';controls.append(cancel,confirm);cancel.focus();
-   });clearButton.className='ar-log-clear';clearButton.disabled=context.host.connection.canWrite!==true||!result.records.length;clearButton.title=context.host.connection.canWrite!==true?'需要 operator.write 权限':'';actions.append(clearButton);
-   if(!result.records.length){const empty=element('section',undefined,'ar-log-empty');empty.append(element('span','✓','ar-log-empty-icon'),element('h3','暂无仓库异常记录'),element('p','同步跳过或准备失败时，原因会显示在这里。','ar-muted'));body.append(empty);}
-   else{
-    const records=element('ol',undefined,'ar-log-records');records.setAttribute('aria-label','仓库异常记录');
-    for(const record of result.records){
-     const row=element('li',undefined,'ar-log-record'),top=element('div',undefined,'ar-log-record-heading'),status=record.status==='skipped'?'已跳过同步':record.status==='failed'?'准备失败':'异常记录';
-     top.append(element('strong',safe(record.stage??'仓库准备')),element('span',status,'ar-sync-badge '+(record.status==='skipped'?'skipped':'failed')));row.append(top,element('p',safe(date(record.time)+' · '+(record.repository??'Agent Repo')),'ar-log-record-meta'));
-     if(record.reason)row.append(element('p',safe(record.reason),'ar-log-reason'));if(record.effect)row.append(element('p',safe(record.effect),'ar-log-effect'));records.append(row);
-    }body.append(records);
-   }
-   const raw=element('details',undefined,'ar-log-raw'),summary=element('summary','查看原始日志'),text=element('textarea');text.readOnly=true;text.value=content;text.className='ar-repository-log';text.setAttribute('aria-label','可复制的仓库日志');raw.append(summary,text);body.append(raw);
-  }
-  try{
-   const result=await invoke('repositoryLogs',{});if(disposed||logDialog!==dialog)return;showLogs(result);
-  }catch(failure){if(logDialog===dialog){body.replaceChildren(element('p',safe(failure.message),'ar-error'),button('重试读取日志',openLogDialog));}}
+  const body=element('div',undefined,'ar-sync-dialog-body');dialog.append(body);container.append(dialog);
+  // Capture the original target: cleanup must stop the old Agent's lease after switching.
+  const logInvoke=(action,payload)=>readInspectionResponse(async(name,data)=>current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data}),action,payload).then(result=>{if(['repositoryLogs','clearRepositoryLogs'].includes(action)&&result.agentId!==selected.agentId)throw Error('日志来源与当前 Agent 不一致');return result;});
+  logConsole=mountLogConsole(body,{invoke:logInvoke,safe,signal:current.signal,actionsContainer:inline?header:undefined,canWrite:()=>context.host.connection.canWrite===true});if(!inline){dialog.showModal();close.focus();}
  }
  function closeSyncDialog(restore=true){
   const taskId=syncTaskId,dialog=syncDialog;syncDialog=null;syncTaskId=null;syncRunId=null;syncTab='records';syncRenderedView=null;syncViewScroll.clear();
@@ -253,7 +218,7 @@ export function mountProjects(container,initial){
   const tabScroll=root.querySelector('.ar-project-tabs')?.scrollLeft??0;
   const scroll=root.querySelector('.ar-scroll')?.scrollTop??0,expanded=new Set([...root.querySelectorAll('details[open]')].map(node=>node.dataset.skillPath));
   const focusedTab=root.contains(document.activeElement)?document.activeElement?.dataset.tabKey:undefined;
-  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();if(context.props.managementSection==='logs')return;const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);if(context.props.managementSection){header.classList.add('ar-section-heading');const copy=element('div');copy.append(element('h2',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'仓库日志':'项目与技能'),element('p',context.props.managementSection==='tasks'?'查看仓库同步等系统任务的计划、状态与运行记录。':'查看共享及项目技能，管理关联 CLI 与子代理。','ar-description'));header.append(copy,actions);}else header.append(element('strong','项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('仓库日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
+  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();if(context.props.managementSection==='logs')return;const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);if(context.props.managementSection){header.classList.add('ar-section-heading');const copy=element('div');copy.append(element('h2',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'日志':'项目与技能'),element('p',context.props.managementSection==='tasks'?'查看仓库同步等系统任务的计划、状态与运行记录。':'查看共享及项目技能，管理关联 CLI 与子代理。','ar-description'));header.append(copy,actions);}else header.append(element('strong','项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!selected.agentId){root.append(element('p','请先选择一个 Agent。'));return;}
   if(!context.props.managementSection)root.append(element('p',safe('当前 Agent · '+selected.agentId),'ar-meta'));
@@ -297,7 +262,7 @@ const managementModules=[
  {id:'worker',label:'Worker 任务',description:'跨会话查看此 Agent 的任务状态、来源和执行详情。'},
  {id:'entities',label:'实体资料库',description:'统一检索人员、组织、服务与资产，查看 AI 和程序同步的来源。'},
  {id:'tasks',label:'定时任务',description:'查看仓库同步等系统任务的计划、状态和运行记录。'},
- {id:'logs',label:'仓库日志',description:'查看同步与准备异常，复制或导出诊断记录。'},
+ {id:'logs',label:'日志',description:'统一查看插件与 Worker 日志，按需开启实时调试。'},
 ];
 function mountOverview(container,context,agentId,choose){
  let disposed=false,generation=0,loading=false,results={},loadedAt=null;
@@ -338,7 +303,7 @@ function mountOverview(container,context,agentId,choose){
   const columns=element('div',undefined,'ar-overview-columns'),attention=element('section',undefined,'ar-overview-card');attention.append(element('h3','待处理事项'),element('p','基于本次读取结果，不代替完整健康检查。','ar-description'));
   let issues=0;
   const issue=(title,detail,module)=>{issues++;const row=element('div',undefined,'ar-attention-row'),text=element('div');text.append(element('strong',title),element('p',detail));row.append(text,button('查看'+managementModules.find(item=>item.id===module).label,()=>choose(module)));attention.append(row);};
-  for(const [key,module,label] of [['catalog','projects','项目清单'],['people','entities','人员资料'],['entities','entities','实体资料'],['logs','logs','仓库日志']])if(results[key]?.error)issue(label+'读取失败',results[key].error,module);
+  for(const [key,module,label] of [['catalog','projects','项目清单'],['people','entities','人员资料'],['entities','entities','实体资料'],['logs','logs','日志']])if(results[key]?.error)issue(label+'读取失败',results[key].error,module);
   if(results.maintenance?.error)issue('技能维护状态不可读取',results.maintenance.error,'projects');
   for(const provider of results.maintenance?.value?.providers??[])if(['unavailable','fallback','degraded'].includes(provider.state))issue(safe(provider.label)+'需处理',safe(provider.scope)+' · '+({unavailable:'不可读取',fallback:'正在使用已验证旧版',degraded:'检查或更新失败'})[provider.state],'projects');
   const workerDiagnostics=results.worker?.value?.diagnostics;if(workerDiagnostics?.deliveryUncertain)issue(workerDiagnostics.deliveryUncertain+' 个投递结果待核查','Main 可能已经执行，先查看原任务及事件回执。','worker');if(workerDiagnostics?.awaitingMainOverdue)issue(workerDiagnostics.awaitingMainOverdue+' 个任务等待 Main 超过 30 分钟','等待时间仅用于提醒，不代表任务失败。','worker');

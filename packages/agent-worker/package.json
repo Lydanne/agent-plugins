@@ -10,7 +10,7 @@
   "private": true,
   "description": "Local Codex CLI delegation with Agent Repo project and repository skill routing",
   "scripts": {
-    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check index.mjs && node --check jobs.mjs && node --check worker.mjs && node --check task-report.mjs && node --check source-tasks.mjs && node --check diagnostics.mjs && node --check skill-refresh.mjs && node --check memory-context.mjs && node --check experience.mjs && node --check completion.mjs && node --check context-request.mjs && node --check main-capability-skill.mjs && node --check plugin-environment.mjs && node --check question-bridge.mjs && node --check locks.mjs && node --check dispatch-policy.mjs && node --check configuration.mjs && node config-schema.mjs && node --check session-inspector.mjs && node --check collaboration-diagnostics.mjs && node --check agent-task-inspector.mjs && node build-ui.mjs && node --check repository-scope.mjs && node --check project-binding.mjs",
+    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check index.mjs && node --check jobs.mjs && node --check worker.mjs && node --check task-report.mjs && node --check source-tasks.mjs && node --check diagnostics.mjs && node --check skill-refresh.mjs && node --check memory-context.mjs && node --check experience.mjs && node --check completion.mjs && node --check context-request.mjs && node --check main-capability-skill.mjs && node --check plugin-environment.mjs && node --check question-bridge.mjs && node --check locks.mjs && node --check dispatch-policy.mjs && node --check configuration.mjs && node config-schema.mjs && node --check session-inspector.mjs && node --check collaboration-diagnostics.mjs && node --check agent-task-inspector.mjs && node build-ui.mjs && node --check repository-scope.mjs && node --check project-binding.mjs && node --check diagnostic-source.mjs",
     "test": "node --test *.test.mjs"
   },
   "files": [
@@ -48,7 +48,9 @@
     "dist/maintenance-api.mjs",
     "dist/ui-navigation.mjs",
     "dist/context-blocks.mjs",
-    "skills"
+    "skills",
+    "dist/diagnostics-api.mjs",
+    "diagnostic-source.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

@@ -108,3 +108,7 @@ Local integration owns release selection, atomic CLI/catalog activation, rollbac
 - Agent Worker 本地扩展：以可添加的 harness + 模型配置替代按智慧档位选择模型；Main 逐任务选择 modelId 和 0–6 级智慧参数，会话及调度按模型隔离。当前仅支持 Codex，等级及速度变化复用会话，已受理任务保留配置快照；兼容旧配置与任务，不改变宿主 SDK 或上游许可证。
 
 AgentRepo adds a generic optional skill-maintenance provider API and a shared list/detail UI for skills and their CLI dependencies. Feishu retains CLI lifecycle, configuration and identity ownership; Agent Worker retains task diagnostics. No upstream CLI, skill bodies, OAuth secrets or business data are vendored into the management interface.
+
+## 2026-10-20 通用日志 Console
+
+AgentRepo bundles unmodified MIT-licensed `@tanstack/virtual-core@3.19.6` for bounded log-row virtualization; its copyright and license are shipped in `packages/agent-repo/THIRD_PARTY_NOTICES.md`. Console interactions, Main diagnostic leases, the generic source/log API and the read-only Worker audit adapter are local implementations. No Luna or Eruda code is bundled. Real-time capture defaults off and does not alter existing Worker auditing or Main-only plugin execution.

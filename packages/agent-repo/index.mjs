@@ -1,3 +1,5 @@
+import {createDiagnosticHub} from './dist/diagnostics-api.mjs';
+import {installRepositoryDiagnostics} from './diagnostic-source.mjs';
 import {createMainPluginCatalogReader} from './plugin-catalog.mjs';
 import {createWorkerSkillPublisher} from './worker-skill.mjs';
 import {trustedAgentId,getAgentRepoService} from './dist/agent-repo-api.mjs';
@@ -57,7 +59,11 @@ export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',re
  });
  const runtime=createRepositoryRuntime(config,hostConfig,{logger:api.logger});
  api.registerService?.(createDailySyncService(config,runtime.scheduledSync,api.logger));
- registerProjectInspector(api,createProjectInspector(config,hostConfig));
+ const diagnosticHub=createDiagnosticHub();
+ const diagnosticOwner=Symbol.for('openclaw-plugins.agent-repo.diagnostics.owner');
+ let diagnosticSource=installRepositoryDiagnostics(config,diagnosticOwner);
+ api.registerService?.({id:'agent-repo-diagnostics',start:()=>{diagnosticHub.start();diagnosticSource??=installRepositoryDiagnostics(config,diagnosticOwner);},stop:()=>{diagnosticHub.dispose();diagnosticSource?.dispose();diagnosticSource=null;}});
+ registerProjectInspector(api,createProjectInspector(config,hostConfig,()=>Date.now(),diagnosticHub.actions),{isDiagnosticTransferActive:diagnosticHub.canReadTransfer});
  const owner=Symbol.for('openclaw-plugins.agent-repo.owner');
  let disposePeople=()=>{};
  const installPeople=()=>{const disposers=[];try{for(const [id,binding] of Object.entries(config.agents)){disposers.push(registerPeopleService(id,createPeopleStore(binding.repo),owner));disposers.push(registerEntityService(id,createEntityStore(binding.repo),owner));}}catch(error){disposers.forEach(dispose=>dispose());throw error;}return ()=>disposers.forEach(dispose=>dispose());};
