@@ -25,7 +25,7 @@ async function bounded(work,signal){
  finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
 }
 export function registerDiagnosticSource(source,owner){
- if(!owner||source?.apiVersion!==1||!idPattern.test(source.id)||!idPattern.test(source.pluginId)||typeof source.label!=='string'||source.label.length>100||source.open!==undefined&&typeof source.open!=='function')throw Error('Invalid diagnostic source');
+ if(!owner||source?.apiVersion!==1||!idPattern.test(source.id)||!idPattern.test(source.pluginId)||typeof source.label!=='string'||source.label.length>100||['open','history','clearHistory'].some(key=>source[key]!==undefined&&typeof source[key]!=='function')||source?.clearHistory&&!source.history)throw Error('Invalid diagnostic source');
  const previous=registry.sources.get(source.id);if(previous&&previous.owner!==owner)throw Error('Diagnostic source already registered');
  if(previous)for(const listener of [...registry.listeners])listener.removed(source.id);
  source=Object.freeze({...source});const entry={source,owner};registry.sources.set(source.id,entry);
@@ -48,7 +48,30 @@ export function createDiagnosticHub({now=()=>Date.now(),ttlMs=20000,maxRows=2000
  const append=(lease,row)=>{if(!leases.has(lease.id)||lease.expiresAt<=now())return;const value={...row,captureId:lease.id,seq:++lease.seq},bytes=Buffer.byteLength(JSON.stringify(value));lease.rows.push({value,bytes});lease.bytes+=bytes;while(lease.rows.length>maxRows||lease.bytes>maxBytes){lease.bytes-=lease.rows.shift().bytes;lease.dropped++;}};
  const parameters=(ctx,keys)=>{if(Object.keys(ctx.payload??{}).some(key=>!keys.includes(key)))throw Error('无效诊断参数');};
  const actions={
-  async diagnosticSources(ctx){context(ctx);parameters(ctx,[]);return {apiVersion:1,sources:[...registry.sources.values()].map(({source})=>({id:source.id,pluginId:source.pluginId,label:source.label,live:true}))};},
+  async diagnosticSources(ctx){context(ctx);parameters(ctx,[]);return {apiVersion:1,sources:[...registry.sources.values()].map(({source})=>({id:source.id,pluginId:source.pluginId,label:source.label,live:true,capabilities:{live:true,history:typeof source.history==='function',clearHistory:typeof source.clearHistory==='function'}}))};},
+  async diagnosticHistory(ctx){
+   const scope=context(ctx);parameters(ctx,['sourceId']);const id=ctx.payload?.sourceId;
+   if(id!==undefined&&(!idPattern.test(id)||!registry.sources.has(id)))throw Error('Unknown diagnostic source');
+   const entries=[...registry.sources.values()].filter(({source})=>(id===undefined||source.id===id)&&source.history),rows=[],warnings=[];let bytes=0,dropped=0;
+   // Read independent providers together so one timeout does not delay every other source.
+   const results=await Promise.all(entries.slice(0,32).map(async({source})=>{
+    const controller=new AbortController();
+    try{const events=await bounded(()=>source.history({agentId:scope.agentId,signal:controller.signal}),controller.signal);if(!Array.isArray(events))throw Error('Invalid history');return {source,events};}
+    catch{return {source,events:null};}finally{controller.abort();}
+   }));
+   for(const {source,events} of results){
+    if(!events){warnings.push({sourceId:source.id,code:'HISTORY_UNAVAILABLE'});continue;}
+    try{for(const event of events.slice(0,100)){const row=normalize(source,scope.agentId,event),size=Buffer.byteLength(JSON.stringify(row));if(rows.length>=500||bytes+size>2*1024*1024){dropped++;continue;}rows.push(row);bytes+=size;}dropped+=Math.max(0,events.length-100);}
+    catch{warnings.push({sourceId:source.id,code:'HISTORY_UNAVAILABLE'});}
+   }
+   for(const {source} of entries.slice(32))warnings.push({sourceId:source.id,code:'HISTORY_SOURCE_LIMIT'});
+   rows.sort((a,b)=>new Date(a.time??a.observedAt)-new Date(b.time??b.observedAt));return {apiVersion:1,agentId:scope.agentId,rows,warnings,dropped};
+  },
+  async diagnosticClearHistory(ctx){
+   const scope=context(ctx,true);parameters(ctx,['sourceId','confirmed']);const source=registry.sources.get(ctx.payload?.sourceId)?.source;
+   if(ctx.payload?.confirmed!==true||typeof source?.clearHistory!=='function')throw Error('Confirm a source supporting history deletion');
+   const controller=new AbortController();try{const result=await bounded(()=>source.clearHistory({agentId:scope.agentId,signal:controller.signal}),controller.signal);return {apiVersion:1,agentId:scope.agentId,sourceId:source.id,cleared:Number.isInteger(result?.cleared)&&result.cleared>=0?result.cleared:0};}finally{controller.abort();}
+  },
   async diagnosticStart(ctx){
    parameters(ctx,['sourceIds']);const scope=owner(ctx);context(ctx,true);prune();if(disposed)throw Error('诊断服务已停止');
    const ids=ctx.payload?.sourceIds??[...registry.sources.keys()];if(!Array.isArray(ids)||!ids.length||ids.length>32||new Set(ids).size!==ids.length||ids.some(id=>!registry.sources.has(id)))throw Error('选择已注册日志来源');

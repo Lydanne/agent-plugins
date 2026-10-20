@@ -54,9 +54,9 @@ Worker 不连接 Main 的内存注册表。agent-worker 在 Main 注册适配器
 
 ## 生命周期与权限
 
-- 打开页面只读取当前 Agent 的仓库历史和来源目录，实时调试默认关闭，不持久化开启状态。
+- 打开页面只读取当前 Agent 的来源历史和来源目录，实时调试默认关闭，不持久化开启状态。
 - 手动开启需要 operator.write，随机会话 ID 绑定宿主 client.connId 与可信 Agent；缺失连接身份时拒绝启动。
-- 公开 session action：projects-diagnosticSources、projects-diagnosticStart、projects-diagnosticRead、projects-diagnosticRenew、projects-diagnosticStop；采用有界游标轮询，不使用宿主私有广播。
+- 公开 session action：projects-diagnosticSources、projects-diagnosticHistory、projects-diagnosticClearHistory、projects-diagnosticStart、projects-diagnosticRead、projects-diagnosticRenew、projects-diagnosticStop；采用有界游标轮询，不使用宿主私有广播。
 - 每秒读取，每 5 秒续期；20 秒无续期则回收，服务端每秒清理到期会话。每连接最多 4 个，每个 Hub 最多 32 个。
 - 关闭开关、离开模块、切换 Agent、失去呈现/权限、标签页隐藏、pagehide 或 signal 中止，会停止本页接收并请求释放；尚未取完的服务端日志分块同时失效。失败时提示等待超时；异步启动迟到后也立即 stop。
 - 多页面会话独立。来源卸载、服务停止、读取失败或超时会关闭会话；重连后须手动开启。
@@ -70,3 +70,13 @@ Worker 不连接 Main 的内存注册表。agent-worker 在 Main 注册适配器
 选型核对于 2026-10-20：[TanStack Virtual](https://github.com/TanStack/virtual) 约 7150 star、近 90 天 59 次提交，10 月 16 日仍发布。Luna Console 已隔离试用，但对应目录最后修改于 2025-05，未作为生产依赖。升级应重新检查组件目录功能提交、发版频率、维护响应、许可证、体积和实测性能，不能仅凭 updated_at 或 star 判断。
 
 测试覆盖默认关闭、连接/Agent 隔离、TTL、注册与释放、中断/迟到响应、缓冲游标、Worker 归属与增量读取及前端生命周期。浏览器预览使用模拟数据。构建与测试通过不等于真实 Gateway/Worker 上线验收；部署须另行执行，并核验宿主确实提供可信连接身份。
+
+## Console 视图与来源能力
+
+“历史记录”和“实时调试”使用管理页统一的二级导航。默认展示历史；进入实时视图仍须手动开启，返回历史即停止采集。来源、级别筛选常驻，搜索默认隐藏；查找、分类、分组、复制、导出和清理在“更多操作”中。Ctrl/Cmd+F 快捷唤起日志查找，可勾选“仅显示匹配”筛选内容；关闭查找会同时清除内容筛选。宽屏在右侧查看结构化详情，窄屏在下方展开。
+
+来源目录公开 `capabilities: {history, live, clearHistory}`。插件可选实现 `history({agentId, signal})` 返回事件数组，以及 `clearHistory({agentId, signal})` 返回 `{cleared}`；清理能力必须同时提供历史读取。Main 注入可信来源与 Agent 并脱敏，不接受 UI 指定文件路径。历史读取每来源最多 100 条、总计最多 500 条 / 2 MiB，每提供方调用限时 5 秒；部分失败返回来源警告，不影响其余来源。实时来源没有历史时明确提示，切换实时视图不会自动开始采集。
+
+复制和导出仅包含当前视图经筛选的原始事件，保留合并前的全部记录。相邻重复事件仅在来源、任务、trace、分类、阶段、正文与结构化内容一致时合并，并可展开。日期分隔与完整时间提示用于区分历史日期。
+
+“清空当前视图”仅清除本页缓存。“清理来源历史”需要 operator.write、来源明确声明支持，以及显式确认；删除范围为当前 Agent 的该来源全部历史，筛选不会缩小删除范围。原有 repositoryLogs / clearRepositoryLogs 接口保留兼容，Console 通过通用来源协议读取和清理。

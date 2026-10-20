@@ -5,7 +5,7 @@ const worker={taskTotal:0,conversationTotal:0,counts:{running:0,queued:0,awaitin
 const source={state:'available',skills:[],subagents:[]};
 const catalog={root:'/fixture/main',projects:[],registrationCommitted:true,agentSkills:source,agentSubagents:source,scheduledTasks:[]};
 function fixtureHost(){
- const calls=[],ctx=uiContext(async(method,params)=>{calls.push(params);return {ok:true,result:params.actionId==='projects-maintenance'?{apiVersion:1,providers:[]}:params.actionId==='inspect-agentTasks'?worker:params.actionId==='projects-list'?catalog:params.actionId==='projects-entityTypes'?{types:[],total:0}:params.actionId==='projects-entities'?{entities:[],total:0,nextOffset:null}:params.actionId==='projects-repositoryLogs'?{agentId:params.agentId,records:[]}:{people:[],total:0,nextOffset:null}};});
+ const calls=[],ctx=uiContext(async(method,params)=>{calls.push(params);return {ok:true,result:params.actionId==='projects-maintenance'?{apiVersion:1,providers:[]}:params.actionId==='inspect-agentTasks'?worker:params.actionId==='projects-list'?catalog:params.actionId==='projects-entityTypes'?{types:[],total:0}:params.actionId==='projects-entities'?{entities:[],total:0,nextOffset:null}:params.actionId==='projects-diagnosticSources'?{sources:[]}:params.actionId==='projects-diagnosticHistory'?{agentId:params.agentId,rows:[]}:params.actionId==='projects-repositoryLogs'?{agentId:params.agentId,records:[]}:{people:[],total:0,nextOffset:null}};});
  ctx.host.agents.rows=[{id:'main',name:'Main'},{id:'other',name:'Other'}];ctx.host.agents.select=id=>{ctx.host.agents.selectedId=id;ctx.notify();};ctx.host.sessions.rows=[];return {ctx,calls};
 }
 test('AgentRepo is a global management center and personnel is only one of its modules',async t=>{
@@ -17,8 +17,8 @@ test('AgentRepo is a global management center and personnel is only one of its m
  assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-entities');
  click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
  click(f.container,'定时任务');await settle();assert.match(f.container.textContent,/暂无定时任务/);assert.equal(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'),null);
- const before=calls.length;click(f.container,'日志');await settle();assert.match(f.container.textContent,/暂无日志记录/);assert.equal(f.container.querySelector('dialog'),null);assert.equal(calls[before].actionId,'projects-repositoryLogs');assert.equal(calls.length,before+2);assert.equal(calls.at(-1).actionId,'projects-diagnosticSources');
- const refresh=[...f.container.querySelector('.ar-log-inline').querySelectorAll('button')].find(button=>button.textContent==='刷新日志');assert.ok(refresh);refresh.click();await settle();assert.equal(calls.at(-1).actionId,'projects-diagnosticSources');
+ const before=calls.length;click(f.container,'日志');await settle();assert.match(f.container.textContent,/暂无历史记录/);assert.equal(f.container.querySelector('dialog'),null);assert.equal(calls[before].actionId,'projects-diagnosticHistory');assert.equal(calls.length,before+2);assert.equal(calls.at(-1).actionId,'projects-diagnosticSources');
+ const refresh=[...f.container.querySelector('.ar-log-inline').querySelectorAll('button')].find(button=>button.textContent==='刷新日志');assert.ok(refresh);refresh.click();await settle();assert.equal(calls.at(-1).actionId,'projects-diagnosticHistory');
  assert.equal(calls.some(call=>call.actionId==='projects-clearRepositoryLogs'),false);
 });
 test('management center retains its module across Agent switches and discards hidden module responses',async t=>{

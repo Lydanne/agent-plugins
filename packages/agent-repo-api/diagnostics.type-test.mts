@@ -8,3 +8,7 @@ source.log({agentId:'main'},{message:'Invalid',sourceId:'forged'});
 // @ts-expect-error Diagnostic API versions are explicit.
 registerDiagnosticSource({apiVersion:2,id:'x',pluginId:'x',label:'Invalid'},Symbol());
 source.dispose();
+
+registerDiagnosticSource({apiVersion:1,id:'example.history',pluginId:'example',label:'History',history:async({agentId,signal})=>{signal.throwIfAborted();return [{message:agentId}];},clearHistory:async({signal})=>{signal.throwIfAborted();return {cleared:1};}},Symbol()).dispose();
+// @ts-expect-error History providers must return diagnostic events.
+registerDiagnosticSource({apiVersion:1,id:'bad.history',pluginId:'example',label:'Bad',history:async()=>({records:[]})},Symbol());

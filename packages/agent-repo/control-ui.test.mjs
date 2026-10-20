@@ -181,29 +181,30 @@ test('record navigation opens logs at the top and restores the task record list 
  click(f.container,'任务设置');assert.equal(f.container.querySelector('.ar-sync-dialog-body').scrollTop,0);click(f.container,'执行记录');assert.equal(f.container.querySelector('.ar-sync-dialog-body').scrollTop,120);
 });
 
+const logSources={sources:[{id:'test.history',label:'测试来源',capabilities:{live:true,history:true,clearHistory:true}}]};
 test('repository log dialog copies and downloads redacted logs and closes on Agent changes',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),requests=[],copied=[],downloads=[];let late=null;
  Object.defineProperty(f.window.navigator,'clipboard',{value:{writeText:async text=>copied.push(text)},configurable:true});
  f.window.URL.createObjectURL=()=> 'blob:fixture';f.window.URL.revokeObjectURL=url=>downloads.push(url);f.window.HTMLAnchorElement.prototype.click=function(){downloads.push(this.download);};
- const ctx=uiContext(async(_method,p)=>{requests.push(p);return {ok:true,result:p.actionId==='projects-list'?catalog(p.agentId):late?await late.promise:{agentId:p.agentId,records:[{status:'skipped',reason:'local changes'}],limit:100}};});
+ const ctx=uiContext(async(_method,p)=>{requests.push(p);return {ok:true,result:p.actionId==='projects-list'?catalog(p.agentId):p.actionId==='projects-diagnosticSources'?logSources:late?await late.promise:{agentId:p.agentId,rows:[{eventId:'one',sourceId:'test.history',time:Date.now(),message:'local changes'}]}};});
  const view=f.track(f.ui.mountProjects(f.container,ctx));await settle();click(f.container,'日志');await settle();
- const dialog=f.container.querySelector('dialog');assert(dialog.open);assert.match(dialog.textContent,/复制日志/);assert.match(dialog.querySelector('textarea').value,/local changes/);
- click(dialog,'复制日志');await settle();assert.equal(copied.length,1);assert.match(dialog.textContent,/日志已复制/);
- click(dialog,'下载日志');await new Promise(resolve=>f.window.setTimeout(resolve,10));assert.deepEqual(downloads,['agent-logs.json','blob:fixture']);
+ const dialog=f.container.querySelector('dialog');assert(dialog.open);assert.match(dialog.textContent,/复制筛选结果/);dialog.querySelector('.ar-log-raw').open=true;dialog.querySelector('.ar-log-raw').dispatchEvent(new f.window.Event('toggle'));assert.match(dialog.querySelector('textarea').value,/local changes/);
+ click(dialog,'复制筛选结果');await settle();assert.equal(copied.length,1);assert.match(dialog.textContent,/已复制当前筛选结果/);
+ click(dialog,'导出筛选结果');await new Promise(resolve=>f.window.setTimeout(resolve,10));assert.deepEqual(downloads,['agent-logs.json','blob:fixture']);
  click(dialog,'关闭');assert.equal(f.container.querySelector('dialog'),null);
  late=deferred();click(f.container,'日志');ctx.host.agents.selectedId='other';ctx.notify();await settle();assert.equal(f.container.querySelector('dialog'),null);
- late.resolve({agentId:'main',records:[{reason:'old Agent'}]});await settle();assert(!f.container.textContent.includes('old Agent'));
+ late.resolve({agentId:'main',rows:[{message:'old Agent'}]});await settle();assert(!f.container.textContent.includes('old Agent'));
  late=null;click(f.container,'日志');await settle();ctx.host.connection.canRead=false;ctx.notify();assert.equal(f.container.querySelector('dialog'),null);assert(!f.container.textContent.includes('日志'));view.dispose();
- assert(requests.some(p=>p.actionId==='projects-repositoryLogs'));
+ assert(requests.some(p=>p.actionId==='projects-diagnosticHistory'));
 });
 
 test('repository logs remain open across panel refresh and show readable records before raw data',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),late=deferred();let pending=true;
- const ctx=uiContext(async(_method,p)=>({ok:true,result:p.actionId==='projects-list'?catalog('main'):pending?await late.promise:{agentId:'main',records:[],limit:100}}));
+ const ctx=uiContext(async(_method,p)=>({ok:true,result:p.actionId==='projects-list'?catalog('main'):p.actionId==='projects-diagnosticSources'?logSources:pending?await late.promise:{agentId:'main',rows:[]}}));
  const view=f.track(f.ui.mountProjects(f.container,ctx));await settle();
  const actions=f.container.querySelector('.ar-panel-actions');assert.deepEqual([...actions.querySelectorAll('button')].map(b=>b.textContent),['刷新扫描','日志','人员资料']);
  click(f.container,'日志');view.update({...ctx});await settle();assert(f.container.querySelector('dialog').open);
- late.resolve({agentId:'main',records:[{time:'2026-10-14T08:00:00Z',repository:'projects/demo',stage:'仓库同步',status:'skipped',reason:'local code changes',effect:'using local files'}],limit:100});await settle();
+ late.resolve({agentId:'main',rows:[{eventId:'one',sourceId:'test.history',time:'2026-10-14T08:00:00Z',message:'local code changes · using local files'}]});await settle();
  const dialog=f.container.querySelector('dialog');assert.equal(dialog.querySelectorAll('.ar-log-record').length,1);assert.match(dialog.textContent,/local code changes/);assert.match(dialog.textContent,/using local files/);assert.equal(dialog.querySelector('.ar-log-raw').open,false);
  view.update({...ctx});await settle();assert.equal(f.container.querySelector('dialog'),dialog);assert(dialog.open);
  click(dialog,'关闭');pending=false;click(f.container,'日志');await settle();assert(f.container.querySelector('.ar-log-empty'));assert.equal(f.container.querySelectorAll('.ar-log-record').length,0);
@@ -211,15 +212,15 @@ test('repository logs remain open across panel refresh and show readable records
 
 test('log clearing confirms, cancels, handles failure and refreshes records and export data',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),requests=[];let fail=true,pending=null;
- const rows={agentId:'main',records:[{status:'skipped',reason:'old entry'}],limit:100};
- const ctx=uiContext(async(_method,p)=>{requests.push(p);if(p.actionId==='projects-list')return {ok:true,result:catalog('main')};if(p.actionId==='projects-clearRepositoryLogs'){if(fail)return {ok:false,error:'clear failed'};if(pending)await pending.promise;return {ok:true,result:{agentId:'main',records:[],limit:100,cleared:1}};}return {ok:true,result:rows};});ctx.host.connection.canWrite=true;
+ const rows={agentId:'main',rows:[{eventId:'one',sourceId:'test.history',message:'old entry'}]};
+ const ctx=uiContext(async(_method,p)=>{requests.push(p);if(p.actionId==='projects-list')return {ok:true,result:catalog('main')};if(p.actionId==='projects-diagnosticSources')return {ok:true,result:logSources};if(p.actionId==='projects-diagnosticClearHistory'){if(fail)return {ok:false,error:'clear failed'};if(pending)await pending.promise;return {ok:true,result:{agentId:'main',rows:[],cleared:1}};}return {ok:true,result:rows};});ctx.host.connection.canWrite=true;
  const view=f.track(f.ui.mountProjects(f.container,ctx));await settle();click(f.container,'日志');await settle();const dialog=f.container.querySelector('dialog');
- click(dialog,'清空仓库记录');assert.match(dialog.textContent,/无法恢复/);click(dialog,'取消');assert.equal(requests.filter(r=>r.actionId==='projects-clearRepositoryLogs').length,0);
- click(dialog,'清空仓库记录');click(dialog,'确认清空');await settle();assert.match(dialog.textContent,/clear failed/);assert.equal(dialog.querySelectorAll('.ar-log-record').length,1);
- fail=false;pending=deferred();click(dialog,'确认清空');assert.equal([...dialog.querySelectorAll('button')].find(b=>b.textContent==='确认清空').disabled,true);pending.resolve();await settle();
- assert.equal(dialog.querySelectorAll('.ar-log-record').length,0);assert(dialog.querySelector('.ar-log-empty'));assert.equal(JSON.parse(dialog.querySelector('textarea').value).records.length,0);assert.match(dialog.textContent,/已清空 1 条/);assert.deepEqual(requests.find(r=>r.actionId==='projects-clearRepositoryLogs').payload,{confirmed:true});
- assert.equal([...dialog.querySelectorAll('button')].find(b=>b.textContent==='清空仓库记录').disabled,true);
- click(dialog,'关闭');ctx.host.connection.canWrite=false;ctx.notify();await settle();click(f.container,'日志');await settle();assert.equal([...f.container.querySelector('dialog').querySelectorAll('button')].find(b=>b.textContent==='清空仓库记录').disabled,true);view.dispose();
+ click(dialog,'清理来源历史');assert.match(dialog.textContent,/无法恢复/);click(dialog,'取消');assert.equal(requests.filter(r=>r.actionId==='projects-diagnosticClearHistory').length,0);
+ click(dialog,'清理来源历史');click(dialog,'确认清理');await settle();assert.match(dialog.textContent,/clear failed/);assert.equal(dialog.querySelectorAll('.ar-log-record').length,1);
+ fail=false;pending=deferred();click(dialog,'确认清理');assert.equal([...dialog.querySelectorAll('button')].find(b=>b.textContent==='确认清理').disabled,true);pending.resolve();await settle();
+ assert.equal(dialog.querySelectorAll('.ar-log-record').length,0);assert(dialog.querySelector('.ar-log-empty'));assert.match(dialog.textContent,/已清理 1 条/);assert.deepEqual(requests.find(r=>r.actionId==='projects-diagnosticClearHistory').payload,{sourceId:'test.history',confirmed:true});
+ assert.equal([...dialog.querySelectorAll('button')].find(b=>b.textContent==='清理来源历史').disabled,true);
+ click(dialog,'关闭');ctx.host.connection.canWrite=false;ctx.notify();await settle();click(f.container,'日志');await settle();assert.equal([...f.container.querySelector('dialog').querySelectorAll('button')].find(b=>b.textContent==='清理来源历史').disabled,true);view.dispose();
 });
 
 test('people sidebar dialog closes on Agent switch and ignores late personnel responses',async t=>{

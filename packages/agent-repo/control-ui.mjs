@@ -109,8 +109,8 @@ export function mountProjects(container,initial){
   dialog.addEventListener('cancel',event=>{event.preventDefault();closeLogDialog();});dialog.addEventListener('close',()=>{if(logDialog===dialog)closeLogDialog();});
   const body=element('div',undefined,'ar-sync-dialog-body');dialog.append(body);container.append(dialog);
   // Capture the original target: cleanup must stop the old Agent's lease after switching.
-  const logInvoke=(action,payload)=>readInspectionResponse(async(name,data)=>current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data}),action,payload).then(result=>{if(['repositoryLogs','clearRepositoryLogs'].includes(action)&&result.agentId!==selected.agentId)throw Error('日志来源与当前 Agent 不一致');return result;});
-  logConsole=mountLogConsole(body,{invoke:logInvoke,safe,signal:current.signal,actionsContainer:inline?header:undefined,canWrite:()=>context.host.connection.canWrite===true});if(!inline){dialog.showModal();close.focus();}
+  const logInvoke=(action,payload)=>readInspectionResponse(async(name,data)=>current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data}),action,payload).then(result=>{if(['repositoryLogs','clearRepositoryLogs','diagnosticHistory','diagnosticClearHistory'].includes(action)&&result.agentId!==selected.agentId)throw Error('日志来源与当前 Agent 不一致');return result;});
+  logConsole=mountLogConsole(body,{invoke:logInvoke,safe,agentId:selected.agentId,signal:current.signal,actionsContainer:inline?header:undefined,canWrite:()=>context.host.connection.canWrite===true});if(!inline){dialog.showModal();close.focus();}
  }
  function closeSyncDialog(restore=true){
   const taskId=syncTaskId,dialog=syncDialog;syncDialog=null;syncTaskId=null;syncRunId=null;syncTab='records';syncRenderedView=null;syncViewScroll.clear();
