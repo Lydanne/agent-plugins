@@ -217,6 +217,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
     text=buildCodexCompletionText(event,recipientContext);
     if (!isCompletionSourceCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
     const ctxPayload=contextPayload();
+    let mainStarted=false;
     await core.channel.inbound.run({channel: "feishu", accountId: p.accountId, raw: event, adapter: {
      ingest: () => ({id: event.eventId, rawText: text, textForAgent: text, textForCommands: "", raw: event}),
      resolveTurn: () => ({cfg: completionCfg, channel: "feishu", accountId: p.accountId,
@@ -225,11 +226,14 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       // the agent can act (or deliverResult starts a visible send), so a drain
       // rejection before admission remains retryable without replaying a turn.
       replyOptions: {abortSignal: signal, disableBlockStreaming: true,
-       onAgentRunStart: () => {if(questionTurn)callbacks.beforeSend();}},
+       onAgentRunStart: () => {if(questionTurn&&!sent){callbacks.beforeSend();mainStarted=true;}},
+       // Keep durable retry ownership here instead of leaving callbacks in a
+       // host followup queue that can outlive this plugin service generation.
+       ...(questionTurn?{turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}}:{})},
       delivery: {deliver, onError: error => {deliveryError ??= error; throw error;}}}),
     }});
     if (deliveryError) throw deliveryError;
-    if(questionTurn&&!sent&&!suppressed&&!signal.aborted){callbacks.onReceipt({kind:"main_context_turn",eventId:event.eventId});sent=true;}
+    if(questionTurn&&mainStarted&&!sent&&!suppressed&&!signal.aborted){callbacks.onReceipt({kind:"main_context_turn",eventId:event.eventId});sent=true;}
    }});
   return {suppressed, ...(interrupted ? {reason:"service_stopped"} : {}), ...(!sent && !suppressed && !interrupted ? {reason: "no_delivery_receipt"} : {})};
  } finally {sourceTaskBridge.recalls.delete(recalled);}

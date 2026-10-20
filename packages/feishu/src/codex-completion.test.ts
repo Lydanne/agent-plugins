@@ -492,6 +492,36 @@ it('a context request marks uncertain execution once Main starts even without vi
  expect(before).toHaveBeenCalledOnce();expect(receipt).not.toHaveBeenCalled();
  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();
 });
+it('host deferral is declined and never acknowledged as an executed Main turn',async()=>{
+ const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'目录？',expiresAt:Date.now()+60000}};
+ const before=vi.fn(),receipt=vi.fn();
+ mocks.run.mockImplementation(async({adapter})=>{
+  const plan=adapter.resolveTurn();
+  expect(plan.cfg.messages.queue.mode).toBe('followup');
+  expect(plan.replyOptions.turnAdoptionLifecycle.onDeferred()).toBe(false);
+ });
+ expect(await deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt})).toEqual({suppressed:false,reason:'no_delivery_receipt'});
+ expect(before).not.toHaveBeenCalled();expect(receipt).not.toHaveBeenCalled();
+ mocks.run.mockImplementation(async({adapter})=>{adapter.resolveTurn().replyOptions.onAgentRunStart('retry-run');});
+ await deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt});
+ expect(receipt).toHaveBeenCalledOnce();expect(before).toHaveBeenCalledOnce();
+ expect(mocks.run.mock.calls.map(([inbound])=>inbound.raw.eventId)).toEqual([event.eventId,event.eventId]);
+ expect(mocks.send).not.toHaveBeenCalled();
+});
+it('shutdown after Main starts does not synthesize a receipt from a normal aborted return',async()=>{
+ const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'目录？',expiresAt:Date.now()+60000}};
+ const controller=new AbortController(),before=vi.fn(),receipt=vi.fn();
+ mocks.run.mockImplementation(async({adapter})=>{adapter.resolveTurn().replyOptions.onAgentRunStart('started-run');controller.abort();});
+ expect(await deliverCodexCompletion(sample,{signal:controller.signal,beforeSend:before,onReceipt:receipt})).toEqual({suppressed:false,reason:'no_delivery_receipt'});
+ expect(before).toHaveBeenCalledOnce();expect(receipt).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();
+});
+it('late start after a visible question receipt does not emit another send marker',async()=>{
+ const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'目录？',expiresAt:Date.now()+60000}};
+ let start!:()=>void;const before=vi.fn(),receipt=vi.fn();
+ mocks.run.mockImplementation(async({adapter})=>{const plan=adapter.resolveTurn();start=()=>plan.replyOptions.onAgentRunStart('late-run');await plan.delivery.deliver({text:'请补充目录'},{kind:'final'});});
+ await deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt});start();
+ expect(before).toHaveBeenCalledOnce();expect(receipt).toHaveBeenCalledOnce();expect(mocks.send).toHaveBeenCalledOnce();
+});
 it('expired and recalled context questions never reach Main',async()=>{
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'日期？',reason:'缺失',progress:'已检查',expiresAt:0}};
  expect(await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:vi.fn()})).toMatchObject({suppressed:true});expect(mocks.run).not.toHaveBeenCalled();

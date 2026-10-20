@@ -98,3 +98,36 @@ test('retains bounded runtime diagnostics without logging arbitrary provider err
   assert.equal(logs.join().includes('private'),false);assert.equal(logs.join().includes('secret'),false);
  }
 }));
+
+test('normal return without receipt after Main/send starts stays uncertain across restart',()=>fixture(async root=>{
+ const j=job();j.notification.eventKey='same-event';writeJson(join(root,j.jobId+'.json'),j);
+ let calls=0;const service=createCompletionService({root,pollMs:100000,bridge:{deliver:async(_,c)=>{calls++;c.beforeSend();return {reason:'no_delivery_receipt'};}}});
+ service.start();await flush();await service.stop();
+ assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'uncertain');
+ service.start();await flush();await service.stop();assert.equal(calls,1);
+}));
+test('late start and receipts cannot overwrite a confirmed delivery',()=>fixture(async root=>{
+ const j=job();j.notification.eventKey='same-event';writeJson(join(root,j.jobId+'.json'),j);
+ let callbacks;const service=createCompletionService({root,pollMs:100000,bridge:{deliver:async(_,c)=>{callbacks=c;c.onReceipt({messageId:'first'});return {};}}});
+ service.start();await flush();const confirmed=readJson(join(root,j.jobId+'.json')).notification;
+ callbacks.beforeSend();callbacks.onReceipt({messageId:'late'});service.tick();await service.stop();
+ assert.deepEqual(readJson(join(root,j.jobId+'.json')).notification,confirmed);
+}));
+test('old generation callbacks retain their aborted signal after restarting the same service',()=>fixture(async root=>{
+ const j=job();j.notification.eventKey='same-event';writeJson(join(root,j.jobId+'.json'),j);
+ let old,calls=0;const service=createCompletionService({root,pollMs:100000,bridge:{deliver:async(_,c)=>{if(++calls===1){old=c;return {};}c.beforeSend();c.onReceipt({messageId:'new'});return {};}}});
+ service.start();await flush();await service.stop();
+ const saved=readJson(join(root,j.jobId+'.json'));saved.notification.retryAt=0;writeJson(join(root,j.jobId+'.json'),saved);
+ service.start();await flush();const confirmed=readJson(join(root,j.jobId+'.json')).notification;
+ assert.throws(()=>old.beforeSend(),{name:'AbortError'});old.onReceipt({messageId:'obsolete'});
+ assert.deepEqual(readJson(join(root,j.jobId+'.json')).notification,confirmed);await service.stop();
+ assert.equal(calls,2);
+}));
+test('shutdown before Main/send starts keeps the same notification retryable',()=>fixture(async root=>{
+ const j=job();j.notification.eventKey='same-event';writeJson(join(root,j.jobId+'.json'),j);
+ const seen=[];const service=createCompletionService({root,pollMs:100000,bridge:{deliver:async(e,c)=>{seen.push(e);if(seen.length===1){await new Promise(r=>c.signal.addEventListener('abort',r,{once:true}));return {reason:'service_stopped'};}c.beforeSend();c.onReceipt({messageId:'accepted'});return {};}}});
+ service.start();await flush();await service.stop();const saved=readJson(join(root,j.jobId+'.json'));
+ assert.equal(saved.notification.state,'pending');saved.notification.retryAt=0;writeJson(join(root,j.jobId+'.json'),saved);
+ service.start();await flush();await service.stop();assert.deepEqual(seen[1],seen[0]);
+ assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'delivered');
+}));

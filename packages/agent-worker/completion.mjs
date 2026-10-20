@@ -64,20 +64,23 @@ export function createCompletionService({root, bridge = completionBridge, logger
  const fileOf = id => join(root, id + '.json');
  function patch(id, change, eventKey) {
   const file = fileOf(id), job = readJson(file);
-  if(job.notification?.eventKey!==eventKey)return;
+  if(!job.notification || job.notification.eventKey!==eventKey || ['delivered','suppressed'].includes(job.notification.state))return;
   writeJson(file, {...job, notification: {...job.notification, ...change}});
  }
  async function deliver(job) {
+  const signal=controller.signal;
   const patchEvent=change=>patch(job.jobId,change,job.notification.eventKey);
   try {
    patchEvent({state: 'processing', attempts: (job.notification.attempts ?? 0) + 1});
    const outcome = await bridge.deliver(completionEvent(job,readCompletionRequest(root,job)), {
-    signal:controller.signal,
-    beforeSend: () => {controller.signal.throwIfAborted();if(readJson(fileOf(job.jobId)).notification?.eventKey!==job.notification.eventKey)throw Object.assign(Error('Delivery superseded'),{name:'AbortError'}); patchEvent({state: 'sending', sendingAt: Date.now()});},
+    signal,
+    beforeSend: () => {signal.throwIfAborted();if(readJson(fileOf(job.jobId)).notification?.eventKey!==job.notification.eventKey)throw Object.assign(Error('Delivery superseded'),{name:'AbortError'}); patchEvent({state: 'sending', sendingAt: Date.now()});},
     onReceipt: receipt => patchEvent({state: 'delivered', receipt, deliveredAt: Date.now()}),
    });
-   if (readJson(fileOf(job.jobId)).notification.state !== 'delivered') {
-    patchEvent({state: outcome?.suppressed ? 'suppressed' : 'pending',
+   const current=readJson(fileOf(job.jobId));
+   if (current.notification.state !== 'delivered') {
+    // A normal return without a receipt is not proof that Main/send did nothing.
+    patchEvent({state: outcome?.suppressed ? 'suppressed' : ['sending','uncertain'].includes(current.notification.state) ? 'uncertain' : 'pending',
      reason: outcome?.reason, retryAt: Date.now() + 10000});
    }
   } catch (error) {
@@ -88,7 +91,7 @@ export function createCompletionService({root, bridge = completionBridge, logger
    const current = readJson(fileOf(job.jobId));
    // Network send may have succeeded before receipt persistence failed. Never blindly resend.
    if (current.notification.state !== 'delivered') patchEvent({
-    state: current.notification.state === 'sending' ? 'uncertain' : 'pending', lastErrorCode: errorCode, retryAt: Date.now() + 10000});
+    state: ['sending','uncertain'].includes(current.notification.state) ? 'uncertain' : 'pending', lastErrorCode: errorCode, retryAt: Date.now() + 10000});
    logger.warn?.('Codex completion delivery deferred: ' + job.jobId + ' (' + errorCode + ')');
   } finally {inflight.delete(job.jobId);}
  }
