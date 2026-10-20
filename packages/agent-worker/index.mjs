@@ -2,7 +2,8 @@ import {bindingKey,compatibleLegacyBinding,projectFields,validateHistoryFilter,m
 import {getAgentRepoService,AgentRepoError} from './dist/agent-repo-api.mjs';
 import {scopeRuntime,readScopedSkillVersion} from './repository-scope.mjs';
 import {registerQuestionBridge,contextPresentation,waitingPresentationInstruction} from './question-bridge.mjs';
-import {contextRequestInstructions,pluginCapabilityInstructions,parseContextRequest} from './context-request.mjs';
+import {parseContextRequest} from './context-request.mjs';
+import {prepareMainCapabilitySkill} from './main-capability-skill.mjs';
 import {workerEnvironment} from './plugin-environment.mjs';
 import {createSessionInspector,registerInspector,inspectionEvent} from './session-inspector.mjs';
 import {resolveConfiguration,defaultConfiguration,resolveExecution,executionFingerprint,cliArguments,workerReportInstructions,delegationReportInstructions} from './configuration.mjs';
@@ -32,7 +33,7 @@ export const executionPolicyVersion = 7;
 export {executorInstructions,businessDataPolicy} from './configuration.mjs';
 export function buildTaskPrompt(params,context={},config=configuration) {
  if(typeof params.constraints!=='string'||!params.constraints.trim()||params.constraints.length>4000) throw Error('For run, provide explicit execution constraints (1–4000 characters), including allowed writes or read-only scope');
- return JSON.stringify({kind:'business_task',...(context.people?{people:context.people,peoplePolicy:'people 是渠道绑定的本次任务人员快照。记录人为 requester；原生提及仅在本次请求明确指派时作为 Assignees。账号 email_prefix 为候选，须核验真实账号及仓库指派权限；不能用登录账号、引用作者或后续发言者替代记录人。'}:{}),reportInstructions:workerReportInstructions,...(context.reportDirectory?{reportDirectory:context.reportDirectory,reportPolicy:'本 job 新报告和临时证据仅写入 reportDirectory（相对工作目录）；按需创建子目录，返回报告绝对路径，不覆盖其他 job 的文件。'}:{}),contextRequestInstructions,pluginCapabilityInstructions,...(params.mainReplies?{mainReplies:params.mainReplies}:{}),task:params.task,constraints:params.constraints,context:params.context,memory:normalizeMemoryContext(params.memory),memoryPolicy,dataPolicy:config.businessDataPolicy,experienceInstructions,...(config.projectContext?{project:config.projectContext}:{})});
+ return JSON.stringify({kind:'business_task',...(context.people?{people:context.people,peoplePolicy:'people 是渠道绑定的本次任务人员快照。记录人为 requester；原生提及仅在本次请求明确指派时作为 Assignees。账号 email_prefix 为候选，须核验真实账号及仓库指派权限；不能用登录账号、引用作者或后续发言者替代记录人。'}:{}),reportInstructions:workerReportInstructions,...(context.reportDirectory?{reportDirectory:context.reportDirectory,reportPolicy:'本 job 新报告和临时证据仅写入 reportDirectory（相对工作目录）；按需创建子目录，返回报告绝对路径，不覆盖其他 job 的文件。'}:{}),...(params.mainReplies?{mainReplies:params.mainReplies}:{}),task:params.task,constraints:params.constraints,context:params.context,memory:normalizeMemoryContext(params.memory),memoryPolicy,dataPolicy:config.businessDataPolicy,experienceInstructions,...(config.projectContext?{project:config.projectContext}:{})});
 }
 export function selectExecutionSession(entry) {
  return entry?.executionPolicyVersion===executionPolicyVersion ? entry.sessionId : undefined;
@@ -95,9 +96,10 @@ export async function executeQuery(params,context={},runtime=configuration){
   skillsSnapshot=config.skillsEnabled?(resumeId?entry?.skillsSnapshot:undefined):config.scopedSkillSnapshot;
   threadId=resumeId;
   context.signal?.throwIfAborted();
+  const mainCapabilitySkill=await prepareMainCapabilitySkill(state);
   const deadline=Date.now()+config.timeoutMs;
   const runTurn=async(prompt,{refresh=false}={})=>new Promise((resolve,reject)=>{
-  const args=cliArguments(config,{refresh,threadId});
+  const args=cliArguments(config,{refresh,threadId,mainCapabilitySkill});
   const child=spawn(cli,args,{cwd,detached:true,stdio:['pipe','pipe','pipe'],env:{...workerEnvironment(),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})}});
   const decoder=new StringDecoder('utf8');
   let out='',size=0,failed; const messages=[];

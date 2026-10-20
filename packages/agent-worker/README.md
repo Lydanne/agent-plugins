@@ -12,6 +12,8 @@
 
 ## Main 如何提交任务
 
+Main 能力协作协议不再随每次业务任务注入。宿主在私有状态目录生成按内容哈希保存的 `worker-main-collaboration/SKILL.md`，会话 developer instructions 仅保留简短的触发条件和绝对路径；Worker 需要 Main 补充信息、发现或调用插件能力时按需读取，独立 CLI 任务无需加载。复用会话沿用同版本路径，协议变化使用新路径；完整工具目录由 Main 按任务需要查询并返回，不全量灌入 Worker。索引入口仍占用少量会话上下文，不代表实际读取了正文。
+
 Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → awaiting_main → Main 调用 → reply → Worker 恢复`，包括通过 `feishu_cli`、`feishu_cli_auth` 等插件入口读取技能、执行业务或认证。Worker 可以在原任务授权及自身已有权限内直接使用 Feishu CLI、读取可访问的技能和使用独立登录态；安装、更新及认证遵守原 task/constraints，不因使用 CLI 强制转交 Main。宿主启动 Worker 与执行 CLI 两个子进程边界保留独立的 `LARKSUITE_CLI_*` 配置，仍移除宿主飞书应用凭证及 Gateway token/password；插件内部凭证不下发。这不是文件系统或操作系统沙箱，运行用户仍须管理本地文件访问权限。
 
 参数示例用于模型工具调用。复用已明确的同一问题 topic；尚未找到时用 list 的具体关键词发现一次，不例行加载所有历史。以下示例在无记忆工具的会话中使用 unavailable，实际部署须如实传检索结果。
