@@ -34,7 +34,9 @@ describe('managed CLI lifecycle', () => {
     const current = await f.manager.snapshot();
     expect(current.version).toBe('1.0.96');
     const stub = await readFile(join(f.manager.skillDirectory(current), 'lark-doc', 'SKILL.md'), 'utf8');
-    expect(stub).toContain('action=read_skill'); expect(stub).toContain('Worker'); expect(stub).not.toContain('upstream-private-body');
+    expect(stub).toContain('action=read_skill'); expect(stub).toContain('自身已有权限内直接使用 CLI');
+    expect(stub).toContain('调用 OpenClaw 插件入口时'); expect(stub).not.toContain('Worker 不直接运行 CLI');
+    expect(stub).not.toContain('upstream-private-body');
     expect(f.run.mock.calls.find(([, args]) => args[0] === 'install')?.[1]).toContain('--ignore-scripts');
     expect(f.run.mock.calls.some(([, args]) => args[0]?.endsWith('scripts/install.js'))).toBe(true);
     const count = f.run.mock.calls.length; await f.manager.autoUpdate(); expect(f.run).toHaveBeenCalledTimes(count);

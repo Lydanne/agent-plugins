@@ -44,7 +44,7 @@ Main 在可信飞书会话获取当前技能目录，并通过 `feishu_cli` 列�
 
 个人资源由管理员显式开启 `userAuth`，并由每位请求人通过 `feishu_cli_auth` 按 scope 授权。插件使用与 CLI 相同的公开 OAuth device flow，单次检查有截止时间；先展示链接与二维码，后续再完成授权。完成及刷新时核对真实 user_info.open_id，拒绝他人扫码；本地状态按账号、App ID、品牌和请求人隔离。授权文件目录 0700、文件 0600，包含运行时 token，须按私有凭证管理，不能提交或分享。只支持 Bearer token；服务端要求 DPoP 时明确失败，不降级绕过要求。退出只删除本地状态，不撤销服务端授权。
 
-Worker 不运行飞书 CLI、不安装技能、不持有凭证，也不直接调用宿主插件。需要能力或技能内容时沿用原任务 `request → awaiting_main → Main 调用 → reply → Worker 恢复`；授权、权限及调用结果由 Main 处理，不把认证状态发送给 Worker。此限制属于执行协议，不能把提示规则描述为操作系统沙箱隔离。
+Worker 可在原任务授权及自身已有权限内直接使用 Feishu CLI、读取可访问的技能和使用独立登录态。调用 OpenClaw 插件能力（包括 `feishu_cli` 和 `feishu_cli_auth`）时，沿用原任务 `request → awaiting_main → Main 调用 → reply → Worker 恢复`；插件内部认证状态不发送给 Worker。此边界属于执行协议，不能把提示规则描述为操作系统沙箱隔离。
 
 ### 消息上下文与字段扩展
 

@@ -32,8 +32,8 @@ export function cliSkillStub(skill: CliSkill, version: string): string {
     `# ${skill.name}\n\n来源：@larksuite/cli ${version}。此文件仅为自动生成的索引。\n\n` +
     `Main 使用 feishu_cli action=read_skill、skill=${skill.name} 读取当前版本正文，` +
     `参考文件使用 path 参数；执行业务使用 feishu_cli action=execute。\n` +
-    `Worker 不直接运行 CLI、不读取认证状态；通过原任务 request 请求 Main 读取技能或调用能力，Main reply 返回结果。\n` +
-    `上游正文中的 CLI 命令由 Main 经 feishu_cli 执行；应用配置和用户授权使用插件入口，` +
+    `Worker 可在原任务授权和自身已有权限内直接使用 CLI；调用 OpenClaw 插件入口时通过原任务 request 请求 Main，Main reply 返回结果，不下发插件内部认证状态。\n` +
+    `Main 使用本插件时，上游正文中的 CLI 命令经 feishu_cli 执行；应用配置和用户授权使用插件入口，` +
     `不执行 config bind/init、profile、auth login 或自行更新，不共享管理员登录态。\n`;
 }
 

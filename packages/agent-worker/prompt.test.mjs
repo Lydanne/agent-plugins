@@ -20,12 +20,15 @@ test('delegates only structured task, constraints and context',()=>{
  assert.ok(!experienceInstructions.guidance.includes('无报告返回'));
  assert.equal(isolated.constraints,params.constraints);
 });
-test('routes Feishu plugin and CLI capabilities through Main using the existing request/reply protocol',()=>{
+test('routes OpenClaw plugin capabilities through Main while allowing independently authorized CLI use using the existing request/reply protocol',()=>{
  const prompt=JSON.parse(buildTaskPrompt(params));
  assert.match(prompt.pluginCapabilityInstructions,/必须请求 Main/);
  assert.match(prompt.pluginCapabilityInstructions,/type=request/);
  assert.match(prompt.pluginCapabilityInstructions,/reply/);
- assert.match(prompt.pluginCapabilityInstructions,/不直接执行 lark-cli/);
+ assert.match(prompt.pluginCapabilityInstructions,/自身已有权限内直接使用 Feishu CLI/);
+ assert.match(prompt.pluginCapabilityInstructions,/feishu_cli、feishu_cli_auth.*仍必须请求 Main/);
+ assert.match(prompt.pluginCapabilityInstructions,/替代历史提示/);
+ assert.doesNotMatch(prompt.pluginCapabilityInstructions,/不直接执行 lark-cli|不自行安装、更新 CLI 或发起 OAuth/);
 });
 test('requires explicit bounded execution restrictions',()=>{
  for(const constraints of [undefined,'','  ','x'.repeat(4001)]) assert.throws(()=>buildTaskPrompt({...params,constraints}));

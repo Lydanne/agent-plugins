@@ -12,7 +12,7 @@
 
 ## Main 如何提交任务
 
-Worker 使用宿主插件能力必须沿用原任务的 `request → awaiting_main → Main 调用 → reply → Worker 恢复`。需要飞书 CLI 技能正文、文档、表格、日历或授权时，由 Main 处理并返回必要结果；Worker 不直接运行飞书 CLI、不自行安装更新或发起 OAuth。宿主启动 Worker 与执行 CLI 两个子进程边界均移除飞书应用凭证、飞书 CLI 登录态/代理配置及 Gateway token 环境变量，不影响独立的 Codex 执行配置。这不是文件系统或操作系统沙箱，运行用户仍须管理本地文件访问权限。
+Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → awaiting_main → Main 调用 → reply → Worker 恢复`，包括通过 `feishu_cli`、`feishu_cli_auth` 等插件入口读取技能、执行业务或认证。Worker 可以在原任务授权及自身已有权限内直接使用 Feishu CLI、读取可访问的技能和使用独立登录态；安装、更新及认证遵守原 task/constraints，不因使用 CLI 强制转交 Main。宿主启动 Worker 与执行 CLI 两个子进程边界保留独立的 `LARKSUITE_CLI_*` 配置，仍移除宿主飞书应用凭证及 Gateway token/password；插件内部凭证不下发。这不是文件系统或操作系统沙箱，运行用户仍须管理本地文件访问权限。
 
 参数示例用于模型工具调用。复用已明确的同一问题 topic；尚未找到时用 list 的具体关键词发现一次，不例行加载所有历史。以下示例在无记忆工具的会话中使用 unavailable，实际部署须如实传检索结果。
 

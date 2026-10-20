@@ -139,7 +139,7 @@ export function registerFeishuCli(api: OpenClawPluginApi) {
       return { appendSystemContext: `Feishu CLI 动态技能索引（版本 ${release.version}）：${JSON.stringify(catalog)}\n` +
         '命中技能时先用 feishu_cli action=read_skill 读取 lark-shared 和目标技能，再按需读取 reference。' +
         '业务命令由 Main 使用 feishu_cli action=execute 调用；不通过 exec/shell 直接运行。' +
-        'Worker 必须通过原任务 request 请求 Main，Main 调用后用 agent_worker reply 返回结果；不向 Worker 传递认证信息。' };
+        'Worker 调用 OpenClaw 插件必须通过原任务 request 请求 Main，Main 调用后用 agent_worker reply 返回结果；Worker 可在原任务授权及自身已有权限内直接使用独立 CLI，不传递插件内部认证信息。' };
     } catch { return { appendSystemContext: 'Feishu CLI 尚未就绪；管理员可执行 openclaw feishu-cli update 初始化，不能声称 CLI 能力已可用。' }; }
   });
 
@@ -148,7 +148,7 @@ export function registerFeishuCli(api: OpenClawPluginApi) {
     if (!isMainContext(context) || !options(initial).enabled) return null;
     return {
       name: 'feishu_cli', label: 'Feishu CLI', resultContentSource: 'network' as const,
-      description: 'Main 专用飞书 CLI：skills 列出动态技能；read_skill 读取正文和参考文档；execute 执行已获授权的业务命令。args 不含 lark-cli、身份或 profile 参数；身份由可信账号与当前用户确定。exitCode=10 时先向用户展示操作并取得明确确认，再使用 confirmed=true 重试相同命令；不得自动确认。Worker 通过 request 请求 Main，不得直接运行 CLI。',
+      description: 'Main 专用飞书 CLI：skills 列出动态技能；read_skill 读取正文和参考文档；execute 执行已获授权的业务命令。args 不含 lark-cli、身份或 profile 参数；身份由可信账号与当前用户确定。exitCode=10 时先向用户展示操作并取得明确确认，再使用 confirmed=true 重试相同命令；不得自动确认。Worker 调用本插件工具时通过 request 请求 Main；直接使用独立 CLI 遵守原任务授权及自身已有权限。',
       parameters: Type.Object({ action: Type.Union([Type.Literal('skills'), Type.Literal('read_skill'), Type.Literal('execute')]),
         skill: Type.Optional(Type.String()), path: Type.Optional(Type.String()),
         args: Type.Optional(Type.Array(Type.String(), { maxItems: 100 })),
