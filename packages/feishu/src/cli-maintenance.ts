@@ -1,7 +1,6 @@
 import {listEnabledFeishuAccounts} from './accounts.js';
 import { join } from 'node:path';
 import { resolveStateDir } from 'openclaw/plugin-sdk/state-paths';
-import { mutateConfigFile } from 'openclaw/plugin-sdk/config-runtime';
 import { registerMaintenanceProvider, maintenanceContext, maintenanceRevision, createMaintenanceOperations,
   MaintenanceError, type MaintenanceContext, type MaintenanceInput, type MaintenanceSnapshot } from '../../agent-repo-api/maintenance.mjs';
 import type { OpenClawPluginApi, OpenClawConfig } from '../runtime-api.js';
@@ -65,7 +64,7 @@ export function registerCliMaintenance(api: OpenClawPluginApi) {
     return operations.start(ctx, input, async () => {
       if (stopped || (await snapshot(ctx)).revision !== input.expectedRevision) throw new MaintenanceError('REVISION_CHANGED', 'CLI 状态已变化');
       if (input.action === 'configure') {
-        await mutateConfigFile({ mutate(draft) {
+        await api.runtime.config.mutateConfigFile({ base: "runtime", afterWrite: { mode: "auto" }, mutate(draft) {
           const channel = draft.channels?.feishu as FeishuConfig | undefined;
           if (maintenanceRevision(resolveCliConfig(channel?.cli)) !== expectedPolicy) throw new MaintenanceError('REVISION_CHANGED', 'CLI 策略已变化');
           if (!draft.channels) draft.channels = {};
