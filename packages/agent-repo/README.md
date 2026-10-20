@@ -77,6 +77,14 @@ AgentRepo 中实体资料库的“人员资源”分类及消息侧边栏的“�
 
 模型输入仅按私聊/群聊展示精简后的单份对话人员资料；完整记录留在每个 Agent 的人员库按需查询，并随可信 SourceTask 固定到 agent_worker 后台任务，后续群消息或资料更正不改变已提交任务的人员快照。用户说“将上面排查的 BUG 记录给 @某人”时，提问人映射为 Issue 正文顶部 recorder，明确指定的被提及人映射为原生 Assignees；原生 Gitea 作者仍由实际认证账号决定，不使用 sudo。资料只提供身份映射，不提供业务写入授权；项目 Issue 技能仍负责查重、账号核验、创建和回读。此次开发不创建真实 Issue，不自动部署、重启或应用 Worker 配置。
 
+
+## Worker 全局协作技能
+
+agent-repo 负责根据当前 Main 的已加载插件和工具目录自动生成 Worker 协作技能。Main 可调用 `agent_repo action=worker_skill` 刷新；Agent Worker 准备委派和 Main 回复原任务时也通过共享 Agent Repo API 刷新。数据来自宿主公开 `runtime.gateway.request` 的 `plugins.list`、`tools.catalog`，宿主缺少该接口时明确失败，不从私有 registry 或插件配置猜测已加载能力。
+
+全局目录取 Agent Worker 配置的 codexHome，默认 `~/.codex/skills`。按可信 agentId 隔离技能名和版本，`agents/openai.yaml` 设置 `allow_implicit_invocation: false`，仅在 Main 显式委派时加载。正文包括协作职责、已加载插件、候选工具名及用途、Main/Worker request/reply 协议；不导出配置或凭证。候选目录位于会话过滤之前，最终权限与参数仍由 Main 核验。
+
+插件/工具目录或协议内容变化会产生新哈希。生成文件按锁串行、原子替换，保留完整版本文件供已排队或复用会话读取。新委派和原任务恢复收到 load/reuse/reload 通知；运行中的 CLI 不主动插入消息。拒绝覆盖同名非托管技能和链接目录；崩溃遗留发布锁需核验后处理。技能加载通知不是正文读取证明。
 ## 快速开始：从模板接入 OpenClaw
 
 角色仓库模板：[Lydanne/agent-repo-template](https://github.com/Lydanne/agent-repo-template)。先用 Use this template 创建独立仓库，修改角色文件和 projects.json，克隆项目到 `projects/<项目ID>`，提交角色/技能改动。详细步骤见 [模板建仓指南](https://github.com/Lydanne/agent-plugins/blob/main/docs/agent-repo-template.md)。模板和业务项目都是独立 Git 仓库；项目目录不作为角色仓库的 Submodule 提交。

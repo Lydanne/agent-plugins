@@ -13,7 +13,7 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check entities.mjs && node --check people-query.mjs && node --check people.mjs && node --check index.mjs && node --check repositories.mjs && node --check configuration.mjs && node --check cli.mjs && node --check preparation.mjs && node --check repository-skills.mjs && node --check scheduled-tasks.mjs && node --check repository-log.mjs && node --check sync-history.mjs && node --check scheduled-sync.mjs && node --check runtime-sync.mjs && node --check workspace-sync.mjs && node --check project-service.mjs && node --check project-inspector.mjs && node --check subagents.mjs && node build-ui.mjs",
+    "build": "node ../../scripts/build-agent-repo-api.mjs && node --check entities.mjs && node --check people-query.mjs && node --check people.mjs && node --check index.mjs && node --check repositories.mjs && node --check configuration.mjs && node --check cli.mjs && node --check preparation.mjs && node --check repository-skills.mjs && node --check scheduled-tasks.mjs && node --check repository-log.mjs && node --check sync-history.mjs && node --check scheduled-sync.mjs && node --check runtime-sync.mjs && node --check workspace-sync.mjs && node --check project-service.mjs && node --check worker-skill.mjs && node --check worker-protocol.mjs && node --check project-inspector.mjs && node --check subagents.mjs && node build-ui.mjs",
     "test": "node --test *.test.mjs"
   },
   "files": [
@@ -29,6 +29,8 @@
     "runtime-sync.mjs",
     "workspace-sync.mjs",
     "project-service.mjs",
+    "worker-skill.mjs",
+    "worker-protocol.mjs",
     "dist/agent-repo-api.mjs",
     "dist/ui-navigation.mjs",
     "project-inspector.mjs",

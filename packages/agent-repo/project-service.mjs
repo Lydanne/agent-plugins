@@ -8,9 +8,9 @@ export async function registryRevision(binding) {
  if(!/^100(?:644|755) blob [a-f0-9]+\tprojects\.json$/.test(entry)||(await git(binding.repo,['status','--porcelain=v1','--untracked-files=all','--','projects.json'])).trim())throw new AgentRepoError('REGISTRY_CHANGED','Project registration must be committed and unchanged');
  return head+':'+entry.split(' ')[2].split('\t')[0];
 }
-export function createProjectService(binding,agentId,getHostConfig,prepareScope) {
+export function createProjectService(binding,agentId,getHostConfig,prepareScope,prepareWorkerSkill) {
  async function read(){const revision=await registryRevision(binding),projects=await readProjects(binding.repo);if(await registryRevision(binding)!==revision)throw new AgentRepoError('REGISTRY_CHANGED','Project registration changed while reading');return {revision,projects};}
- return {apiVersion:1,agentId,root:binding.repo,
+ return {apiVersion:1,agentId,root:binding.repo,...(prepareWorkerSkill?{prepareWorkerSkill:()=>prepareWorkerSkill(agentId)}:{}),
   async listProjects(){const {revision,projects}=await read();const ids=Object.keys(projects);return {apiVersion:1,agentId,root:binding.repo,registryRevision:revision,singleProjectId:ids.length===1?ids[0]:null,projects:Object.values(projects).map(p=>({projectId:p.projectId,name:p.name,repository:p.repository}))};},
   async inspectProject({projectId}){const {revision,projects}=await read();if(!Object.hasOwn(projects,projectId))throw new AgentRepoError('PROJECT_NOT_FOUND','Project is not registered');const result=await inspectProject(projects[projectId]);if(await registryRevision(binding)!==revision)throw new AgentRepoError('REGISTRY_CHANGED','Project registration changed while inspecting');return {...result,registryRevision:revision};},
   async prepareExecutionScope(selector={}){
@@ -36,9 +36,9 @@ export function createProjectService(binding,agentId,getHostConfig,prepareScope)
   },
  };
 }
-export function installProjectServices(config,getHostConfig,prepareScope,owner) {
+export function installProjectServices(config,getHostConfig,prepareScope,owner,prepareWorkerSkill) {
  const disposers=[];
- try{for(const [agentId,binding] of Object.entries(config.agents))disposers.push(registerAgentRepoService(createProjectService(binding,agentId,getHostConfig,prepareScope),{owner}));}
+ try{for(const [agentId,binding] of Object.entries(config.agents))disposers.push(registerAgentRepoService(createProjectService(binding,agentId,getHostConfig,prepareScope,prepareWorkerSkill),{owner}));}
  catch(error){for(const dispose of disposers)dispose();throw error;}
  return ()=>{for(const dispose of disposers)dispose();};
 }

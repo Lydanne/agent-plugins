@@ -12,7 +12,11 @@
 
 ## Main 如何提交任务
 
-Main 能力协作协议不再随每次业务任务注入。宿主在私有状态目录生成按内容哈希保存的 `worker-main-collaboration/SKILL.md`，会话 developer instructions 仅保留简短的触发条件和绝对路径；Worker 需要 Main 补充信息、发现或调用插件能力时按需读取，独立 CLI 任务无需加载。复用会话沿用同版本路径，协议变化使用新路径；完整工具目录由 Main 按任务需要查询并返回，不全量灌入 Worker。索引入口仍占用少量会话上下文，不代表实际读取了正文。
+Main 协作技能由 **agent-repo** 管理，Worker 不生成或安装技能。每次委派前，agent-repo 通过宿主公开的 `plugins.list` 和 `tools.catalog` 读取当前 Main Agent 的已加载插件与候选工具，生成全局 Codex 技能 `<codexHome>/skills/openclaw-main-<AgentID>/SKILL.md`（长 Agent ID 使用带哈希的短名），以及仅显式调用的 `agents/openai.yaml`。目录只包含插件/工具名称、版本、用途和通信协议，不复制配置、凭证或完整上游技能正文。工具目录是会话过滤前的候选清单，不代替实际会话授权。
+
+Main 在 `run.responsibility` 简要说明本轮职责，`task` 提供具体任务；省略 responsibility 时使用通用执行职责。委派的业务输入携带小型 `collaborationSkill`：技能名、路径、版本及 `load/reuse/reload` 指令，并显式调用 `$openclaw-main-<AgentID>`；developer instructions 不再附加能力说明或技能入口。首次使用要求读取，同版本可复用已读正文，插件目录或通信协议变化后明确要求重新读取。原任务 reply 恢复前也刷新目录，Worker 按全局版本指针读取对应的完整版本文件，不修改技能文件。记录的是已投递版本通知，不宣称模型实际读取过正文。版本变化在下一次委派或恢复时生效，不中断正在运行的 CLI。
+
+Main 可用 `agent_repo action=worker_skill` 手动刷新并查看技能描述符。不同 Agent 的技能与目录分别保存；拒绝覆盖同名非 agent-repo 管理的技能或链接目录。无 Agent Repo provider 的兼容旧模式不自动生成该技能。
 
 Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → awaiting_main → Main 调用 → reply → Worker 恢复`，包括通过 `feishu_cli`、`feishu_cli_auth` 等插件入口读取技能、执行业务或认证。Worker 可以在原任务授权及自身已有权限内直接使用 Feishu CLI、读取可访问的技能和使用独立登录态；安装、更新及认证遵守原 task/constraints，不因使用 CLI 强制转交 Main。宿主启动 Worker 与执行 CLI 两个子进程边界保留独立的 `LARKSUITE_CLI_*` 配置，仍移除宿主飞书应用凭证及 Gateway token/password；插件内部凭证不下发。这不是文件系统或操作系统沙箱，运行用户仍须管理本地文件访问权限。
 

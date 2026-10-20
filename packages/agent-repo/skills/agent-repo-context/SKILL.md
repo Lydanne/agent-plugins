@@ -1,6 +1,6 @@
 ---
 name: agent-repo-context
-description: 使用 agent_repo 查询项目与技能范围、人员身份及 Gitea 映射、组织服务资产等实体资料时读取；解释来源、分页、缺失与歧义。不提供业务执行、跨会话转发或实体写入授权。
+description: 使用 agent_repo 查询项目与技能范围、生成 Worker 协作技能、人员身份及 Gitea 映射、组织服务资产等实体资料时读取；解释来源、分页、缺失与歧义。不提供业务执行、跨会话转发或实体写入授权。
 ---
 
 # AgentRepo 资料与项目合同 v2
@@ -36,6 +36,12 @@ people/person 优先返回人工更正后的本地值；无匹配时可由配套
 list/inspect 只读登记和本地状态，不证明远端最新。多项目按本轮意图明确选定，歧义时询问，defaultProject 不作任务回退。skills 返回所选 repository 的有效技能索引；读取适用 SKILL.md 和 instructions 的规范后，agent_worker run 传同一 repository。Worker cwd 是项目根，子仓库后缀只限定技能与规范范围；同名子仓库覆盖项目根、角色边界优先，兄弟仓库不生效。
 
 启用同步时 skills 会执行管理员配置的安全准备；只有明确要求更新代码时才使用 sync，立即同步所选项目、wiki 和登记的直接业务子仓库。失败保留现场，不 reset、stash、初始化、切换分支、提交或推送；核对 synchronization 后才能称已同步。本地修改降级不等于远端更新成功。
+
+## Worker 协作技能
+
+`worker_skill` 根据当前可信 Main 的已加载插件和候选工具生成或刷新全局 Codex 技能，不接受项目、人员或实体参数。只返回技能名、位置和版本；目录不代表当前会话已获工具权限，不包含插件凭证。
+
+委派 Worker 时用 `responsibility` 说明本轮职责、`task` 说明任务，宿主自动附加全局技能的显式加载通知；无需复制协议全文。技能由 agent-repo 发布，Worker 仅按 `collaborationSkill` 指定版本读取，更新时重新读取，不自行修改技能文件。正在运行的 CLI 不即时注入，下一次委派或 reply 恢复时处理版本变化。
 
 ## 字段扩展
 

@@ -76,11 +76,10 @@ export function executionFingerprint(config,{policyVersion}={}) {
  if(JSON.stringify(value)===JSON.stringify(keys.map(k=>[k,baseline[k]])))return undefined;
  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
-export function cliArguments(config,{refresh=false,threadId,mainCapabilitySkill}={}) {
+export function cliArguments(config,{refresh=false,threadId}={}) {
  const policy=refresh?['--sandbox','read-only']:config.approvalMode==='dangerously-bypass-approvals-and-sandbox'
   ?['--dangerously-bypass-approvals-and-sandbox']:['--sandbox',config.approvalMode];
- const instructions=config.executorInstructions.replaceAll('{projectDir}',config.cwd).replaceAll(defaultConfiguration.cwd,config.cwd) +
-  (mainCapabilitySkill?'\n需要 Main 补充信息或发现、调用 OpenClaw 插件能力时，先读取 Main 协作技能 '+JSON.stringify(mainCapabilitySkill)+'；协作规则以该技能为准。独立使用已有权限的 CLI 无需加载。':'');
+ const instructions=config.executorInstructions.replaceAll('{projectDir}',config.cwd).replaceAll(defaultConfiguration.cwd,config.cwd);
  return ['exec','--cd',config.cwd,...policy,'-c','developer_instructions='+JSON.stringify(instructions),
   '-c','model_reasoning_effort='+JSON.stringify(config.reasoningEffort),
   ...(config.speed?['-c','service_tier='+JSON.stringify(config.speed)]:[]),'--model',config.model,

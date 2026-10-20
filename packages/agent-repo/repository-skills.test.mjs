@@ -44,10 +44,12 @@ test('invalid, uninitialized, symlinked and dirty skill scopes fail closed witho
  const path=join(f.roots[2],'.agents/skills/frontend/SKILL.md');await writeFile(path,'Changed');await assert.rejects(repositorySkills(f.binding,{repository:'projects/demo/repositories/frontend'}),/committed/);assert.equal(await readFile(path,'utf8'),'Changed');
 });
 test('public prompt hook uses trusted workspace only; explicit selection never becomes another conversation default',async t=>{
- const f=await fixture(t),hooks={},services=[];
- plugin.register({pluginConfig:{agents:{main:f.binding}},config:{},registerTool:()=>{},on:(name,hook)=>hooks[name]=hook,registerService:service=>services.push(service)});t.after(()=>services.forEach(s=>s.stop()));
+ const f=await fixture(t),hooks={},services=[],codexHome=await mkdtemp(join(f.root,'../codex-home-'));t.after(()=>rm(codexHome,{recursive:true,force:true}));
+ const host={plugins:{entries:{'agent-worker':{config:{codexHome}}}}};
+ const runtime={gateway:{request:async(method,params)=>method==='plugins.list'?{plugins:[{id:'agent-repo',runtime:{state:'active'}}]}:{agentId:params.agentId,groups:[]}}};
+ plugin.register({pluginConfig:{agents:{main:f.binding}},config:host,runtime,registerTool:()=>{},on:(name,hook)=>hooks[name]=hook,registerService:service=>services.push(service)});t.after(()=>services.forEach(s=>s.stop()));
  services[0].stop();services[0].start();
- const restarted=await scopeRuntime({cwd:f.roots[1],skillContextRoot:f.root,executorInstructions:'fixture',delegationInstructions:'fixture'},{},{agentId:'main'});assert.equal(restarted.cwd,f.roots[1]);
+ const restarted=await scopeRuntime({cwd:f.roots[1],skillContextRoot:f.root,executorInstructions:'fixture',delegationInstructions:'fixture'},{},{agentId:'main'});assert.equal(restarted.cwd,f.roots[1]);assert.equal(restarted.mainCapabilitySkill.agentId,'main');assert.ok(restarted.mainCapabilitySkill.path.startsWith(codexHome));
  const frontend=await hooks.before_prompt_build({prompt:'irrelevant path'},{agentId:'main',workspaceDir:f.roots[2]});assert.ok(frontend.appendSystemContext.includes('"repository":"projects/demo/repositories/frontend"'));
  const base=await hooks.before_prompt_build({prompt:'projects/demo/repositories/backend'},{agentId:'main',workspaceDir:f.root});assert.ok(base.appendSystemContext.includes('"repository":"projects/demo"'));assert.ok(!base.appendSystemContext.includes('"name":"backend"'));
  assert.equal(await hooks.before_prompt_build({},{agentId:'other',workspaceDir:f.root}),undefined);

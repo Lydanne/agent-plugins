@@ -16,9 +16,10 @@ export async function scopeRuntime(config,params,provenance,hostConfig={}) {
  const context=provenance;
  if(config.projectRouting==='legacy'){if(['projectId','repository','expectedRegistryRevision'].some(key=>params[key]!==undefined))throw new AgentRepoError('PROJECT_SELECTOR_INVALID','Legacy mode does not accept project selectors');return config;}
  const service=context?.agentId&&config.projectRouting!=='legacy'?getAgentRepoService(context,{required:false}):undefined;
- let result;
+ let result,mainCapabilitySkill;
  if(service) {
   result=await service.prepareExecutionScope({projectId:params.projectId,repository:params.repository,expectedRegistryRevision:params.expectedRegistryRevision});
+  if(service.prepareWorkerSkill)mainCapabilitySkill=await service.prepareWorkerSkill();
  } else {
   const bound=hostConfig.plugins?.entries?.['agent-repo']?.enabled!==false&&hostConfig.plugins?.entries?.['agent-repo']?.config?.agents?.[context?.agentId];
   if(config.projectRouting==='agent-repo'||bound)throw new AgentRepoError('AGENT_REPO_UNAVAILABLE','Agent Repo service is unavailable; project routing cannot fall back to a fixed cwd');
@@ -34,7 +35,7 @@ export async function scopeRuntime(config,params,provenance,hostConfig={}) {
  }
  const projectContext={agentId:context.agentId,root:result.root??result.snapshot.root,projectId:result.projectId??result.snapshot.projectId,repository:result.repository??result.snapshot.repository,cwd:result.cwd,scopeDirectory:result.scopeDirectory,registryRevision:result.registryRevision};
  const render=text=>text.replaceAll(config.cwd,result.cwd).replaceAll('{projectDir}',result.cwd).replaceAll('{agentRepo}',projectContext.root).replaceAll('{scopeDirectory}',projectContext.scopeDirectory??result.cwd);
- return {...config,cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
+ return {...config,...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
 }
 export async function readScopedSkillVersion(config) {
  const snapshot=config.scopedSkillSnapshot;
