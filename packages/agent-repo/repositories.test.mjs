@@ -119,7 +119,7 @@ test('CLI inspect and plan use explicit inputs and do not write configuration',a
 });
 test('manifest publishes only the read-only project tool and a strict binding schema',async()=>{
  const manifest=JSON.parse(await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8'));
- assert.equal(manifest.id,plugin.id);assert.deepEqual(manifest.contracts.tools,['agent_repo','agent_entity_sync']);assert.equal(manifest.configSchema.additionalProperties,false);assert.ok(manifest.uiHints.agents.label.includes(' / '));
+ assert.equal(manifest.id,plugin.id);assert.deepEqual(manifest.contracts.tools,['agent_repo','agent_entity_sync','agent_schedule']);assert.equal(manifest.configSchema.additionalProperties,false);assert.ok(manifest.uiHints.agents.label.includes(' / '));
 });
 
 

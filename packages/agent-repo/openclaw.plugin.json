@@ -8,7 +8,8 @@
   "contracts": {
     "tools": [
       "agent_repo",
-      "agent_entity_sync"
+      "agent_entity_sync",
+      "agent_schedule"
     ]
   },
   "activation": {
