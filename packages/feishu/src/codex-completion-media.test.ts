@@ -120,3 +120,54 @@ it("preserves ordinary media calls that use their current Feishu runtime", async
   expect(mocks.ambient).toHaveBeenCalledOnce();
   expect(mocks.order).toEqual(["load", "upload", "image"]);
 });
+
+
+it.each([
+  { mediaUrl: "/fixture/done.png" },
+  { mediaUrls: ["/fixture/done.png"] },
+  { text: "", mediaUrls: ["/fixture/done.png"] },
+])("delivers a media-only final reply and acknowledges it after image delivery: %j", async (payload) => {
+  run.mockImplementation(async ({ adapter }) => adapter.resolveTurn().delivery.deliver(payload, { kind: "final" }));
+  const receipt = vi.fn(() => { mocks.order.push("receipt"); });
+  const result = await deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime);
+  expect(result.reason).toBeUndefined();
+  expect(mocks.image).toHaveBeenCalledOnce();
+  expect(mocks.order).toEqual(["card", "load", "upload", "image", "receipt"]);
+  expect(readPreparedCompletion(state, event, "current")).toBeUndefined();
+});
+
+it("persists a media-only reply before failure and retries without rerunning Main", async () => {
+  run.mockImplementation(async ({ adapter }) => adapter.resolveTurn().delivery.deliver({ mediaUrl: "/fixture/done.png" }, { kind: "final" }));
+  mocks.upload.mockRejectedValueOnce(Error("upload failed"));
+  const receipt = vi.fn();
+  await expect(deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime)).rejects.toThrow("upload failed");
+  expect(receipt).not.toHaveBeenCalled();
+  expect(readPreparedCompletion(state, event, "current")?.mediaUrl).toBe("/fixture/done.png");
+  run.mockImplementation(() => { throw Error("duplicate event must not run Main again"); });
+  await deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime);
+  expect(run).toHaveBeenCalledOnce();
+  expect(mocks.image).toHaveBeenCalledOnce();
+  expect(receipt).toHaveBeenCalledOnce();
+});
+
+it.each([{}, { text: "", mediaUrls: [] }])("ignores an empty final reply: %j", async (payload) => {
+  run.mockImplementation(async ({ adapter }) => adapter.resolveTurn().delivery.deliver(payload, { kind: "final" }));
+  const receipt = vi.fn();
+  expect(await deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime)).toMatchObject({ reason: "no_delivery_receipt" });
+  expect(mocks.image).not.toHaveBeenCalled();
+  expect(receipt).not.toHaveBeenCalled();
+});
+
+it("keeps a deferred completion retryable without orphaning its delivery callback", async () => {
+  run.mockImplementationOnce(async ({ adapter }) => {
+    expect(adapter.resolveTurn().replyOptions.turnAdoptionLifecycle.onDeferred()).toBe(false);
+  });
+  const receipt = vi.fn();
+  expect(await deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime)).toMatchObject({ reason: "no_delivery_receipt" });
+  expect(mocks.image).not.toHaveBeenCalled();
+  expect(receipt).not.toHaveBeenCalled();
+  await deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime);
+  expect(run.mock.calls.map(([input]) => input.raw.eventId)).toEqual([event.eventId, event.eventId]);
+  expect(mocks.image).toHaveBeenCalledOnce();
+  expect(receipt).toHaveBeenCalledOnce();
+});

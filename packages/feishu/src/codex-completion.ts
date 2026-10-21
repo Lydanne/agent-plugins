@@ -110,8 +110,13 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      // Host dispatch may swallow a delivery failure and subsequently deliver a fallback.
      // Neither that fallback nor a partial/status reply is an accepted task report.
      if (deliveryError) throw deliveryError;
-     if (sent || info.kind !== "final" || payload.isReasoning || payload.isCommentary || !payload.text) return;
-     if (payload.text.startsWith("⚠️ OpenClaw couldn't produce or deliver a reply.")) throw Error("Codex completion received the host's no-visible-reply fallback");
+     if (sent || info.kind !== "final" || payload.isReasoning || payload.isCommentary) return;
+     // A final MEDIA-only answer is a deliverable too. Dropping it here loses
+     // both the image and durable retry payload; host dedup then blocks Main.
+     const replyText = payload.text ?? "";
+     const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
+     if (!replyText && (!hasMedia || questionTurn)) return;
+     if (replyText.startsWith("⚠️ OpenClaw couldn't produce or deliver a reply.")) throw Error("Codex completion received the host's no-visible-reply fallback");
      if (!isCompletionSourceAndAnswersCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
      if(questionTurn){
       const question=readQuestionCard(stateDir,event.contextRequest!.questionId);
@@ -124,11 +129,11 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       }
       callbacks.beforeSend();
       const questionBinding=readAsyncTaskCard(stateDir,event.jobId,p);
-      const receipt=await sendMessageFeishu({cfg:completionCfg,accountId:p.accountId,to:"chat:"+p.chatId,replyToMessageId:questionBinding?.messageId??messageId,text:payload.text,replyInThread:p.replyInThread??false});
+      const receipt=await sendMessageFeishu({cfg:completionCfg,accountId:p.accountId,to:"chat:"+p.chatId,replyToMessageId:questionBinding?.messageId??messageId,text:replyText,replyInThread:p.replyInThread??false});
       saveAsyncCardQuestion(stateDir,p,event.jobId,receipt.messageId);
-      callbacks.onReceipt(receipt);sent=true;return {visibleReplySent:true,messageIds:[receipt.messageId],content:payload.text};
+      callbacks.onReceipt(receipt);sent=true;return {visibleReplySent:true,messageIds:[receipt.messageId],content:replyText};
      }
-     const finalText=ensureCompletionReportLink(payload.text,event);
+     const finalText=ensureCompletionReportLink(replyText,event) || "任务结果见附件。";
      const sessionId=currentSessionId();
      if(sessionId)savePreparedCompletion(stateDir,event,sessionId,{text:finalText,mediaUrl:payload.mediaUrl,mediaUrls:payload.mediaUrls});
      const binding = readAsyncTaskCard(stateDir, event.jobId, p);
@@ -236,7 +241,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
        onAgentRunStart: () => {if(questionTurn&&!sent){callbacks.beforeSend();mainStarted=true;}},
        // Keep durable retry ownership here instead of leaving callbacks in a
        // host followup queue that can outlive this plugin service generation.
-       ...(questionTurn?{turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}}:{})},
+       turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}},
       delivery: {deliver, onError: error => {deliveryError ??= error; throw error;}}}),
     }});
     if (deliveryError) throw deliveryError;
