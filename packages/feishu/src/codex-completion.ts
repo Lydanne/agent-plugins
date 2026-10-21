@@ -204,10 +204,10 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      if (binding && isCompletionSourceAndAnswersCurrent(p, stateDir) && sessionCurrent() && !signal.aborted &&
       (reminderReport || (!resultMentionsRequester && (binding.imageKey || !recentlyMentioned({accountId:p.accountId,to:'chat:'+p.chatId,replyInThread:p.replyInThread,replyToMessageId:receipt.messageId},p.senderId))))) {
       try {
-       await sendMessageFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
+       const reminderText=`<at id="${p.senderId}"></at>`+renderBusinessMessage(businessMessages,event.status==="timed_out"?"timeoutMention":event.status==="failed"?"failureMention":event.status==="cancelled"?"cancelledMention":"completionMention")+(reminderReport ? ` ${reminderReport}` : "");
+       await sendCardFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
         replyToMessageId: receipt.messageId, replyInThread: p.replyInThread ?? false,
-        mentions: [{openId: p.senderId, name: "", key: ""}], plainText: !reminderReport,
-        text: renderBusinessMessage(businessMessages,event.status==="timed_out"?"timeoutMention":event.status==="failed"?"failureMention":event.status==="cancelled"?"cancelledMention":"completionMention")+(reminderReport ? ` ${reminderReport}` : "")});
+        card: workingResultCard(reminderText,accountConfig)});
        reportInReminder=Boolean(reminderReport);
       } catch {console.warn("Codex result accepted, but completion mention failed or is unconfirmed");}
      }
