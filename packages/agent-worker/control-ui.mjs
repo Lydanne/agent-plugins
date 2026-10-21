@@ -95,26 +95,61 @@ export function mountPanel(container,initial){
  let context=initial,disposed=false,generation=0,selected=initial.props.topic??null,selectedScope=initial.props.executionScope,selectedModelScope=initial.props.modelSessionScope,selectedJobId=initial.props.jobId,view='records',filter='all',query='',projectFilter=initial.props.projectId??'',sort='heat',offset=0,historyOffset=0,rows=[],data=null,error=null,loading=false,signature='',timer;
  const root=element('section',undefined,'cq-panel');root.setAttribute('aria-label','Agent Worker 会话');container.append(root);
  const safe=value=>context.host.redact(String(value??''));
- let deleteDialog=null,deleting=false,observedWrite=context.host.connection.canWrite;
- function closeDelete(){const dialog=deleteDialog;deleteDialog=null;if(dialog){dialog.close();dialog.remove();}}
- function deleteButton(row){
+ let deleteDialog=null,deleting=false,observedWrite=context.host.connection.canWrite,selectionMode=false,deleteFeedback=null;
+ const checked=new Map(),rowKey=row=>JSON.stringify([row.topic,row.executionScope??null,row.modelSessionScope??null]);
+ function clearSelection(){selectionMode=false;checked.clear();}
+ function closeMenus(except){for(const menu of root.querySelectorAll('.cq-more[open]'))if(menu!==except)menu.open=false;}
+ function outsideMenu(event){if(!root.contains(event.target)||!event.target.closest('.cq-more'))closeMenus();}
+ function escapeMenu(event){if(event.key!=='Escape')return;const menu=root.querySelector('.cq-more[open]');if(menu){menu.open=false;menu.querySelector('summary').focus();event.preventDefault();}}
+ document.addEventListener('pointerdown',outsideMenu);root.addEventListener('keydown',escapeMenu);
+ function moreMenu(row){
   if(context.host.connection.canWrite!==true)return null;
-  const control=button('删除会话',()=>confirmDelete(row),'cq-delete');
-  control.disabled=deleting||row.canDelete!==true;control.title=safe(row.deleteReason??'删除此会话的历史任务和复用绑定');return control;
+  const menu=element('details',undefined,'cq-more'),trigger=element('summary','更多'),actions=element('div',undefined,'cq-more-actions');
+  trigger.setAttribute('aria-label',row?safe((row.projectId?row.projectId+' / ':'')+row.topic+(row.model?' · '+row.model:'')+' 的更多操作'):'会话列表更多操作');
+  menu.addEventListener('toggle',()=>{if(menu.open){closeMenus(menu);menu.classList.remove('cq-more-up');if(actions.getBoundingClientRect().bottom>root.getBoundingClientRect().bottom&&menu.getBoundingClientRect().top-actions.offsetHeight>root.getBoundingClientRect().top)menu.classList.add('cq-more-up');}});
+  const add=(label,action,className)=>{const control=button(label,()=>{menu.open=false;action();},className);control.setAttribute('aria-label',label);actions.append(control);return control;};
+  if(row){const remove=add('删除会话',()=>confirmDelete([row]),'cq-delete');remove.disabled=deleting||row.canDelete!==true;remove.title=safe(row.deleteReason??'删除此会话的历史任务和复用绑定');
+   if(!selected){const pick=add('选择会话',()=>{selectionMode=true;toggleSelection(row);});pick.disabled=deleting||row.canDelete!==true;pick.title=safe(row.deleteReason??'选择此会话进行批量操作');}
+  }else add('多选会话',()=>{selectionMode=true;render();root.querySelector('[aria-label="全选已加载的可删除会话"]')?.focus();});
+  menu.append(trigger,actions);return menu;
  }
- function confirmDelete(row){
-  if(disposed||deleting||context.host.connection.canWrite!==true||row.canDelete!==true)return;
-  closeDelete();const owner=context,dialog=element('dialog',undefined,'cq-raw-dialog cq-delete-dialog'),panel=element('section',undefined,'cq-panel cq-modal-panel');deleteDialog=dialog;
-  const title=element('h2','删除会话？');title.id='cq-delete-title-'+(++dialogSequence);dialog.setAttribute('aria-labelledby',title.id);
-  panel.append(title,element('p',safe((row.projectId?row.projectId+' / ':'')+row.topic+(row.model?' · '+row.model:''))),element('p',`将从列表移除此会话及其 ${row.taskCount} 条历史任务；再次使用此主题会开启新会话。已生成的报告和附件保留。`));
+ function toggleSelection(row){
+  if(deleting||row.canDelete!==true)return;const key=rowKey(row);
+  if(checked.has(key))checked.delete(key);else checked.set(key,{...row});render();
+  [...root.querySelectorAll('.cq-session-check')].find(input=>input.dataset.key===key)?.focus();
+ }
+ function selectionToolbar(){
+  const bar=element('div',undefined,'cq-selection-bar'),eligible=rows.filter(row=>row.canDelete===true),label=element('label'),all=element('input');all.type='checkbox';all.setAttribute('aria-label','全选已加载的可删除会话');
+  const count=eligible.filter(row=>checked.has(rowKey(row))).length;all.checked=eligible.length>0&&count===eligible.length;all.indeterminate=count>0&&count<eligible.length;all.disabled=deleting||!eligible.length;
+  all.onchange=()=>{for(const row of eligible){if(all.checked)checked.set(rowKey(row),{...row});else checked.delete(rowKey(row));}render();root.querySelector('[aria-label="全选已加载的可删除会话"]')?.focus();};
+  label.append(all,element('span','全选已加载'));const status=element('span',`已选 ${checked.size} 个会话`);status.setAttribute('role','status');bar.append(label,status);
+  if(checked.size){const remove=button(`删除所选 (${checked.size})`,()=>confirmDelete([...checked.values()],true),'cq-delete');remove.disabled=deleting;bar.append(remove);}
+  const cancel=button('取消多选',()=>{clearSelection();render();root.querySelector('header .cq-more summary')?.focus();});cancel.disabled=deleting;bar.append(cancel);return bar;
+ }
+ function closeDelete(){const dialog=deleteDialog;deleteDialog=null;if(dialog){dialog.close();dialog.remove();}}
+ function confirmDelete(targets,bulk=false){
+  if(disposed||deleting||context.host.connection.canWrite!==true||!targets.length||targets.some(row=>row.canDelete!==true))return;
+  const chosen=targets.map(row=>({...row}));closeMenus();closeDelete();const owner=context,dialog=element('dialog',undefined,'cq-raw-dialog cq-delete-dialog'),panel=element('section',undefined,'cq-panel cq-modal-panel');deleteDialog=dialog;
+  const title=element('h2',bulk?`删除所选的 ${chosen.length} 个会话？`:'删除会话？');title.id='cq-delete-title-'+(++dialogSequence);dialog.setAttribute('aria-labelledby',title.id);
+  const names=element('ul',undefined,'cq-delete-targets');for(const row of chosen)names.append(element('li',safe((row.projectId?row.projectId+' / ':'')+row.topic+(row.model?' · '+row.model:''))));
+  const tasks=chosen.reduce((sum,row)=>sum+(row.taskCount??0),0);panel.append(title,names,element('p',`将从列表移除${bulk?'所选会话':'此会话'}及其 ${tasks} 条历史任务；再次使用此主题会开启新会话。已生成的报告和附件保留。`));
   const feedback=element('p',undefined,'cq-error');feedback.setAttribute('role','alert');
   const isCurrent=()=>!disposed&&deleteDialog===dialog&&owner.props.sessionKey===context.props.sessionKey&&owner.props.agentId===context.props.agentId&&context.presented&&context.host.connection.canRead&&context.host.connection.canWrite===true;
-  const cancel=button('取消',closeDelete),confirm=button('确认删除',async()=>{
+  const cancel=button('取消',closeDelete),confirm=button(bulk?'确认批量删除':'确认删除',async()=>{
    if(deleting||!isCurrent())return;
-   deleting=true;generation++;confirm.disabled=cancel.disabled=true;feedback.textContent='';
-   try{await invoke('deleteSession',{topic:row.topic,executionScope:row.executionScope??null,modelSessionScope:row.modelSessionScope??null,projectId:row.projectId??undefined,revision:row.deletionRevision,confirmed:true});
-    if(!isCurrent())return;closeDelete();closeOriginal();collapsedTasks.clear();deleting=false;error=null;back();
-   }catch(e){if(isCurrent()){feedback.textContent=safe(e.message);confirm.disabled=cancel.disabled=false;}}finally{deleting=false;}
+   deleting=true;generation++;confirm.disabled=cancel.disabled=true;feedback.textContent='';const failed=[];let succeeded=0;
+   try{
+    for(const row of chosen){
+     if(!isCurrent())return;
+     feedback.textContent=bulk?`正在删除 ${succeeded+failed.length+1} / ${chosen.length}…`:'';
+     try{const result=await invoke('deleteSession',{topic:row.topic,executionScope:row.executionScope??null,modelSessionScope:row.modelSessionScope??null,projectId:row.projectId??undefined,revision:row.deletionRevision,confirmed:true});if(result?.deleted!==true)throw Error('未收到删除成功确认，请刷新核对。');succeeded++;if(isCurrent())checked.delete(rowKey(row));}
+     catch(e){failed.push({row,message:e.message});}
+    }
+    if(!isCurrent())return;
+    if(!bulk&&failed.length){feedback.textContent=safe(failed[0].message);confirm.disabled=cancel.disabled=false;return;}
+    deleteFeedback={failed:failed.length>0,text:failed.length?safe(`已删除 ${succeeded} 个会话，${failed.length} 个未确认删除：`+failed.map(({row,message})=>row.topic+'：'+message).join('；')):`已删除 ${succeeded} 个会话。`};
+    closeDelete();closeOriginal();collapsedTasks.clear();deleting=false;error=null;if(!failed.length)clearSelection();back();
+   }finally{deleting=false;}
   },'cq-delete');
   cancel.autofocus=true;const actions=element('div',undefined,'cq-delete-actions');actions.append(cancel,confirm);panel.append(feedback,actions);dialog.append(panel);container.append(dialog);dialog.addEventListener('cancel',event=>{if(deleting)event.preventDefault();});dialog.addEventListener('close',()=>{dialog.remove();if(deleteDialog===dialog)deleteDialog=null;root.querySelector('.cq-refresh')?.focus();});dialog.showModal();
  }
@@ -133,35 +168,39 @@ export function mountPanel(container,initial){
 
  async function invoke(action,payload){const current=context;return readInspectionResponse(async(name,data)=>{current.signal.throwIfAborted();if(current!==context)throw Error('会话已切换');const response=await current.host.request('plugins.sessionAction',{pluginId:'agent-worker',actionId:'inspect-'+name,sessionKey:current.props.sessionKey,agentId:current.props.agentId,payload:data});current.signal.throwIfAborted();return response;},action,payload);}
  async function refresh(append=false,appendHistory=false){
-  if(disposed||deleting||deleteDialog||context.signal.aborted||!context.presented||!context.host.connection.canRead||!context.props.sessionKey)return;
+  if(disposed||deleting||deleteDialog||root.querySelector('.cq-more[open]')||context.signal.aborted||!context.presented||!context.host.connection.canRead||!context.props.sessionKey)return;
   const request=++generation;loading=true;if(!rows.length&&!data)render();
   try{const result=await invoke(selected?'detail':'list',selected?{topic:selected,executionScope:selectedScope,modelSessionScope:selectedModelScope,projectId:projectFilter||undefined,offset,limit:1,historyOffset,jobId:selectedJobId}:{query,projectId:projectFilter||undefined,sort,offset,limit:30});if(disposed||request!==generation||!context.presented||!context.host.connection.canRead)return;
    error=null;loading=false;
    if(selected){offset=result.offset;const previous=data;data=append&&previous?{...result,records:[...result.records,...previous.records]}:result;if(appendHistory&&previous)data.taskHistory=[...new Map([...previous.taskHistory,...result.taskHistory].filter(task=>!result.currentTasks.some(current=>current.jobId===task.jobId)).map(task=>[task.jobId,task])).values()].sort((a,b)=>b.createdAt-a.createdAt);}
-   else {data=null;rows=append?[...rows,...result.sessions]:result.sessions;listResult=result;projectIds=result.projectIds??[];}
+   else {data=null;rows=append?[...rows,...result.sessions]:result.sessions;listResult=result;projectIds=result.projectIds??[];
+    let invalidated=0;for(const row of rows){const previous=checked.get(rowKey(row));if(previous&&(row.canDelete!==true||row.deletionRevision!==previous.deletionRevision)){checked.delete(rowKey(row));invalidated++;}}
+    if(invalidated)deleteFeedback={failed:true,text:(deleteFeedback?.failed?deleteFeedback.text+'；':'')+`${invalidated} 个会话已变化或不可删除，已取消选择，请核对后重新选择。`};}
    const next=JSON.stringify({rows,data,listResult,error});if(next!==signature||(!rows.length&&!data)){signature=next;render();}
   }catch(e){if(disposed||request!==generation||!context.presented||!context.host.connection.canRead)return;loading=false;error=safe(e.message);render();}
  }
  let listResult=null,projectIds=[];
- function choose(topic,executionScope,modelSessionScope){closeDelete();selected=topic;selectedScope=executionScope??null;selectedModelScope=modelSessionScope??null;selectedJobId=undefined;offset=0;historyOffset=0;data=null;view='records';signature='';render();refresh();}
+ function choose(topic,executionScope,modelSessionScope){clearSelection();deleteFeedback=null;closeDelete();selected=topic;selectedScope=executionScope??null;selectedModelScope=modelSessionScope??null;selectedJobId=undefined;offset=0;historyOffset=0;data=null;view='records';signature='';render();refresh();}
  function back(){closeDelete();selected=null;selectedScope=undefined;selectedModelScope=undefined;selectedJobId=undefined;offset=0;historyOffset=0;data=null;rows=[];signature='';render();refresh();}
  function render(){
   const scroll=root.querySelector('.cq-scroll')?.scrollTop??0;
-  const expanded=new Set([...root.querySelectorAll('details[open]')].map(disclosureKey));
+  const expanded=new Set([...root.querySelectorAll('details[open]:not(.cq-more)')].map(disclosureKey));
   root.replaceChildren();root.classList.toggle('cq-detail',!!selected);const header=element('header');
   const refreshButton=button('刷新',()=>{historyOffset=0;if(!selected)offset=0;signature='';refresh();},'cq-refresh');
-  if(selected){header.append(button('← 会话列表',back,'cq-back'),refreshButton);}else header.append(element('strong','Agent Worker 会话'),refreshButton);root.append(header);
+  if(selected){header.append(button('← 会话列表',back,'cq-back'),refreshButton);}else {header.append(element('strong','Agent Worker 会话'),refreshButton);if(!selectionMode){const menu=moreMenu();if(menu)header.append(menu);}}root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!context.props.sessionKey){root.append(element('p','请选择当前 Agent 的会话后查看项目任务。'));return;}
+  if(deleteFeedback){const notice=element('div',undefined,deleteFeedback.failed?'cq-bulk-feedback cq-error':'cq-bulk-feedback');notice.setAttribute('role',deleteFeedback.failed?'alert':'status');notice.append(element('span',deleteFeedback.text),button('关闭提示',()=>{deleteFeedback=null;render();}));root.append(notice);}
   if(error){root.append(element('p',error,'cq-error'),button('重试',()=>refresh()));}
-  if(selected){const heading=element('div',undefined,'cq-detail-title');const title=element('h2',safe(selected));title.title=safe(selected);heading.append(title);const current=data?.session??data?.records.at(-1);if(current)heading.append(element('span',labels[current.status]??current.status,'cq-state '+current.status));const remove=data?.session&&deleteButton(data.session);if(remove)heading.append(remove);root.append(heading);const tabs=element('nav',undefined,'cq-detail-tabs');for(const [id,name] of [['records','对话记录'],['process','任务过程'],['info','任务信息'],['session','会话信息']]){const b=button(name,()=>{view=id;root.querySelector('.cq-scroll')?.scrollTo(0,0);render();},view===id?'cq-selected':'');b.setAttribute('aria-pressed',String(view===id));tabs.append(b);}root.append(tabs);}
+  if(selected){const heading=element('div',undefined,'cq-detail-title');const title=element('h2',safe(selected));title.title=safe(selected);heading.append(title);const current=data?.session??data?.records.at(-1);if(current)heading.append(element('span',labels[current.status]??current.status,'cq-state '+current.status));const remove=data?.session&&moreMenu(data.session);if(remove)heading.append(remove);root.append(heading);const tabs=element('nav',undefined,'cq-detail-tabs');for(const [id,name] of [['records','对话记录'],['process','任务过程'],['info','任务信息'],['session','会话信息']]){const b=button(name,()=>{view=id;root.querySelector('.cq-scroll')?.scrollTo(0,0);render();},view===id?'cq-selected':'');b.setAttribute('aria-pressed',String(view===id));tabs.append(b);}root.append(tabs);}
   else {
-   const project=element('select');project.setAttribute('aria-label','Worker 项目筛选');const all=element('option','所有项目');all.value='';project.append(all);for(const id of [...new Set([...projectIds,projectFilter].filter(Boolean))]){const option=element('option',safe(id));option.value=id;project.append(option);}project.value=projectFilter;project.onchange=()=>{generation++;projectFilter=project.value;offset=0;rows=[];data=null;listResult=null;error=null;signature='';refresh();};root.append(project);
+   const project=element('select');project.setAttribute('aria-label','Worker 项目筛选');const all=element('option','所有项目');all.value='';project.append(all);for(const id of [...new Set([...projectIds,projectFilter].filter(Boolean))]){const option=element('option',safe(id));option.value=id;project.append(option);}project.value=projectFilter;project.onchange=()=>{clearSelection();generation++;projectFilter=project.value;offset=0;rows=[];data=null;listResult=null;error=null;signature='';refresh();};root.append(project);
    if(projectFilter)root.append(element('p',safe('项目 · '+projectFilter),'cq-muted'));
    const summary=element('div',listResult?`当前聊天 · 运行 ${listResult?.counts.running??0} 个任务 · 排队 ${listResult?.counts.queued??0} 个任务${listResult?.counts.awaitingMain?' · 等待 Main '+listResult.counts.awaitingMain+' 个任务':''}${listResult?.counts.awaitingUser?' · 等待用户 '+listResult.counts.awaitingUser+' 个任务':''}`:loading?'当前聊天 · 正在读取任务统计…':'当前聊天 · 任务统计尚未读取','cq-muted');root.append(summary);
-   const input=element('input');input.placeholder='搜索会话或标签';input.setAttribute('aria-label','搜索会话或标签');input.value=query;input.onchange=()=>{query=input.value;offset=0;rows=[];signature='';refresh();};root.append(input);
-   const options=element('div',undefined,'cq-options'),select=element('select');select.setAttribute('aria-label','会话排序');for(const [value,label] of [['heat','热度优先'],['recent','最近活动']]){const o=element('option',label);o.value=value;select.append(o);}select.value=sort;select.onchange=()=>{sort=select.value;offset=0;rows=[];signature='';refresh();};options.append(fold('热度说明',element('p',listResult?.heatPolicy??'有效交互随时间衰减；查询不增加热度。')),select);root.append(options);
+   const input=element('input');input.placeholder='搜索会话或标签';input.setAttribute('aria-label','搜索会话或标签');input.value=query;input.onchange=()=>{clearSelection();query=input.value;offset=0;rows=[];signature='';refresh();};root.append(input);
+   const options=element('div',undefined,'cq-options'),select=element('select');select.setAttribute('aria-label','会话排序');for(const [value,label] of [['heat','热度优先'],['recent','最近活动']]){const o=element('option',label);o.value=value;select.append(o);}select.value=sort;select.onchange=()=>{clearSelection();sort=select.value;offset=0;rows=[];signature='';refresh();};options.append(fold('热度说明',element('p',listResult?.heatPolicy??'有效交互随时间衰减；查询不增加热度。')),select);root.append(options);
   }
+  if(!selected&&selectionMode&&context.host.connection.canWrite===true)root.append(selectionToolbar());
   const body=element('div',undefined,'cq-scroll');root.append(body);
   if(loading&&!rows.length&&!data)body.append(element('p','正在读取…','cq-muted'));
   if(!selected){
@@ -174,13 +213,15 @@ export function mountPanel(container,initial){
     else {const pending=fold(`${title} · ${count}`,content);pending.classList.add('cq-pending-group');pending.dataset.foldKey='unknown-sessions';body.append(pending);content.append(element('p','这些会话的执行状态暂无法核实，不计入已确认的运行任务。','cq-muted'));}
     for(const row of group){
      const entry=element('article',undefined,'cq-row');entry.dataset.recordKey=row.topic+':'+(row.executionScope??'legacy')+':'+(row.modelSessionScope??'legacy');
-     const open=button('',()=>choose(row.topic,row.executionScope,row.modelSessionScope),'cq-row-open'),top=element('div',undefined,'cq-row-top'),title=element('strong',safe(row.projectId?row.projectId+' / '+row.topic:row.topic));title.title=safe(row.repository??row.topic);
+     if(selectionMode){const check=element('input');check.type='checkbox';check.className='cq-session-check';check.dataset.key=rowKey(row);check.setAttribute('aria-label',safe('选择会话 '+(row.projectId?row.projectId+' / ':'')+row.topic+(row.model?' · '+row.model:'')));check.checked=checked.has(rowKey(row));check.disabled=deleting||row.canDelete!==true;check.title=safe(row.deleteReason??'');check.onchange=()=>toggleSelection(row);entry.append(check);if(check.checked)entry.classList.add('cq-row-checked');}
+     const open=button('',()=>selectionMode?toggleSelection(row):choose(row.topic,row.executionScope,row.modelSessionScope),'cq-row-open'),top=element('div',undefined,'cq-row-top'),title=element('strong',safe(row.projectId?row.projectId+' / '+row.topic:row.topic));title.title=safe(row.repository??row.topic);
+     open.disabled=selectionMode&&(deleting||row.canDelete!==true);if(selectionMode&&row.deleteReason)open.title=safe(row.deleteReason);
      if(row.model)open.append(element('small',safe((row.harness??'codex')+' / '+row.model),'cq-muted'));
      top.append(title,element('span',(labels[row.status]??row.status)+(row.activeCount>1?` · ${row.activeCount}`:''),'cq-state '+row.status));open.append(top);
      const progress=safe(row.progress);if(progress&&!['执行已完成','结果已交付','历史任务记录不可用'].includes(progress)){const description=element('p',progress,'cq-muted');description.title=progress;open.append(description);}entry.append(open);
      const metrics=element('div',undefined,'cq-row-meta');const stats=element('div',undefined,'cq-metrics');stats.append(element('span',`热度 ${row.heat}`,'cq-heat'),element('span',`${row.interactionCount} 次交互`),element('span',`${row.taskCount} 个任务`));
      const delivery=({delivered:'已交付',pending:'待交付',processing:'交付处理中',sending:'发送中',suppressed:'已抑制',uncertain:'交付待核查'})[row.notificationState]??(progress==='结果已交付'?'已交付':null);if(delivery)stats.append(element('span',delivery,'cq-delivery'));
-     const updated=element('time',time(row.updatedAt));updated.title='最近活动 · '+time(row.updatedAt);metrics.append(stats,updated);const remove=deleteButton(row);if(remove)metrics.append(remove);entry.append(metrics);
+     const updated=element('time',time(row.updatedAt));updated.title='最近活动 · '+time(row.updatedAt);metrics.append(stats,updated);const menu=!selectionMode&&moreMenu(row);if(menu)metrics.append(menu);entry.append(metrics);
      if(row.tags.length){const meta=element('div',undefined,'cq-tags');for(const tag of row.tags.slice(0,2)){const chip=element('span',safe(tag));chip.title=safe(tag);meta.append(chip);}if(row.tags.length>2){const extra=element('div',undefined,'cq-expanded-tags');for(const tag of row.tags.slice(2)){const chip=element('span',safe(tag));chip.title=safe(tag);extra.append(chip);}const more=fold(`+${row.tags.length-2}`,extra);more.dataset.foldKey='tags';more.classList.add('cq-tag-disclosure');meta.append(more);}entry.append(meta);}
      content.append(entry);
     }
@@ -256,11 +297,11 @@ export function mountPanel(container,initial){
    if(!['session','info'].includes(view)&&data.hasMore)body.append(button('加载更早任务',()=>{selectedJobId=undefined;offset++;refresh(true);},'cq-load-earlier'));
    if(view!=='session'&&!data.records.length)body.append(element('p','暂无任务记录'));
   }
-  for(const node of root.querySelectorAll('details'))if(expanded.has(disclosureKey(node)))node.open=true;
+  for(const node of root.querySelectorAll('details'))if(!node.classList.contains('cq-more')&&expanded.has(disclosureKey(node)))node.open=true;
   body.scrollTop=scroll;
  }
  timer=setInterval(()=>{if((offset===0||selectedJobId)&&historyOffset===0&&!(root.contains(document.activeElement)&&document.activeElement.matches('input,select')))refresh();},5000);render();refresh();
- return {update(next){const changed=next.props.sessionKey!==context.props.sessionKey||next.props.agentId!==context.props.agentId||next.props.projectId!==context.props.projectId||next.props.jobId!==context.props.jobId||next.props.topic!==context.props.topic||next.props.executionScope!==context.props.executionScope||next.props.modelSessionScope!==context.props.modelSessionScope;context=next;const writeChanged=observedWrite!==next.host.connection.canWrite;observedWrite=next.host.connection.canWrite;if(writeChanged)render();if(changed){closeDelete();projectFilter=next.props.projectId??'';closeOriginal();collapsedTasks.clear();generation++;selected=next.props.topic??null;selectedScope=next.props.executionScope;selectedModelScope=next.props.modelSessionScope;selectedJobId=next.props.jobId;query='';rows=[];data=null;listResult=null;projectIds=[];error=null;offset=0;historyOffset=0;signature='';render();}if(!next.presented){closeDelete();closeOriginal();generation++;return;}if(next.host.connection.canWrite!==true)closeDelete();if(!next.host.connection.canRead){closeDelete();closeOriginal();generation++;rows=[];data=null;listResult=null;projectIds=[];signature='';render();return;}refresh();},dispose(){closeDelete();closeOriginal();disposed=true;generation++;clearInterval(timer);root.remove();}};
+ return {update(next){const changed=next.props.sessionKey!==context.props.sessionKey||next.props.agentId!==context.props.agentId||next.props.projectId!==context.props.projectId||next.props.jobId!==context.props.jobId||next.props.topic!==context.props.topic||next.props.executionScope!==context.props.executionScope||next.props.modelSessionScope!==context.props.modelSessionScope;context=next;const writeChanged=observedWrite!==next.host.connection.canWrite;observedWrite=next.host.connection.canWrite;if(writeChanged){if(next.host.connection.canWrite!==true)clearSelection();render();}if(changed){clearSelection();deleteFeedback=null;closeDelete();projectFilter=next.props.projectId??'';closeOriginal();collapsedTasks.clear();generation++;selected=next.props.topic??null;selectedScope=next.props.executionScope;selectedModelScope=next.props.modelSessionScope;selectedJobId=next.props.jobId;query='';rows=[];data=null;listResult=null;projectIds=[];error=null;offset=0;historyOffset=0;signature='';render();}if(!next.presented){clearSelection();closeDelete();closeOriginal();generation++;return;}if(next.host.connection.canWrite!==true)closeDelete();if(!next.host.connection.canRead){clearSelection();closeDelete();closeOriginal();generation++;rows=[];data=null;listResult=null;projectIds=[];signature='';render();return;}refresh();},dispose(){document.removeEventListener('pointerdown',outsideMenu);clearSelection();closeDelete();closeOriginal();disposed=true;generation++;clearInterval(timer);root.remove();}};
 }
 export function mountProjectPage(container,initial){
  let context=initial;

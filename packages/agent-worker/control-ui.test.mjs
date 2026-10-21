@@ -91,3 +91,59 @@ test('losing write permission closes the delete dialog without sending a mutatio
  const ctx=uiContext(async(_method,p)=>{calls.push(p.actionId);return {ok:true,result:{...listing(null),sessions:[row],groupCounts:{history:1,active:0,unknown:0}}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
  const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();click(f.container,'删除会话');ctx.host.connection.canWrite=false;view.update(ctx);await settle();assert.equal(f.container.querySelector('dialog'),null);assert.equal(f.container.querySelector('.cq-delete'),null);assert.ok(!calls.includes('inspect-deleteSession'));
 });
+
+function openMore(f,selector='.cq-row .cq-more'){
+ const menu=f.container.querySelector(selector);assert.ok(menu);assert.equal(menu.open,false);
+ menu.open=true;menu.dispatchEvent(new f.window.Event('toggle'));return menu;
+}
+function checkSession(f,topic='delete-me'){const input=[...f.container.querySelectorAll('.cq-session-check')].find(node=>node.getAttribute('aria-label')==='选择会话 demo / '+topic);assert.ok(input);input.checked=!input.checked;input.dispatchEvent(new f.window.Event('change'));}
+function batchFixtureRows(){return [deletableSession({topic:'one'}),deletableSession({topic:'two',modelSessionScope:'d'.repeat(64)}),deletableSession({topic:'active',status:'running',canDelete:false,deleteReason:'仍在执行'})];}
+test('session menus hide destructive actions until opened and close with Escape or outside click',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),row=deletableSession();
+ const ctx=uiContext(async()=>({ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:[row]}}),{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();
+ const menu=openMore(f);assert.ok(menu.querySelector('.cq-delete'));assert.equal(f.container.querySelector('.cq-row-meta>.cq-delete'),null);
+ menu.querySelector('button').dispatchEvent(new f.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(menu.open,false);
+ openMore(f);f.container.dispatchEvent(new f.window.Event('pointerdown',{bubbles:true}));assert.equal(menu.open,false);
+});
+test('multi-select exposes deletion only after selection, skips active rows, confirms exact scopes once',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),rows=batchFixtureRows(),calls=[],removed=new Set();
+ const ctx=uiContext(async(_method,p)=>{calls.push(p);if(p.actionId==='inspect-deleteSession'){removed.add(p.payload.topic);return {ok:true,result:{deleted:true}};}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:rows.filter(row=>!removed.has(row.topic))}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();openMore(f,'header .cq-more');click(f.container,'多选会话');assert.equal(f.container.querySelectorAll('.cq-session-check').length,3);assert.ok(!f.container.textContent.includes('删除所选'));
+ const all=f.container.querySelector('[aria-label="全选已加载的可删除会话"]');all.checked=true;all.dispatchEvent(new f.window.Event('change'));
+ assert.match(f.container.textContent,/已选 2 个会话/);assert.equal(f.container.querySelectorAll('.cq-session-check:checked').length,2);assert.equal(f.container.querySelector('[aria-label="选择会话 demo / active"]').disabled,true);
+ click(f.container,'删除所选 (2)');assert.match(f.container.querySelector('dialog').textContent,/4 条历史任务/);assert.equal(calls.filter(p=>p.actionId==='inspect-deleteSession').length,0);
+ click(f.container,'取消');assert.equal(f.container.querySelector('dialog'),null);assert.match(f.container.textContent,/已选 2 个/);
+ click(f.container,'删除所选 (2)');click(f.container,'确认批量删除');await settle();
+ const deletions=calls.filter(p=>p.actionId==='inspect-deleteSession');assert.equal(deletions.length,2);assert.deepEqual(deletions.map(p=>p.payload.modelSessionScope),[rows[0].modelSessionScope,rows[1].modelSessionScope]);assert.ok(deletions.every(p=>p.sessionKey==='chat'&&p.payload.confirmed===true));assert.match(f.container.textContent,/已删除 2 个会话/);assert.equal(f.container.querySelectorAll('.cq-session-check').length,0);
+});
+test('row selection shortcut and partial deletion keep only failures selected without retrying successes',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),rows=batchFixtureRows().slice(0,2),calls=[];let removed=false;
+ const ctx=uiContext(async(_method,p)=>{if(p.actionId==='inspect-deleteSession'){calls.push(p.payload.topic);if(p.payload.topic==='two')return {ok:false,error:'存储暂不可用'};removed=true;return {ok:true,result:{deleted:true}};}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:removed?[rows[1]]:rows}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();openMore(f);click(f.container,'选择会话');assert.match(f.container.textContent,/已选 1 个/);checkSession(f,'two');click(f.container,'删除所选 (2)');click(f.container,'确认批量删除');await settle();
+ assert.deepEqual(calls,['one','two']);assert.match(f.container.textContent,/已删除 1 个会话，1 个未确认删除/);assert.match(f.container.textContent,/two：存储暂不可用/);assert.match(f.container.textContent,/已选 1 个会话/);assert.equal(f.container.querySelector('.cq-session-check').checked,true);
+ click(f.container,'删除所选 (1)');click(f.container,'确认批量删除');await settle();assert.deepEqual(calls,['one','two','two']);
+});
+test('selection invalidates changed revisions and clears on project, chat or write-permission changes',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname);let row=deletableSession();
+ const ctx=uiContext(async()=>({ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:[row]}}),{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();openMore(f);click(f.container,'选择会话');row={...row,deletionRevision:'f'.repeat(64)};click(f.container,'刷新');await settle();assert.match(f.container.textContent,/已选 0 个会话/);assert.match(f.container.textContent,/已变化或不可删除/);
+ checkSession(f);select(f.window,f.container,'Worker 项目筛选','demo');await settle();assert.equal(f.container.querySelectorAll('.cq-session-check').length,0);
+ openMore(f);click(f.container,'选择会话');view.update({...ctx,props:{sessionKey:'other'}});await settle();assert.equal(f.container.querySelectorAll('.cq-session-check').length,0);
+ openMore(f);click(f.container,'选择会话');ctx.host.connection.canWrite=false;view.update({...ctx,props:{sessionKey:'other'}});await settle();assert.equal(f.container.querySelectorAll('.cq-session-check').length,0);assert.equal(f.container.querySelector('.cq-more'),null);
+});
+test('revoking permission during bulk deletion stops before the next session',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),rows=batchFixtureRows().slice(0,2),pending=deferred(),calls=[];
+ const ctx=uiContext(async(_method,p)=>{if(p.actionId==='inspect-deleteSession'){calls.push(p.payload.topic);return pending.promise;}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:rows}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();openMore(f);click(f.container,'选择会话');checkSession(f,'two');click(f.container,'删除所选 (2)');click(f.container,'确认批量删除');await settle();assert.deepEqual(calls,['one']);
+ ctx.host.connection.canWrite=false;view.update(ctx);pending.resolve({ok:true,result:{deleted:true}});await settle();assert.deepEqual(calls,['one']);assert.equal(f.container.querySelector('dialog'),null);
+});
+
+test('selection persists across loaded pages and same-topic models delete by distinct identities',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),one=deletableSession({topic:'same',model:'quick'}),two=deletableSession({topic:'same',model:'deep',modelSessionScope:'e'.repeat(64)}),calls=[];let deleted=false;
+ const ctx=uiContext(async(_method,p)=>{if(p.actionId==='inspect-deleteSession'){calls.push(p.payload);deleted=true;return {ok:true,result:{deleted:true}};}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:0,unknown:0},sessions:deleted?[]:[p.payload.offset?two:one],hasMore:!deleted&&!p.payload.offset}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();openMore(f);click(f.container,'选择会话');click(f.container,'加载更多会话');await settle();
+ const input=f.container.querySelector('[aria-label="选择会话 demo / same · deep"]');input.checked=true;input.dispatchEvent(new f.window.Event('change'));assert.match(f.container.textContent,/已选 2 个会话/);
+ click(f.container,'删除所选 (2)');assert.match(f.container.querySelector('dialog').textContent,/quick/);assert.match(f.container.querySelector('dialog').textContent,/deep/);click(f.container,'确认批量删除');await settle();
+ assert.equal(calls.length,2);assert.equal(calls[0].topic,calls[1].topic);assert.notEqual(calls[0].modelSessionScope,calls[1].modelSessionScope);
+});
