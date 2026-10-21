@@ -104,7 +104,9 @@ export function mountPanel(container,initial){
  document.addEventListener('pointerdown',outsideMenu);root.addEventListener('keydown',escapeMenu);
  function moreMenu(row){
   if(context.host.connection.canWrite!==true)return null;
-  const menu=element('details',undefined,'cq-more'),trigger=element('summary','更多'),actions=element('div',undefined,'cq-more-actions');
+  const menu=element('details',undefined,'cq-more'),trigger=element('summary'),actions=element('div',undefined,'cq-more-actions');
+  const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 20 20');icon.setAttribute('width','18');icon.setAttribute('height','18');icon.setAttribute('aria-hidden','true');icon.setAttribute('focusable','false');
+  for(const x of [4,10,16]){const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('cx',String(x));dot.setAttribute('cy','10');dot.setAttribute('r','1.5');dot.setAttribute('fill','currentColor');icon.append(dot);}trigger.append(icon);trigger.title='更多';
   trigger.setAttribute('aria-label',row?safe((row.projectId?row.projectId+' / ':'')+row.topic+(row.model?' · '+row.model:'')+' 的更多操作'):'会话列表更多操作');
   menu.addEventListener('toggle',()=>{if(menu.open){closeMenus(menu);menu.classList.remove('cq-more-up');if(actions.getBoundingClientRect().bottom>root.getBoundingClientRect().bottom&&menu.getBoundingClientRect().top-actions.offsetHeight>root.getBoundingClientRect().top)menu.classList.add('cq-more-up');}});
   const add=(label,action,className)=>{const control=button(label,()=>{menu.open=false;action();},className);control.setAttribute('aria-label',label);actions.append(control);return control;};
@@ -187,7 +189,8 @@ export function mountPanel(container,initial){
   const expanded=new Set([...root.querySelectorAll('details[open]:not(.cq-more)')].map(disclosureKey));
   root.replaceChildren();root.classList.toggle('cq-detail',!!selected);const header=element('header');
   const refreshButton=button('刷新',()=>{historyOffset=0;if(!selected)offset=0;signature='';refresh();},'cq-refresh');
-  if(selected){header.append(button('← 会话列表',back,'cq-back'),refreshButton);}else {header.append(element('strong','Agent Worker 会话'),refreshButton);if(!selectionMode){const menu=moreMenu();if(menu)header.append(menu);}}root.append(header);
+  const headerActions=element('div',undefined,'cq-header-actions');headerActions.append(refreshButton);
+  if(selected)header.append(button('← 会话列表',back,'cq-back'));else {header.append(element('strong','Agent Worker 会话'));if(!selectionMode){const menu=moreMenu();if(menu)headerActions.append(menu);}}header.append(headerActions);root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!context.props.sessionKey){root.append(element('p','请选择当前 Agent 的会话后查看项目任务。'));return;}
   if(deleteFeedback){const notice=element('div',undefined,deleteFeedback.failed?'cq-bulk-feedback cq-error':'cq-bulk-feedback');notice.setAttribute('role',deleteFeedback.failed?'alert':'status');notice.append(element('span',deleteFeedback.text),button('关闭提示',()=>{deleteFeedback=null;render();}));root.append(notice);}

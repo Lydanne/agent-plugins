@@ -200,7 +200,7 @@
 
 /* Session actions live in a menu; selection mode exposes only batch actions. */
 .cq-panel .cq-more{position:relative;flex:none;margin:0;color:var(--text,#3b3834)}
-.cq-more>summary{list-style:none;cursor:pointer;padding:3px 8px;border:1px solid #8883;border-radius:5px;font-size:11px;white-space:nowrap}
+.cq-more>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:28px;height:28px;box-sizing:border-box;cursor:pointer;padding:0;border:0;border-radius:4px;background:transparent;white-space:nowrap}
 .cq-more>summary::-webkit-details-marker{display:none}
 .cq-more>summary:hover,.cq-more[open]>summary{background:#8881}
 .cq-more-actions{position:absolute;right:0;top:calc(100% + 4px);z-index:5;display:flex;flex-direction:column;min-width:132px;padding:4px;border:1px solid #8884;border-radius:7px;background:var(--bg,#faf9f7);box-shadow:0 6px 20px #0002}
@@ -221,3 +221,8 @@
 
 .cq-more-up>.cq-more-actions{top:auto;bottom:calc(100% + 4px)}
 .cq-panel .cq-row-open:disabled{cursor:not-allowed;opacity:.6}
+
+.cq-header-actions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+.cq-panel>header>strong{min-width:0;flex:1}
+.cq-panel .cq-header-actions .cq-refresh{padding:4px 6px}
+.cq-more>summary svg{display:block;flex:none}
