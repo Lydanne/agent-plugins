@@ -60,7 +60,7 @@ export function completionEvent(job, request = {availability:'unavailable',reaso
 export function createCompletionService({root, bridge = completionBridge, logger = console, pollMs = 1000}) {
  const inflight = new Map();
  let controller = new AbortController();
- let timer, stopped = true;
+ let timer, scheduled, stopped = true;
  const fileOf = id => join(root, id + '.json');
  function patch(id, change, eventKey) {
   const file = fileOf(id), job = readJson(file);
@@ -110,7 +110,26 @@ export function createCompletionService({root, bridge = completionBridge, logger
  }
  return {
   tick,
-  start() {controller = new AbortController(); stopped = false; timer = setInterval(() => {try {tick();} catch {logger.warn?.('Codex completion scan deferred');}}, pollMs); timer.unref?.(); tick();},
-  async stop() {stopped = true; clearInterval(timer); controller.abort(); await Promise.allSettled([...inflight.values()]);},
+  start({scheduler} = {}) {
+   if (!stopped) return;
+   controller = new AbortController(); stopped = false;
+   if (scheduler) {
+    // The host detaches each callback from the reload/start request's root.
+    // Join deliveries so its admission stays alive through Main and the receipt.
+    scheduled = scheduler.schedule({id:'completion-scan',delayMs:0,everyMs:pollMs,run:async()=>{
+     try {tick();} catch {logger.warn?.('Codex completion scan deferred');}
+     await Promise.allSettled([...inflight.values()]);
+    }});
+   } else {
+    // Compatibility for hosts predating the public service scheduler.
+    timer = setInterval(() => {try {tick();} catch {logger.warn?.('Codex completion scan deferred');}}, pollMs);
+    timer.unref?.(); tick();
+   }
+  },
+  async stop() {
+   stopped = true; clearInterval(timer); scheduled?.cancel(); controller.abort();
+   await Promise.allSettled([...inflight.values()]);
+   await scheduled?.stop(); scheduled = undefined;
+  },
  };
 }

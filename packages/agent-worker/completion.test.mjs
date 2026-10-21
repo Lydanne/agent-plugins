@@ -131,3 +131,35 @@ test('shutdown before Main/send starts keeps the same notification retryable',()
  service.start();await flush();await service.stop();assert.deepEqual(seen[1],seen[0]);
  assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'delivered');
 }));
+
+test('host scheduler owns the first scan and joins delivery outside a released startup context',()=>fixture(async root=>{
+ const {AsyncLocalStorage}=await import('node:async_hooks');
+ const scope=new AsyncLocalStorage(),startup={released:false};
+ const j=job();writeJson(join(root,j.jobId+'.json'),j);
+ let registration,releaseDelivery,calls=0,cancelled=false,joined=false;
+ const scheduler={schedule(params){registration=params;return {cancel(){cancelled=true;},async stop(){joined=true;}};}};
+ const service=createCompletionService({root,bridge:{async deliver(e,c){
+  assert.notEqual(scope.getStore(),startup);calls++;
+  await new Promise(resolve=>{releaseDelivery=resolve;});
+  c.beforeSend();c.onReceipt({messageId:'original-result'});
+ }}});
+ scope.run(startup,()=>service.start({scheduler}));startup.released=true;
+ assert.equal(calls,0,'startup must not inline a scan under the reload admission');
+ assert.equal(registration.delayMs,0);assert.equal(registration.everyMs,1000);
+ let settled=false;const running=registration.run().then(()=>{settled=true;});
+ await flush();assert.equal(calls,1);assert.equal(settled,false,'host must own delivery until receipt');
+ releaseDelivery();await running;await registration.run();await service.stop();
+ assert.equal(calls,1);assert.equal(cancelled,true);assert.equal(joined,true);
+ const saved=readJson(join(root,j.jobId+'.json'));assert.equal(saved.status,'completed');
+ assert.deepEqual(saved.result,j.result);assert.equal(saved.notification.state,'delivered');
+}));
+
+test('host scheduled shutdown aborts and joins delivery without starting another scan',()=>fixture(async root=>{
+ const j=job();writeJson(join(root,j.jobId+'.json'),j);
+ let registration,cancelled=false,settled=false,calls=0;
+ const scheduler={schedule(params){registration=params;return {cancel(){cancelled=true;},async stop(){assert.equal(settled,true);}};}};
+ const service=createCompletionService({root,bridge:{async deliver(_,c){calls++;await new Promise(resolve=>c.signal.addEventListener('abort',resolve,{once:true}));settled=true;return {reason:'service_stopped'};}}});
+ service.start({scheduler});const running=registration.run();await flush();await service.stop();await running;
+ await registration.run();assert.equal(calls,1);assert.equal(cancelled,true);
+ assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'pending');
+}));
