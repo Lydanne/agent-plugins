@@ -112,3 +112,13 @@ AgentRepo adds a generic optional skill-maintenance provider API and a shared li
 ## 2026-10-20 通用日志 Console
 
 AgentRepo bundles unmodified MIT-licensed `@tanstack/virtual-core@3.19.6` for bounded log-row virtualization; its copyright and license are shipped in `packages/agent-repo/THIRD_PARTY_NOTICES.md`. Console interactions, Main diagnostic leases, the generic source/log API and the read-only Worker audit adapter are local implementations. No Luna or Eruda code is bundled. Real-time capture defaults off and does not alter existing Worker auditing or Main-only plugin execution.
+
+## Host source patch: Control UI binding forms (2026.10.5)
+
+`patches/openclaw/2026.10.5-config-form/` carries an opt-in source patch for
+OpenClaw tag `v2026.10.5`, commit `1b58cb9a1b4f4353e1add63c8506db4d890962e8`.
+It admits existing object-count and negative-string-pattern validation in the
+form analyzer and protects incremental repair from worsening count violations.
+The plugin manifest schema and runtime are unchanged. The patch includes
+browser/save regressions, synthetic schema fixtures, visual evidence, and the
+upstream MIT license; it is not an installed-runtime patch or automatic deploy.

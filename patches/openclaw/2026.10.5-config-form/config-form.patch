@@ -1,0 +1,509 @@
+diff --git a/ui/src/components/config-form-agent-bindings.browser.test.ts b/ui/src/components/config-form-agent-bindings.browser.test.ts
+new file mode 100644
+index 00000000..ed54b3cf
+--- /dev/null
++++ b/ui/src/components/config-form-agent-bindings.browser.test.ts
+@@ -0,0 +1,121 @@
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { page } from "vitest/browser";
++import { i18n } from "../i18n/index.ts";
++import "../styles.css";
++import "../styles/settings.css";
++import {
++  removeConfigFormValue,
++  serializeFormForSubmit,
++  updateConfigFormValue,
++} from "../lib/config/config-draft-model.ts";
++import { createInitialConfigState } from "../lib/config/config-state-model.ts";
++import bindingSchema from "../test-helpers/agent-bindings.schema.json" with { type: "json" };
++import { renderAnalyzedFormFixture } from "../test-helpers/config-form-fixtures.ts";
++import { copyWithPathPatch } from "./config-form-copy-on-write.ts";
++import { isSupportedConfigValueValid } from "./config-form.constraints.ts";
++import { analyzeConfigSchema } from "./config-form.ts";
++
++const fixture = () => ({
++  agents: {
++    main: {
++      repo: "/workspace/main",
++      defaultProject: "example",
++      sync: {
++        enabled: true,
++        timeoutMs: 15000,
++        branch: "main",
++        remote: "origin",
++        preserveLocalMemory: true,
++        inboundChannels: { feishu: { messageIdPrefix: "om_" } },
++        submoduleSchedule: { time: "08:00", timeZone: "Asia/Shanghai" },
++        gitEnvironment: { CUSTOM_ENV: "unchanged", SECOND_ENV: "also unchanged" },
++      },
++    },
++    reviewer: { repo: "/workspace/reviewer", defaultProject: "review" },
++  },
++});
++const schema = { type: "object", properties: { plugin: bindingSchema } };
++
++beforeEach(async () => {
++  await i18n.setLocale("en");
++});
++afterEach(() => document.body.replaceChildren());
++
++describe("agent binding form integrity", () => {
++  it("renders bounded dynamic maps and saves a leaf without losing other fields", async () => {
++    const originalSchema = structuredClone(schema);
++    const analysis = analyzeConfigSchema(schema);
++    expect(schema).toEqual(originalSchema);
++    const state = createInitialConfigState();
++    state.configSchema = schema;
++    const original = { plugin: fixture(), unshown: { futureOption: ["keep", { value: 17 }] } };
++    state.configForm = structuredClone(original);
++    const container = document.createElement("div");
++    document.body.append(container);
++    const renderValue = () =>
++      renderAnalyzedFormFixture(container, analysis, {
++        value: state.configForm,
++        onPatch: (path, value) => updateConfigFormValue(state, path, value),
++        onRemove: (path) => removeConfigFormValue(state, path),
++      });
++    renderValue();
++    await page.screenshot({ path: "agent-bindings-form.png" });
++    expect(analysis.unsupportedPaths).toEqual([]);
++    expect(container.textContent).not.toContain("Unsupported schema node");
++    expect(JSON.parse(serializeFormForSubmit(state))).toEqual(original);
++    const input = container.querySelector<HTMLInputElement>('input[aria-label="Repo"]');
++    expect(input).not.toBeNull();
++    input!.value = "/workspace/updated";
++    input!.dispatchEvent(new Event("input", { bubbles: true }));
++    input!.dispatchEvent(new Event("change", { bubbles: true }));
++    const expected = structuredClone(original);
++    expected.plugin.agents.main.repo = "/workspace/updated";
++    expect(JSON.parse(serializeFormForSubmit(state))).toEqual(expected);
++    expect(isSupportedConfigValueValid(schema, state.configForm)).toBe(true);
++    renderValue();
++    expect(JSON.parse(serializeFormForSubmit(state))).toEqual(expected);
++    expect(original.plugin.agents.main.repo).toBe("/workspace/main");
++    const branch = container.querySelector<HTMLInputElement>('input[aria-label="Branch"]')!;
++    branch.value = "bad..branch";
++    branch.dispatchEvent(new Event("input", { bubbles: true }));
++    branch.dispatchEvent(new Event("change", { bubbles: true }));
++    expect(branch.getAttribute("aria-invalid")).toBe("true");
++    expect(JSON.parse(serializeFormForSubmit(state))).toEqual(expected);
++  });
++
++  it("retains count, key, required, and negative-pattern constraints", () => {
++    const analysis = analyzeConfigSchema(schema);
++    expect(analysis.unsupportedPaths).toEqual([]);
++    const state = createInitialConfigState();
++    state.configSchema = schema;
++    state.configForm = { plugin: fixture() };
++    const base = ["plugin", "agents", "main"];
++    const invalidEdits: Array<[string[], unknown]> = [
++      [[...base, "sync", "branch"], "bad\nbranch"],
++      [[...base, "repo"], "relative/path"],
++      [[...base, "unexpected"], true],
++      [["plugin", "agents", "bad key"], { repo: "/x" }],
++      [[...base, "sync", "inboundChannels"], {}],
++      [[...base, "sync", "gitEnvironment"], { "BAD\nKEY": "x" }],
++      [[...base, "sync", "gitEnvironment"], { GOOD: "bad\u0000value" }],
++      [[...base, "repo"], undefined],
++      [
++        ["plugin", "agents"],
++        Object.fromEntries(
++          Array.from({ length: 101 }, (_, i) => [`agent${i}`, { repo: `/agent/${i}` }]),
++        ),
++      ],
++    ];
++    expect(isSupportedConfigValueValid(analysis.schema!, state.configForm)).toBe(true);
++    for (const [path, value] of invalidEdits) {
++      const candidate = copyWithPathPatch(state.configForm, path, value);
++      expect(candidate.ok).toBe(true);
++      if (candidate.ok) {
++        expect(isSupportedConfigValueValid(schema, candidate.value), path.join(".")).toBe(false);
++        expect(isSupportedConfigValueValid(analysis.schema!, candidate.value), path.join(".")).toBe(
++          false,
++        );
++      }
++    }
++  });
++});
+diff --git a/ui/src/components/config-form-composition-integrity.browser.test.ts b/ui/src/components/config-form-composition-integrity.browser.test.ts
+index 7fc6b470..229ae336 100644
+--- a/ui/src/components/config-form-composition-integrity.browser.test.ts
++++ b/ui/src/components/config-form-composition-integrity.browser.test.ts
+@@ -644,9 +644,7 @@ describe("config form composition integrity", () => {
+       },
+     });
+     expect(analysis.unsupportedPaths).toEqual([
+-      "strictObject",
+       "strictArray",
+-      "typedObject",
+       "nestedConstraint.child",
+       "outerConstraint",
+       "plainConstraint",
+diff --git a/ui/src/components/config-form.analyze.ts b/ui/src/components/config-form.analyze.ts
+index f25461c9..29ab03c7 100644
+--- a/ui/src/components/config-form.analyze.ts
++++ b/ui/src/components/config-form.analyze.ts
+@@ -59,6 +59,8 @@ const SUPPORTED_CONSTRAINT_ONLY_KEYS = new Set([
+   "minItems",
+   "maxItems",
+   "uniqueItems",
++  "minProperties",
++  "maxProperties",
+ ]);
+ const SUPPORTED_FORM_SCHEMA_KEYS = new Set([
+   ...SUPPORTED_CONSTRAINT_ONLY_KEYS,
+@@ -155,6 +157,16 @@ function hasOnlySupportedFormKeywords(schema: JsonSchema): boolean {
+   if (schema.not === undefined) {
+     return true;
+   }
++  // String controls and map keys already validate the complete schema, including
++  // negative patterns. Keep that constraint intact rather than hiding the field.
++  if (
++    inferredSchemaType(schema) === "string" &&
++    isRecord(schema.not) &&
++    typeof schema.not.pattern === "string" &&
++    Object.keys(schema.not).every((key) => key === "pattern" || META_KEYS.has(key))
++  ) {
++    return true;
++  }
+   if (inferredSchemaType(schema) !== "object" || !isRecord(schema.not)) {
+     return false;
+   }
+diff --git a/ui/src/components/config-form.constraints.test.ts b/ui/src/components/config-form.constraints.test.ts
+index 4338e6fa..6799d52a 100644
+--- a/ui/src/components/config-form.constraints.test.ts
++++ b/ui/src/components/config-form.constraints.test.ts
+@@ -32,6 +32,40 @@ describe("config form schema constraints", () => {
+     expect(canApplyObjectCandidate(schema, { "old/key": -1 }, { "old/key": 1 })).toBe(true);
+   });
+ 
++  it("does not trade object count violations for repairs to unrelated invalid values", () => {
++    const bounded = {
++      type: "object",
++      additionalProperties: { type: "integer" },
++      allOf: [{ minProperties: 2 }, { maxProperties: 3 }],
++    };
++    expect(canApplyObjectCandidate(bounded, { a: "invalid", b: 1 }, { a: "invalid" })).toBe(false);
++    expect(
++      canApplyObjectCandidate(bounded, { a: "invalid", b: 1, c: 2 }, { a: 0, b: 1, c: 2, d: 3 }),
++    ).toBe(false);
++    expect(canApplyObjectCandidate(bounded, { a: "invalid" }, { a: "invalid", b: 1 })).toBe(true);
++    expect(
++      canApplyObjectCandidate(
++        bounded,
++        { a: "invalid", b: 1, c: 2, d: 3 },
++        { a: "invalid", b: 1, c: 2 },
++      ),
++    ).toBe(true);
++    expect(
++      canApplyObjectCandidate(
++        bounded,
++        { a: "invalid", b: 1, c: 2, d: 3 },
++        { a: 0, b: 1, c: 2, d: 3 },
++      ),
++    ).toBe(true);
++    expect(
++      canApplyObjectCandidate(
++        { type: "object", maxProperties: 0, additionalProperties: true },
++        { a: "old" },
++        { a: "old", b: 1 },
++      ),
++    ).toBe(false);
++  });
++
+   it("coerces only decimal and scientific config number spellings", () => {
+     expect(coerceConfigFormNumberString("42.5", false)).toBe(42.5);
+     expect(coerceConfigFormNumberString(".5e2", false)).toBe(50);
+diff --git a/ui/src/components/config-form.constraints.ts b/ui/src/components/config-form.constraints.ts
+index a4a488fd..c1fe78a8 100644
+--- a/ui/src/components/config-form.constraints.ts
++++ b/ui/src/components/config-form.constraints.ts
+@@ -272,6 +272,20 @@ export function canApplyObjectCandidate(
+   ) {
+     return false;
+   }
++  // A pre-existing invalid value may be repaired incrementally, but must not
++  // allow adding a new count violation or worsening an existing one.
++  const currentSize = Object.keys(current).length;
++  const candidateSize = Object.keys(candidate).length;
++  for (const entry of collectAllOfSchemas(schema)) {
++    const minimum = asSafeIntegerInRange(entry.minProperties, { min: 0 });
++    const maximum = asSafeIntegerInRange(entry.maxProperties, { min: 0 });
++    if (
++      (minimum !== undefined && candidateSize < minimum && candidateSize < currentSize) ||
++      (maximum !== undefined && candidateSize > maximum && candidateSize > currentSize)
++    ) {
++      return false;
++    }
++  }
+   if (isSupportedConfigValueValid(schema, candidate)) {
+     return true;
+   }
+diff --git a/ui/src/lib/config-form-utils.ts b/ui/src/lib/config-form-utils.ts
+index bfb3f68a..a578945b 100644
+--- a/ui/src/lib/config-form-utils.ts
++++ b/ui/src/lib/config-form-utils.ts
+@@ -40,6 +40,8 @@ export type JsonSchema = {
+   pattern?: string;
+   minItems?: number;
+   maxItems?: number;
++  minProperties?: number;
++  maxProperties?: number;
+   uniqueItems?: boolean;
+   anyOf?: JsonSchema[];
+   oneOf?: JsonSchema[];
+diff --git a/ui/src/lib/config/config-agent-bindings-save.test.ts b/ui/src/lib/config/config-agent-bindings-save.test.ts
+new file mode 100644
+index 00000000..8ea00f51
+--- /dev/null
++++ b/ui/src/lib/config/config-agent-bindings-save.test.ts
+@@ -0,0 +1,104 @@
++// @vitest-environment node
++import { describe, expect, it, vi } from "vitest";
++import type { GatewayBrowserClient } from "../../api/gateway.ts";
++import { isSupportedConfigValueValid } from "../../components/config-form.constraints.ts";
++import bindingSchema from "../../test-helpers/agent-bindings.schema.json" with { type: "json" };
++import { createConfigCapabilityHarness } from "./config-test-harness.ts";
++
++describe("agent binding config.set round trip", () => {
++  it("preserves the complete document on no-op and targeted form saves", async () => {
++    vi.useFakeTimers();
++    const original = {
++      plugins: {
++        entries: {
++          fixture: {
++            enabled: true,
++            config: {
++              agents: {
++                main: {
++                  repo: "/workspace/main",
++                  defaultProject: "example",
++                  sync: {
++                    enabled: true,
++                    preserveLocalMemory: true,
++                    gitEnvironment: { KEEP: "value", ANOTHER: "another" },
++                    submoduleSchedule: { time: "08:00", timeZone: "Asia/Shanghai" },
++                  },
++                },
++                reviewer: { repo: "/workspace/reviewer", defaultProject: "review" },
++              },
++            },
++          },
++        },
++      },
++      unshown: { futureField: ["retain", { nested: true }] },
++    };
++    const schema = {
++      type: "object",
++      properties: {
++        plugins: {
++          type: "object",
++          properties: {
++            entries: {
++              type: "object",
++              properties: {
++                fixture: {
++                  type: "object",
++                  properties: {
++                    enabled: { type: "boolean" },
++                    config: bindingSchema,
++                  },
++                },
++              },
++            },
++          },
++        },
++      },
++    };
++    let persisted = structuredClone(original);
++    let revision = 1;
++    const submissions: unknown[] = [];
++    const request = vi.fn(async (method: string, params?: unknown) => {
++      if (method === "config.get")
++        return {
++          config: persisted,
++          raw: JSON.stringify(persisted),
++          hash: `revision-${revision}`,
++          valid: true,
++          issues: [],
++        };
++      if (method === "config.schema") return { schema, uiHints: {} };
++      if (method === "config.set") {
++        const submission = params as { raw: string; baseHash: string };
++        expect(submission.baseHash).toBe(`revision-${revision}`);
++        const candidate = JSON.parse(submission.raw);
++        expect(isSupportedConfigValueValid(schema, candidate)).toBe(true);
++        submissions.push(candidate);
++        persisted = candidate;
++        revision++;
++        return { config: persisted, hash: `revision-${revision}` };
++      }
++      throw Error(`Unexpected method: ${method}`);
++    });
++    const { runtimeConfig } = createConfigCapabilityHarness(
++      request as GatewayBrowserClient["request"],
++    );
++    try {
++      await Promise.all([runtimeConfig.ensureLoaded(), runtimeConfig.ensureSchemaLoaded()]);
++      await runtimeConfig.save();
++      expect(persisted).toEqual(original);
++      for (const submission of submissions) expect(submission).toEqual(original);
++      runtimeConfig.patchForm(
++        ["plugins", "entries", "fixture", "config", "agents", "main", "repo"],
++        "/workspace/updated",
++      );
++      await expect(runtimeConfig.save()).resolves.toBe(true);
++      const expected = structuredClone(original);
++      expected.plugins.entries.fixture.config.agents.main.repo = "/workspace/updated";
++      expect(submissions.at(-1)).toEqual(expected);
++      expect(persisted).toEqual(expected);
++    } finally {
++      runtimeConfig.dispose();
++    }
++  });
++});
+diff --git a/ui/src/test-helpers/agent-bindings.schema.json b/ui/src/test-helpers/agent-bindings.schema.json
+new file mode 100644
+index 00000000..c5dba7be
+--- /dev/null
++++ b/ui/src/test-helpers/agent-bindings.schema.json
+@@ -0,0 +1,139 @@
++{
++  "type": "object",
++  "additionalProperties": false,
++  "properties": {
++    "agents": {
++      "type": "object",
++      "default": {},
++      "maxProperties": 100,
++      "propertyNames": {
++        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
++      },
++      "additionalProperties": {
++        "type": "object",
++        "additionalProperties": false,
++        "required": [
++          "repo"
++        ],
++        "properties": {
++          "repo": {
++            "type": "string",
++            "pattern": "^/[^\\u0000\\r\\n]+$"
++          },
++          "defaultProject": {
++            "type": "string",
++            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
++          },
++          "sync": {
++            "type": "object",
++            "additionalProperties": false,
++            "properties": {
++              "enabled": {
++                "type": "boolean",
++                "default": false
++              },
++              "timeoutMs": {
++                "type": "integer",
++                "minimum": 1000,
++                "maximum": 60000,
++                "default": 30000
++              },
++              "branch": {
++                "type": "string",
++                "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$",
++                "default": "main",
++                "not": {
++                  "pattern": "[\\u0000\\r\\n]"
++                }
++              },
++              "remote": {
++                "type": "string",
++                "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$",
++                "default": "origin",
++                "not": {
++                  "pattern": "[\\u0000\\r\\n]"
++                }
++              },
++              "preserveLocalMemory": {
++                "type": "boolean",
++                "default": true
++              },
++              "inboundChannels": {
++                "type": "object",
++                "maxProperties": 20,
++                "default": {
++                  "feishu": {
++                    "messageIdPrefix": "om_"
++                  }
++                },
++                "propertyNames": {
++                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
++                  "not": {
++                    "pattern": "[\\u0000\\r\\n]"
++                  }
++                },
++                "additionalProperties": {
++                  "type": "object",
++                  "additionalProperties": false,
++                  "required": [
++                    "messageIdPrefix"
++                  ],
++                  "properties": {
++                    "messageIdPrefix": {
++                      "type": "string",
++                      "minLength": 1,
++                      "maxLength": 100,
++                      "not": {
++                        "pattern": "[\\u0000\\r\\n]"
++                      }
++                    }
++                  }
++                },
++                "minProperties": 1
++              },
++              "submoduleSchedule": {
++                "type": "object",
++                "additionalProperties": false,
++                "required": [
++                  "time",
++                  "timeZone"
++                ],
++                "properties": {
++                  "time": {
++                    "type": "string",
++                    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
++                    "not": {
++                      "pattern": "[\\r\\n]"
++                    }
++                  },
++                  "timeZone": {
++                    "type": "string",
++                    "minLength": 1,
++                    "maxLength": 100
++                  }
++                }
++              },
++              "gitEnvironment": {
++                "type": "object",
++                "maxProperties": 100,
++                "propertyNames": {
++                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
++                  "not": {
++                    "pattern": "[\\u0000\\r\\n]"
++                  }
++                },
++                "additionalProperties": {
++                  "type": "string",
++                  "maxLength": 40000,
++                  "not": {
++                    "pattern": "\\u0000"
++                  }
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  }
++}

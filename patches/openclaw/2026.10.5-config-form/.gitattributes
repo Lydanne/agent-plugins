@@ -1,0 +1,2 @@
+# Unified diff represents an unchanged blank line as one context-marker space.
+config-form.patch whitespace=-blank-at-eol
