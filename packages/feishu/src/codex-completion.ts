@@ -371,7 +371,8 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
  const submission:NonNullable<typeof workerQuestionBridge.submission>=params=>{
   const card=readQuestionCard(runtime.state.resolveStateDir(),params.questionId);
   if(!card||card.jobId!==params.jobId||!card.answers||!['submitted','accepted'].includes(card.status)||!authorizeReply(params.provenance)||['taskId','revision','accountId','chatId','sessionKey','senderId'].some(key=>card.provenance[key as keyof typeof card.provenance]!==params.provenance[key as keyof typeof params.provenance]))return;
-  return card.answerSource==='user_text'?{answerSource:'user_text',answerMessageId:card.answerMessageId,userSubmittedAt:card.submittedAt}:{answerValues:card.answers,answerSource:'user_card',userSubmittedAt:card.submittedAt};
+  const answerText=answerSummary(card.question,card.answers)+(card.note?'\n补充说明：'+card.note:'');
+  return card.answerSource==='user_text'?{answerText,answerSource:'user_text',answerMessageId:card.answerMessageId,userSubmittedAt:card.submittedAt}:{answerText,answerValues:card.answers,answerSource:'user_card',userSubmittedAt:card.submittedAt};
  };
  const action:NonNullable<typeof workerQuestionBridge.action>=params=>handleWorkerQuestionAction({...params,stateDir:runtime.state.resolveStateDir()});
  const textReply:NonNullable<typeof workerQuestionBridge.textReply>=params=>handleWorkerQuestionTextReply({...params,stateDir:runtime.state.resolveStateDir()});

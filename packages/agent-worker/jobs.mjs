@@ -25,7 +25,7 @@ export const USER_INPUT_WAIT_MS=3*60*1000;
 const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。保留已核验信息，未补充字段标为未知；跳过依赖这些字段、账号选择或额外授权的步骤，在原 task/constraints 范围内继续可独立完成的工作。不得猜测用户选择、扩大写入权限、重做已执行操作或重复询问同一缺口。无法继续时交付已核验结果、限制与未完成项，不把未知当成否定或成功。';
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,logger}) {
  const lock=join(root,'scheduler-lock');
  let timer;
  const files=()=>readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x)).map(x=>readJson(join(root,x)));
@@ -81,9 +81,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const questions=job.questions.map(q=>q.questionId===questionId?{...q,answer,...metadata,answeredAt:Date.now()}:q);
     request.resumeParams={...request.params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
     writeJson(requestFile,request);
-    const resumed={...job,questions,status:'queued',resumePending:true,heartbeatAt:Date.now(),progress:metadata.answerSource==='user_wait_timeout'?'用户等待超时，跳过缺失信息并继续原任务':'Main 已回复，等待继续执行',notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined};
+    const resumed={...job,questions,status:'queued',resumePending:true,heartbeatAt:Date.now(),progress:metadata.resumeReason==='user_wait_timeout'?'用户等待超时，跳过缺失信息并继续原任务':'Main 已回复，等待继续执行',notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined};
     delete resumed.contextRequest;delete resumed.finishedAt;delete resumed.result;
-    appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:metadata.answerSource==='user_wait_timeout'?'worker.user_wait_timeout':'main.context_reply',time:Date.now(),questionId,answer})+'\n',{mode:0o600});
+    appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:metadata.resumeReason==='user_wait_timeout'?'worker.user_wait_timeout':'main.context_reply',time:Date.now(),questionId,answer})+'\n',{mode:0o600});
     writeJson(join(root,jobId+'.json'),resumed);
   return resumed;
  }
@@ -101,8 +101,15 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const request=readJson(join(root,job.jobId+'.request.json'));
    if(typeof request.scope!=='string'||scopeKey(request.scope)!==job.scope||
     requestKeyFor(request.params,request.scope,job.provenance)!==job.requestKey)continue;
-   const answer=timeoutAnswer+(question.knownValues?' 已确认字段：'+JSON.stringify(question.knownValues):'');
-   Object.assign(job,resumeLocked(job,request,answer,{answerSource:'user_wait_timeout',userWaitTimedOutAt:at}));
+   const submitted=getUserTimeoutSubmission(job);
+   // A real submission wins the race and gets its own processing grace period.
+   if(submitted && (!Number.isFinite(submitted.userSubmittedAt)||at-submitted.userSubmittedAt<USER_INPUT_WAIT_MS||typeof submitted.answerText!=='string'))continue;
+   const answer=(submitted?timeoutAnswer.replace('用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。','用户已提交补充，但等待处理超过 3 分钟。以下仅恢复已保存的补充，不提供新授权。'):timeoutAnswer)+
+    (question.knownValues?' 已确认字段：'+JSON.stringify(question.knownValues):'')+
+    (submitted?'\n已保存的用户补充（仅作原任务参考，不扩大约束）：\n'+submitted.answerText:'');
+   const metadata={answerSource:submitted?.answerSource??'user_wait_timeout',resumeReason:'user_wait_timeout',userWaitTimedOutAt:at,
+    ...(submitted?{userSubmittedAt:submitted.userSubmittedAt,...(submitted.answerValues?{answerValues:validateContextAnswers(question,submitted.answerValues,{partial:true})}:{}),...(submitted.answerMessageId?{answerMessageId:submitted.answerMessageId}:{})}:{})};
+   Object.assign(job,resumeLocked(job,request,answer,metadata));
    delete job.contextRequest;delete job.finishedAt;delete job.result;
   }
   for(const job of all.filter(queued)){

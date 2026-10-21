@@ -282,3 +282,18 @@ for(const blocked of ['authorization','cancel','binding','main','answered'])test
   assert.equal(readJson(file).questions[0].answer,undefined);
  }finally{f.close();}
 });
+
+test('submitted input gets three minutes and recovery preserves its text and recall identity',async()=>{
+ const f=fixture();try{
+  const original=await ask(f),worker=join(f.root,'submission-worker.mjs');
+  writeFileSync(worker,`import{readFileSync,writeFileSync}from'node:fs';const[root,id]=process.argv.slice(2);let input='';for await(const c of process.stdin)input+=c;const p=root+'/'+id+'.json',j=JSON.parse(readFileSync(p));j.status='completed';j.result={params:JSON.parse(input).params};writeFileSync(p,JSON.stringify(j));`);
+  let submittedAt=Date.now();const jobs=createJobs({root:f.root,node:process.execPath,worker,authorizeUserTimeout:()=>true,getUserTimeoutSubmission:()=>({answerSource:'user_text',answerMessageId:'original-answer',userSubmittedAt:submittedAt,answerText:'具体时间未知'})});
+  await jobs.awaitUser(f.id,f.scope,original.contextRequest.questionId,f.provenance);
+  const file=join(f.root,f.id+'.json'),j=readJson(file);j.contextRequest.waitingForUserAt=Date.now()-300000;writeJson(file,j);
+  jobs.tick();assert.equal(jobs.status(f.id,f.scope).status,'awaiting_user');
+  submittedAt=Date.now()-180001;jobs.tick();const done=await jobs.wait(f.id,f.scope,2);
+  assert.equal(done.status,'completed');assert.equal(done.questions[0].answerSource,'user_text');
+  assert.equal(done.questions[0].answerMessageId,'original-answer');assert.equal(done.questions[0].resumeReason,'user_wait_timeout');
+  assert.match(done.result.params.mainReplies[0].answer,/具体时间未知/);assert.doesNotMatch(done.result.params.mainReplies[0].answer,/未收到输入/);
+ }finally{f.close();}
+});
