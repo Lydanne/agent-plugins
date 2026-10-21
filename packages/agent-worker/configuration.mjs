@@ -11,7 +11,7 @@ export const defaultConfiguration = {
  state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
  node:'node', cli:'codex',
  codexHome:'~/.codex', pathPrefix:'',
- models:[], defaultModelId:'', thinkingLevel:0, skillContextRoot:'', projectRouting:'auto',
+ models:[], modelProfiles:{}, defaultModelId:'', thinkingLevel:0, skillContextRoot:'', projectRouting:'auto',
  model:'gpt-6.1-sol', reasoningEffort:'low', approvalMode:'dangerously-bypass-approvals-and-sandbox',
  timeoutMs:600000, skillsEnabled:true, skillDirectories:['skills','.agents/skills'],
  executorInstructions, businessDataPolicy,
@@ -32,6 +32,11 @@ const modelSchema = {type:'object',required:['id','harness','model'],additionalP
  harness:{type:'string',enum:['codex']},model:commandSchema,cli:commandSchema,reasoningEffort:effortSchema,speed:speedSchema,
  thinkingProfiles:levelProfilesSchema({reasoningEffort:effortSchema,speed:speedSchema}),
 }};
+// Native dictionary fields supply the stable model ID. A complete disabled seed makes
+// OpenClaw's add-entry/save-on-blur workflow safe without conditional form schemas.
+const {id:profileId,...profileProperties}=modelSchema.properties;
+const profileSchema={type:'object',default:{enabled:false,harness:'codex',model:defaultConfiguration.model},required:['enabled','harness','model'],additionalProperties:false,properties:{enabled:{type:'boolean',default:false},...profileProperties}};
+const modelProfilesSchema={type:'object',default:{},propertyNames:{type:'string',pattern:modelIdPattern},additionalProperties:profileSchema};
 export const configurationProperties = Object.fromEntries(Object.entries(defaultConfiguration).map(([key,value])=>{
  const schema={type:Array.isArray(value)?'array':typeof value==='number'?'integer':typeof value,default:value};
  if(typeof value==='string')schema.maxLength=40000;
@@ -41,6 +46,7 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='reportDirectory')schema.pattern=relativePathPattern;
  if(key==='projectRouting')schema.enum=['auto','agent-repo','legacy'];
  if(key==='skillContextRoot')schema.pattern='^(?:$|/|~/)';
+ if(key==='modelProfiles')Object.assign(schema,modelProfilesSchema);
  if(key==='models')Object.assign(schema,{items:modelSchema,maxItems:50});
  if(key==='defaultModelId')schema.pattern='^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$';
  if(key==='thinkingLevel')Object.assign(schema,{minimum:0,maximum:6});
@@ -55,7 +61,7 @@ function validValue(value,schema) {
  if(schema.type==='integer')return Number.isInteger(value)&&value>=schema.minimum&&value<=schema.maximum;
  if(schema.type==='boolean')return typeof value==='boolean';
  if(schema.type==='array')return Array.isArray(value)&&value.length<=schema.maxItems&&value.every(item=>validValue(item,schema.items));
- if(schema.type==='object')return value!==null&&typeof value==='object'&&!Array.isArray(value)&&(schema.required??[]).every(key=>Object.hasOwn(value,key))&&Object.entries(value).every(([key,item])=>Object.hasOwn(schema.properties,key)&&validValue(item,schema.properties[key]));
+ if(schema.type==='object')return value!==null&&typeof value==='object'&&!Array.isArray(value)&&(schema.required??[]).every(key=>Object.hasOwn(value,key))&&Object.entries(value).every(([key,item])=>(!schema.propertyNames||validValue(key,schema.propertyNames))&&(Object.hasOwn(schema.properties??{},key)?validValue(item,schema.properties[key]):!!schema.additionalProperties&&validValue(item,schema.additionalProperties)));
  return false;
 }
 const expandHome=value=>typeof value==='string'&&value.startsWith('~/')?join(homedir(),value.slice(2)):value;
@@ -64,20 +70,24 @@ export function resolveConfiguration(input={}) {
  for(const key of ['state','cwd','codexHome','skillContextRoot','node','cli'])config[key]=expandHome(config[key]);
  if(typeof config.pathPrefix==='string')config.pathPrefix=config.pathPrefix.split(delimiter).map(expandHome).join(delimiter);
  if(Array.isArray(config.models))config.models=config.models.map(model=>model&&typeof model==='object'&&!Array.isArray(model)&&Object.hasOwn(model,'cli')?{...model,cli:expandHome(model.cli)}:model);
+ if(config.modelProfiles&&typeof config.modelProfiles==='object'&&!Array.isArray(config.modelProfiles))config.modelProfiles=Object.fromEntries(Object.entries(config.modelProfiles).map(([id,profile])=>[id,profile&&typeof profile==='object'&&Object.hasOwn(profile,'cli')?{...profile,cli:expandHome(profile.cli)}:profile]));
  for(const [key,schema] of Object.entries(configurationProperties))if(!validValue(config[key],schema))throw Error('Invalid '+key);
  if(new Set(config.models.map(model=>model.id)).size!==config.models.length||new Set(config.models.map(model=>JSON.stringify([model.harness,model.model]))).size!==config.models.length)throw Error('Invalid models: duplicate ID or harness/model');
- if(config.defaultModelId&&!modelEntries(config).some(model=>model.id===config.defaultModelId))throw Error('Invalid defaultModelId: choose a configured model');
  return config;
 }
 function modelEntries(config) {
- return config.models.length?config.models:[{id:'default',harness:'codex',model:config.model,reasoningEffort:config.reasoningEffort}];
+ const profiles=Object.entries(config.modelProfiles);
+ const enabled=profiles.filter(([,profile])=>profile.enabled).map(([id,profile])=>({...profile,id}));
+ if(enabled.length)return enabled;
+ if(!profiles.length&&config.models.length)return config.models;
+ return [{id:'default',harness:'codex',model:config.model,reasoningEffort:config.reasoningEffort}];
 }
 // Level 0 inherits the operator's baseline; it never disables reasoning.
 export function resolveExecution(input={},level,modelId) {
  const config=resolveConfiguration(input);
  const thinkingLevel=level===undefined?config.thinkingLevel:level;
  if(!Number.isInteger(thinkingLevel)||thinkingLevel<0||thinkingLevel>6)throw Error('Invalid thinkingLevel: expected integer 0–6');
- const models=modelEntries(config),selectedId=modelId===undefined?(config.defaultModelId||models[0].id):modelId;
+ const models=modelEntries(config),selectedId=modelId===undefined?(models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:models[0].id):modelId;
  const selected=models.find(model=>model.id===selectedId);
  if(!selected)throw Error('Invalid modelId: choose a configured model');
  const profile=selected.thinkingProfiles?.[String(thinkingLevel)]??{};
@@ -87,7 +97,7 @@ export function resolveExecution(input={},level,modelId) {
 }
 export function modelCatalog(input={}) {
  const config=resolveConfiguration(input),models=modelEntries(config);
- return {defaultModelId:config.defaultModelId||models[0].id,defaultThinkingLevel:config.thinkingLevel,models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,levels:Array.from({length:7},(_,thinkingLevel)=>{const execution=resolveExecution(config,thinkingLevel,model.id);return {thinkingLevel,reasoningEffort:execution.reasoningEffort,...(execution.speed?{speed:execution.speed}:{})};})}))};
+ return {defaultModelId:models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:models[0].id,defaultThinkingLevel:config.thinkingLevel,models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,levels:Array.from({length:7},(_,thinkingLevel)=>{const execution=resolveExecution(config,thinkingLevel,model.id);return {thinkingLevel,reasoningEffort:execution.reasoningEffort,...(execution.speed?{speed:execution.speed}:{})};})}))};
 }
 export function executionFingerprint(config,{policyVersion}={}) {
  const keys=['cwd','cli','codexHome','model',...(config.modelSessionScope?['harness']:['reasoningEffort']),'approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];

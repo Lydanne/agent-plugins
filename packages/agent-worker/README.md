@@ -104,9 +104,11 @@ Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内
 
 ## 模型与智慧等级
 
-管理员通过 `models` 添加模型，每项是一个 `harness + model`，以唯一 `id` 供 Main 选择；`name` 和 `description` 说明名称及适用任务。目前 harness 仅支持 `codex`，模型名、推理参数及账号权限须由部署方确认可被当前 CLI 使用。同一 harness + 模型不能重复配置。
+管理员在 OpenClaw **设置 → 插件 → agent-worker → 设置 → 模型配置**中使用原生“添加条目”，输入唯一模型 ID（例如 `quick`、`deep`），即可逐项配置多个模型。无需独立配置页或手写整段 JSON。每项包含启用开关、显示名称、用途、harness、模型名、推理强度、速度，以及可展开的 0–6 级覆盖；CLI 命令可继承全局设置。当前 harness 仅支持 `codex`，模型及参数须由部署方确认当前账号和 CLI 支持。
 
-Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`。工具说明及 `modelId` 枚举包含已配置模型；`action=models` 可只读查看模型目录和实际等级映射。省略 modelId 使用 `defaultModelId`，该配置留空时选择 models 第一项；省略等级使用 `thinkingLevel` 配置，默认 0。
+原生配置字段为 `modelProfiles`，以模型 ID 为键。新增项有完整默认值但保持停用，确认模型和参数后再启用；主会话只看到已启用项。ID 在字典中唯一，不依赖列表序号。允许为同一模型保存不同参数预设，它们按 harness + 模型共享底层会话。
+
+Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`。工具说明及 `modelId` 枚举包含已配置模型；`action=models` 可只读查看模型目录和实际等级映射。省略 modelId 使用 `defaultModelId`，该配置留空、被停用或已移除时选择第一项已启用配置；省略等级使用 `thinkingLevel` 配置，默认 0。
 
 | 智慧等级 | 默认推理参数 |
 | --- | --- |
@@ -116,13 +118,13 @@ Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`
 
 每个模型可用自己的 `thinkingProfiles` 覆盖 0–6 任一级的 `reasoningEffort` 和 `speed`；未覆盖的级别按上表解析。某模型不支持某个推理参数时，应由管理员为对应等级配置其实际支持的值。档位不能改变 harness、模型或 CLI。不同模型可使用不同 CLI 路径，并继承全局的目录、沙箱和职责策略。
 
-以下展示配置结构，模型名需按实际可用项替换：
+原生表单对应以下配置结构，模型名需按实际可用项替换：
 
 ```json
 {
-  "models": [
-    {
-      "id": "quick",
+  "modelProfiles": {
+    "quick": {
+      "enabled": true,
       "name": "常规模型",
       "description": "常规查询和轻量任务",
       "harness": "codex",
@@ -133,15 +135,15 @@ Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`
         "6": { "reasoningEffort": "high", "speed": "default" }
       }
     },
-    {
-      "id": "deep",
+    "deep": {
+      "enabled": true,
       "name": "分析模型",
       "description": "复杂排查与跨模块分析",
       "harness": "codex",
       "model": "your-analysis-model",
       "reasoningEffort": "medium"
     }
-  ],
+  },
   "defaultModelId": "quick",
   "thinkingLevel": 0
 }
@@ -151,7 +153,7 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 
 会话按可信聊天 + 项目/仓库 + topic + harness + 模型分别保留。改变等级或速度继续复用当前模型的会话；切换模型使用另一会话，再切回来可恢复原模型的上下文。模型 ID 改名不改变会话身份。不同模型的任务可并行，同一模型的同 topic 仍串行；业务 resourceKeys 跨模型继续串行。任务历史、会话列表及详情携带模型信息，界面按模型分别展示。
 
-为兼容旧部署，models 为空时以顶层 model/reasoningEffort 提供 ID 为 `default` 的 Codex 模型。新配置应把模型与推理参数迁到 models；档位覆盖仅在各模型内配置。0–6 的新默认映射适用于新任务；已经受理的旧任务保留原模型及参数。旧会话在下一次真实 run 迁移到模型绑定，保留旧 ID，不重跑任务。
+为兼容旧部署，`modelProfiles` 为空时仍读取旧 `models` 数组；两者都为空时以顶层 model/reasoningEffort 提供 ID 为 `default` 的 Codex 模型。`modelProfiles` 非空时优先使用其中启用项，全部停用则回退顶层兼容模型。新配置使用 `modelProfiles`，旧 `models` 放在高级配置中；档位覆盖仅在各模型内配置。0–6 的新默认映射适用于新任务；已经受理的旧任务保留原模型及参数。旧会话在下一次真实 run 迁移到模型绑定，保留旧 ID，不重跑任务。
 
 ## 本机配置与数据
 
@@ -169,7 +171,8 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 | --- | --- |
 | `cwd`、`cli`、`node` | 执行工作目录、Codex 命令、后台 Node 命令，默认 `~/.openclaw/workspace`、`codex`、`node`；程序可使用绝对路径或 PATH 中的命令名。 |
 | `state`、`codexHome`、`pathPrefix` | 任务存储、Codex 登录/配置目录和执行 PATH 前缀。 |
-| `models`、`defaultModelId` | 可添加的 harness + 模型列表及默认模型 ID；每项可配置用途、CLI、推理强度、速度及 0–6 级覆盖。留空列表兼容顶层 model。 |
+| `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及 0–6 级覆盖。无启用项时使用顶层兼容模型。 |
+| `models` | 高级配置中的旧数组，modelProfiles 为空时继续兼容。 |
 | `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
 | `model`、`reasoningEffort` | 兼容 models 为空的部署；基线默认 `gpt-6.1-sol` / `low`，新配置使用 models。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |

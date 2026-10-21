@@ -272,7 +272,7 @@ test('model catalog exposes seven levels per harness/model and rejects invalid o
   assert.equal(execution.speed,models.length?'default':undefined);
  }
  for(const models of [null,{},[null],[{id:'bad',model:'x'}],[{id:'bad',harness:'claude',model:'x'}],[{id:'bad id',harness:'codex',model:'x'}],[...modelOptions(),modelOptions()[0]],[modelOptions()[0],{...modelOptions()[1],model:'fixture-quick'}],[{...modelOptions()[0],thinkingProfiles:{'6':{model:'arbitrary'}}}],[{...modelOptions()[0],thinkingProfiles:{'7':{}}}],[{...modelOptions()[0],thinkingProfiles:{'0':{speed:'invalid'}}}]])assert.throws(()=>resolveConfiguration({models}),/models/);
- assert.throws(()=>resolveConfiguration({models:modelOptions(),defaultModelId:'missing'}),/defaultModelId/);
+ assert.equal(resolveExecution({models:modelOptions(),defaultModelId:'missing'}).modelId,'quick');
  for(const id of ['missing','',null,42])assert.throws(()=>resolveExecution(config,0,id),/modelId/);
  const input={models:[{...modelOptions()[0],cli:'~/bin/model-codex'}]};
  assert.equal(resolveExecution(input).cli,join(homedir(),'bin/model-codex'));assert.equal(input.models[0].cli,'~/bin/model-codex');
@@ -342,4 +342,46 @@ test('reply resumes the frozen model and level after the operator removes that m
  const done=await jobs.wait(waiting.jobId,scope,5);assert.equal(done.status,'completed');
  const result=JSON.parse(done.result.content[0].text);
  assert.equal(result.sessionId,waiting.resumeSessionId);assert.equal(result.modelId,'quick');assert.equal(result.model,'fixture-quick');assert.equal(result.thinkingLevel,6);assert.equal(result.reasoningEffort,'high');assert.equal(result.speed,'default');
+});
+
+
+test('native model dictionary adds complete disabled entries without changing execution',()=>{
+ const manifest=JSON.parse(requireManifestText),schema=manifest.configSchema.properties.modelProfiles;
+ const seed=schema.additionalProperties.default;
+ const config={model:'legacy-model',modelProfiles:{draft:{...seed},second:{...seed}}};
+ assert.deepEqual(modelCatalog(config).models.map(model=>model.id),['default']);
+ assert.equal(resolveExecution(config).model,'legacy-model');
+ assert.throws(()=>resolveExecution(config,0,'draft'),/modelId/);
+ assert.equal(manifest.uiHints.models.advanced,true);
+ assert.ok(manifest.uiHints['modelProfiles.*.thinkingProfiles.6.reasoningEffort']);
+});
+
+test('native model dictionary selects enabled IDs with model-specific levels and safe default fallback',()=>{
+ const modelProfiles={quick:{enabled:true,harness:'codex',model:'fixture-quick',name:'Quick',cli:'~/bin/codex',reasoningEffort:'low'},deep:{enabled:true,harness:'codex',model:'fixture-deep',thinkingProfiles:{'6':{reasoningEffort:'high',speed:'fast'}}}};
+ const input={models:modelOptions(),modelProfiles,defaultModelId:'deep'};
+ const execution=resolveExecution(input,6);
+ assert.equal(execution.modelId,'deep');assert.equal(execution.model,'fixture-deep');
+ assert.equal(execution.reasoningEffort,'high');assert.equal(execution.speed,'fast');
+ assert.equal(resolveExecution(input,0,'quick').cli,join(homedir(),'bin/codex'));
+ assert.equal(input.modelProfiles.quick.cli,'~/bin/codex');
+ assert.deepEqual(modelCatalog(input).models.map(model=>model.id),['quick','deep']);
+ const disabled={...input,modelProfiles:{...modelProfiles,deep:{...modelProfiles.deep,enabled:false}}};
+ assert.equal(modelCatalog(disabled).defaultModelId,'quick');
+ assert.equal(resolveExecution(disabled).modelId,'quick');
+ assert.throws(()=>resolveExecution(disabled,0,'deep'),/modelId/);
+ assert.equal(resolveExecution({...input,defaultModelId:'deleted'}).modelId,'quick');
+ assert.deepEqual(modelCatalog({...input,modelProfiles:{}}).models.map(model=>model.id),['quick','deep']);
+});
+
+test('native dictionary rejects malformed keys, incomplete seeds and unsupported execution fields',()=>{
+ const seed={enabled:false,harness:'codex',model:'fixture-model'};
+ for(const modelProfiles of [null,[],{'bad id':seed},{draft:{enabled:true,harness:'codex'}},{draft:{...seed,model:''}},{draft:{...seed,enabled:'true'}},{draft:{...seed,id:'duplicate'}},{draft:{...seed,harness:'unknown'}},{draft:{...seed,thinkingProfiles:{'6':{model:'arbitrary'}}}}])assert.throws(()=>resolveConfiguration({modelProfiles}),/modelProfiles/);
+});
+
+test('native parameter presets for the same model preserve model session identity',()=>{
+ const modelProfiles={regular:{enabled:true,harness:'codex',model:'same',reasoningEffort:'low'},analysis:{enabled:true,harness:'codex',model:'same',reasoningEffort:'high'}};
+ const regular=resolveExecution({modelProfiles},0,'regular'),analysis=resolveExecution({modelProfiles},0,'analysis');
+ assert.equal(regular.modelSessionScope,analysis.modelSessionScope);
+ assert.equal(executionFingerprint(regular),executionFingerprint(analysis));
+ assert.equal(regular.reasoningEffort,'low');assert.equal(analysis.reasoningEffort,'high');
 });

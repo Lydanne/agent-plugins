@@ -439,7 +439,7 @@
           }
         },
         "maxItems": 50,
-        "description": "可用模型 / Available models"
+        "description": "旧版模型列表 / Legacy models"
       },
       "defaultModelId": {
         "type": "string",
@@ -447,6 +447,251 @@
         "maxLength": 40000,
         "pattern": "^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$",
         "description": "默认模型 ID / Default model ID"
+      },
+      "modelProfiles": {
+        "type": "object",
+        "default": {},
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "default": {
+            "enabled": false,
+            "harness": "codex",
+            "model": "gpt-6.1-sol"
+          },
+          "required": [
+            "enabled",
+            "harness",
+            "model"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "harness": {
+              "type": "string",
+              "enum": [
+                "codex"
+              ]
+            },
+            "model": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 40000
+            },
+            "cli": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 40000
+            },
+            "reasoningEffort": {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            "speed": {
+              "type": "string",
+              "enum": [
+                "default",
+                "fast"
+              ]
+            },
+            "thinkingProfiles": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "0": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "1": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "2": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "3": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "4": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "5": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                },
+                "6": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "reasoningEffort": {
+                      "type": "string",
+                      "enum": [
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    },
+                    "speed": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "fast"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "模型配置 / Model profiles"
       }
     }
   },
@@ -552,12 +797,119 @@
       "help": "auto 按可信 Agent 使用 Agent Repo API；agent-repo 强制依赖服务；legacy 使用原有固定目录。已有 Agent Repo 绑定但服务缺失时不回退。 / Auto discovers the Agent-bound API; agent-repo requires it; legacy preserves fixed workspace configuration."
     },
     "models": {
-      "label": "可用模型 / Available models",
-      "help": "添加模型配置：唯一 id、harness=codex、model；可选名称、用途描述、CLI、默认推理强度、速度和 thinkingProfiles（0–6）。同一 harness + 模型只能添加一次；档位仅覆盖推理强度与速度，不能切换模型。 / Add named harness/model entries with per-model effort and tier profiles."
+      "label": "旧版模型列表 / Legacy models",
+      "help": "兼容旧配置；新配置请使用“模型配置”。modelProfiles 非空时此列表不参与新任务选择。 / Legacy array; use model profiles for new configurations.",
+      "advanced": true
     },
     "defaultModelId": {
       "label": "默认模型 ID / Default model ID",
-      "help": "填写 models 中的 id；留空使用第一项。models 为空时使用兼容默认模型 default。 / Select a configured ID; empty selects the first entry."
+      "help": "填写模型配置项的 ID。留空或该模型未启用时，使用第一项已启用模型；均未启用时沿用兼容执行模型 default。 / Select an enabled model ID; otherwise use the first enabled entry or legacy fallback."
+    },
+    "modelProfiles": {
+      "label": "模型配置 / Model profiles",
+      "help": "使用原生“添加条目”，以唯一模型 ID（例如 quick、deep）添加多个配置。新条目默认停用；确认模型名和参数后启用。存在此处配置时优先使用启用项，全部停用时使用兼容执行模型。已受理任务保留原配置。 / Add a unique model ID, configure the model, then enable it."
+    },
+    "modelProfiles.*.enabled": {
+      "label": "启用模型 / Enable model",
+      "help": "新条目默认停用。确认模型名及账号支持的参数后启用；停用后不供新任务选择。 / New entries start disabled; enable after checking model support."
+    },
+    "modelProfiles.*.name": {
+      "label": "显示名称 / Display name",
+      "placeholder": "例如 常规查询、复杂分析"
+    },
+    "modelProfiles.*.description": {
+      "label": "适用任务 / Intended tasks",
+      "help": "帮助 Main 按任务选择模型。 / Describe which tasks fit this model."
+    },
+    "modelProfiles.*.harness": {
+      "label": "执行器 / Harness",
+      "help": "当前支持 Codex。 / Currently supports Codex."
+    },
+    "modelProfiles.*.model": {
+      "label": "模型标识 / Model name",
+      "help": "填写当前 CLI 和账号实际可用的模型名；此项必填。 / Required; must be supported by the CLI.",
+      "placeholder": "例如 gpt-6.1-sol"
+    },
+    "modelProfiles.*.cli": {
+      "label": "CLI 命令 / CLI command",
+      "help": "留空继承全局 Codex 命令；支持绝对路径或 PATH 中的命令。 / Optional override; otherwise inherit the global CLI.",
+      "advanced": true
+    },
+    "modelProfiles.*.reasoningEffort": {
+      "label": "默认推理强度 / Default effort",
+      "help": "智慧等级 0 使用此值；未设置时继承全局推理强度。 / Level 0 uses this value, otherwise inherits the global effort."
+    },
+    "modelProfiles.*.speed": {
+      "label": "默认速度 / Default speed",
+      "help": "未设置时沿用 CLI 默认速度。 / Optional CLI speed override."
+    },
+    "modelProfiles.*.thinkingProfiles": {
+      "label": "智慧等级参数覆盖 / Thinking-level overrides",
+      "help": "0 使用模型默认参数，1–6 对应 minimal、low、medium、high、xhigh、max。只覆盖参数，不切换模型。 / Override effort and speed per level.",
+      "advanced": true
+    },
+    "modelProfiles.*.thinkingProfiles.0": {
+      "label": "等级 0 / Level 0"
+    },
+    "modelProfiles.*.thinkingProfiles.0.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.0.speed": {
+      "label": "速度 / Speed"
+    },
+    "modelProfiles.*.thinkingProfiles.1": {
+      "label": "等级 1 / Level 1"
+    },
+    "modelProfiles.*.thinkingProfiles.1.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.1.speed": {
+      "label": "速度 / Speed"
+    },
+    "modelProfiles.*.thinkingProfiles.2": {
+      "label": "等级 2 / Level 2"
+    },
+    "modelProfiles.*.thinkingProfiles.2.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.2.speed": {
+      "label": "速度 / Speed"
+    },
+    "modelProfiles.*.thinkingProfiles.3": {
+      "label": "等级 3 / Level 3"
+    },
+    "modelProfiles.*.thinkingProfiles.3.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.3.speed": {
+      "label": "速度 / Speed"
+    },
+    "modelProfiles.*.thinkingProfiles.4": {
+      "label": "等级 4 / Level 4"
+    },
+    "modelProfiles.*.thinkingProfiles.4.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.4.speed": {
+      "label": "速度 / Speed"
+    },
+    "modelProfiles.*.thinkingProfiles.5": {
+      "label": "等级 5 / Level 5"
+    },
+    "modelProfiles.*.thinkingProfiles.5.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.5.speed": {
+      "label": "速度 / Speed"
+    },
+    "modelProfiles.*.thinkingProfiles.6": {
+      "label": "等级 6 / Level 6"
+    },
+    "modelProfiles.*.thinkingProfiles.6.reasoningEffort": {
+      "label": "推理强度 / Reasoning effort"
+    },
+    "modelProfiles.*.thinkingProfiles.6.speed": {
+      "label": "速度 / Speed"
     }
   },
   "controlUi": {
