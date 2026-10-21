@@ -62,3 +62,25 @@ for(const provenance of [{senderId:'alice'}, {taskId:'t',accountId:'test',sender
   assert.equal(readJson(join(root,id+'.json')).status,'awaiting_main');
  }finally{completionBridge.authorizeReply=previousAuthorize;await rm(state,{recursive:true,force:true});}
 });
+
+test('real reply entry retries failed presentation without replaying the business resume',async()=>{
+ const state=await mkdtemp(join(tmpdir(),'worker-presentation-retry-')),root=join(state,'jobs'),scope='agent:main:review',id=randomUUID();
+ const previousAuthorize=completionBridge.authorizeReply,previousPresentation=completionBridge.contextState;
+ let calls=0;
+ try{
+  await mkdir(join(root,'active'),{recursive:true});
+  plugin.register({pluginConfig:{state,cwd:state,skillsEnabled:false},registerService(){},registerTool(){}});
+  const provenance={taskId:'task',revision:0,senderId:'alice',accountId:'a',chatId:'chat',sessionKey:scope,sourceMessageIds:['message'],requestMessageIds:['message']};
+  completionBridge.authorizeReply=()=>true;
+  completionBridge.contextState=async event=>{assert.equal(event.status,'resumed');calls++;if(calls===1)throw Error('upload failed before send');};
+  const params={action:'run',topic:'test',task:'read',context:'fixture',constraints:'read only'},question={questionId:randomUUID(),question:'依据',reason:'缺少',progress:'准备',expiresAt:Date.now()+60000};
+  writeJson(join(root,id+'.json'),{jobId:id,scope:createHash('sha256').update(scope).digest('hex'),requestKey:requestKeyFor(params,scope,provenance),provenance,topic:'test',schedulerVersion:1,status:'awaiting_main',createdAt:Date.now(),contextRequest:question,questions:[question]});
+  writeJson(join(root,id+'.request.json'),{params,scope});
+  const reply={action:'reply',jobId:id,questionId:question.questionId,answer:'confirmed'},context={agentId:'main',sessionKey:scope,requesterSenderId:'alice',agentAccountId:'a'};
+  const first=JSON.parse((await query(reply,context)).content[0].text);assert.equal(first.presentation.state,'failed');
+  const saved=readJson(join(root,id+'.json'));const request=readJson(join(root,id+'.request.json'));
+  const second=JSON.parse((await query(reply,context)).content[0].text);assert.equal(second.accepted,true);assert.notEqual(second.presentation.state,'failed');assert.equal(calls,2);
+  assert.deepEqual(readJson(join(root,id+'.json')),saved);assert.deepEqual(readJson(join(root,id+'.request.json')),request);
+  await assert.rejects(query({...reply,answer:'different'},context));assert.equal(calls,2);
+ }finally{completionBridge.authorizeReply=previousAuthorize;completionBridge.contextState=previousPresentation;await rm(state,{recursive:true,force:true});}
+});

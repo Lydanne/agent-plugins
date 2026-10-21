@@ -8,13 +8,13 @@ export function registerQuestionBridge(api,jobs,completionBridge){
   if(!question||question.expiresAt<=Date.now())throw Error('Question expired');
   return {job,question};
  };
- const read=params=>{const {job,question}=verify(params);return {status:job.status,question};};
+ const read=params=>{const {job,question}=verify(params);return {status:job.status,question,latestQuestionId:job.questions?.at(-1)?.questionId};};
  const cancel=params=>{
   const {job,question}=verify(params);
   if(job.status!=='awaiting_user'||question.answer!==undefined||job.contextRequest?.questionId!==params.questionId)throw Error('Question is no longer awaiting user');
   return jobs.cancel(job.jobId,params.provenance.sessionKey,{senderId:params.provenance.senderId,accountId:params.provenance.accountId});
  };
- api.registerService({id:'agent-worker-questions',start:()=>{bridge.read=read;bridge.cancel=cancel;},stop:()=>{if(bridge.read===read)bridge.read=undefined;if(bridge.cancel===cancel)bridge.cancel=undefined;}});
+ api.registerService({id:'agent-worker-questions',start:async()=>{bridge.read=read;bridge.cancel=cancel;await completionBridge.recoverContextCards?.();},stop:()=>{if(bridge.read===read)bridge.read=undefined;if(bridge.cancel===cancel)bridge.cancel=undefined;}});
 }
 
 export async function contextPresentation(handler,event){

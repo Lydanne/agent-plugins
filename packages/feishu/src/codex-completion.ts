@@ -35,7 +35,7 @@ export type CompletionEvent = {type: "agent_worker.completed" | "codex_query.com
  createdAt?: number; startedAt?: number; finishedAt?: number};
 type Callbacks = {signal?: AbortSignal; beforeSend: () => void; onReceipt: (receipt: unknown) => void};
 type ContextCardState={jobId:string;questionId:string;provenance:Provenance;status:"awaiting_user"|"resumed";contextRequest?:Question};
-type Bridge = {contextState?: (event:ContextCardState)=>Promise<{interactive:boolean}|void>;authorizeReply?: (provenance:Provenance)=>boolean; deliver?: (event: CompletionEvent, callbacks: Callbacks) => Promise<{suppressed?: boolean; reason?: string}>};
+type Bridge = {recoverContextCards?:()=>Promise<void>;contextState?: (event:ContextCardState)=>Promise<{interactive:boolean}|void>;authorizeReply?: (provenance:Provenance)=>boolean; deliver?: (event: CompletionEvent, callbacks: Callbacks) => Promise<{suppressed?: boolean; reason?: string}>};
 const symbol = Symbol.for("ada.codex-completion.v1");
 const state = globalThis as typeof globalThis & {[symbol]?: Bridge};
 const bridge = state[symbol] ??= {};
@@ -291,7 +291,7 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
  };
  const continueQuestion=async(card:QuestionCard):Promise<QuestionCard>=>{
   const p=card.provenance,cfg=runtime.config.current() as ClawdbotConfig,stateDir=runtime.state.resolveStateDir();
-  const working=new FeishuWorkingCard({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:card.messageId,replyInThread:p.replyInThread??false,requester:{openId:p.senderId,name:'',key:''},log:message=>api.logger.warn(message)});
+  const working=new FeishuWorkingCard({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:card.messageId||readAsyncTaskCard(stateDir,card.jobId,p)?.messageId,replyInThread:p.replyInThread??false,requester:{openId:p.senderId,name:'',key:''},log:message=>api.logger.warn(message)});
   if(!card.workingMessageId){
    if(card.workingAttempted)throw Error('Continuation card create was unconfirmed; manual inspection required');
    card={...card,workingAttempted:true};saveQuestionCard(stateDir,card);
@@ -319,25 +319,30 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
   }
   if(!binding || binding.result!==undefined)return;
   let existing=readQuestionCard(stateDir,event.questionId);
-  const answered=event.status==='resumed'?workerQuestionBridge.read?.({jobId:event.jobId,questionId:event.questionId,provenance:p})?.question:undefined;
+  const replyState=event.status==='resumed'?workerQuestionBridge.read?.({jobId:event.jobId,questionId:event.questionId,provenance:p}):undefined;
+  const answered=replyState?.question;
   // Main answers have no human submission turn to create the next work card.
   // Preserve their question/answer history and use the same durable continuation.
   if(event.status==='resumed' && answered?.answerSource==='main_context' && answered.answer!==undefined){
+   if(!['queued','running'].includes(replyState!.status) || (replyState!.latestQuestionId && replyState!.latestQuestionId!==event.questionId))return;
    if(!existing){
     existing={jobId:event.jobId,provenance:p,question:answered,status:'accepted',note:answered.answer,answerSource:'main_context',submittedAt:Date.now(),messageId:sharesAsyncTaskCard(stateDir,binding)?'':binding.messageId};
     saveQuestionCard(stateDir,existing);
    }
-   if(!existing.rendered || existing.status!=='accepted'){
-    if(existing.creationState==='uncertain')throw Error('Question history create was unconfirmed; manual inspection required');
-    existing={...existing,status:'accepted',note:answered.answer,answerSource:'main_context'};
-    const cfg=runtime.config.current() as ClawdbotConfig;
-    if(!existing.messageId){
-     existing.creationState='uncertain';saveQuestionCard(stateDir,existing);
-     try{const sent=await sendCardFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:binding.messageId,replyInThread:p.replyInThread??false,card:renderQuestionCard(existing)});existing.messageId=sent.messageId;delete existing.creationState;}
-     catch(error){if(isFeishuCardValidationRejection(error)){existing.creationState='retryable';saveQuestionCard(stateDir,existing);}throw error;}
-    }else await editMessageFeishu({cfg,accountId:p.accountId,messageId:existing.messageId,card:renderQuestionCard(existing)});
-    existing.rendered=true;saveQuestionCard(stateDir,existing);
-   }
+   try{
+    if(!existing.rendered || existing.status!=='accepted'){
+     if(existing.creationState==='uncertain')throw Error('Question history create was unconfirmed; manual inspection required');
+     existing={...existing,status:'accepted',note:answered.answer,answerSource:'main_context'};
+     const cfg=runtime.config.current() as ClawdbotConfig;
+     if(!existing.messageId){
+      const rendered=renderQuestionCard(existing);
+      existing.creationState='uncertain';saveQuestionCard(stateDir,existing);
+      try{const sent=await sendCardFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:binding.messageId,replyInThread:p.replyInThread??false,card:rendered});existing.messageId=sent.messageId;delete existing.creationState;}
+      catch(error){if(isFeishuCardValidationRejection(error)){existing.creationState='retryable';saveQuestionCard(stateDir,existing);}throw error;}
+     }else await editMessageFeishu({cfg,accountId:p.accountId,messageId:existing.messageId,card:renderQuestionCard(existing)});
+     existing.rendered=true;saveQuestionCard(stateDir,existing);
+    }
+   }catch{api.logger.warn('Main answer history update failed; continuing on a separate work card');}
    if(!authorizeReply(p))return;
    await continueQuestion(existing);
    return;
@@ -435,7 +440,17 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
  };
  const action:NonNullable<typeof workerQuestionBridge.action>=params=>handleWorkerQuestionAction({...params,stateDir:runtime.state.resolveStateDir()});
  const textReply:NonNullable<typeof workerQuestionBridge.textReply>=params=>handleWorkerQuestionTextReply({...params,stateDir:runtime.state.resolveStateDir()});
- api.registerService({id: "feishu-codex-completion", start: async () => {workerQuestionBridge.submission=submission;workerQuestionBridge.action=action;workerQuestionBridge.textReply=textReply;workerQuestionBridge.submit=submit;workerQuestionBridge.authorize=authorizeReply;bridge.deliver = deliver;bridge.authorizeReply=authorizeReply;bridge.contextState=contextState;
+ let recovery:Promise<void>|undefined;
+ const restoreContextCards=async()=>{
+  for(const card of listQuestionCards(runtime.state.resolveStateDir())){
+   if(card.status!=='accepted'||card.answerSource!=='main_context'||(card.workingMessageId&&card.rendered)||!authorizeReply(card.provenance)||card.question.expiresAt<=Date.now())continue;
+   try{await contextState({jobId:card.jobId,questionId:card.question.questionId,provenance:card.provenance,status:'resumed'});}
+   catch{api.logger.warn('Main continuation recovery failed; saved answer retained');}
+  }
+ };
+ const recoverContextCards=()=>recovery??=(restoreContextCards().finally(()=>{recovery=undefined;}));
+ api.registerService({id: "feishu-codex-completion", start: async () => {workerQuestionBridge.submission=submission;workerQuestionBridge.action=action;workerQuestionBridge.textReply=textReply;workerQuestionBridge.submit=submit;workerQuestionBridge.authorize=authorizeReply;bridge.deliver = deliver;bridge.authorizeReply=authorizeReply;bridge.contextState=contextState;bridge.recoverContextCards=recoverContextCards;
+   await recoverContextCards();
    // Restore visible retry controls without replaying an uncertain Main turn or card create.
    for(const card of listQuestionCards(runtime.state.resolveStateDir())){
     if(card.status!=='submitted'||!card.messageId||!authorizeReply(card.provenance)||card.question.expiresAt<=Date.now())continue;
@@ -447,5 +462,5 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
     }catch{console.warn('Pending question recovery failed; saved answer retained');}
    }
   },
-  stop: () => {if(workerQuestionBridge.submission===submission)workerQuestionBridge.submission=undefined;if(workerQuestionBridge.action===action)workerQuestionBridge.action=undefined;if(workerQuestionBridge.textReply===textReply)workerQuestionBridge.textReply=undefined;if(workerQuestionBridge.submit===submit)workerQuestionBridge.submit=undefined;if(workerQuestionBridge.authorize===authorizeReply)workerQuestionBridge.authorize=undefined;if (bridge.deliver === deliver) bridge.deliver = undefined;if(bridge.authorizeReply===authorizeReply)bridge.authorizeReply=undefined;if(bridge.contextState===contextState)bridge.contextState=undefined;}});
+  stop: () => {if(bridge.recoverContextCards===recoverContextCards)bridge.recoverContextCards=undefined;if(workerQuestionBridge.submission===submission)workerQuestionBridge.submission=undefined;if(workerQuestionBridge.action===action)workerQuestionBridge.action=undefined;if(workerQuestionBridge.textReply===textReply)workerQuestionBridge.textReply=undefined;if(workerQuestionBridge.submit===submit)workerQuestionBridge.submit=undefined;if(workerQuestionBridge.authorize===authorizeReply)workerQuestionBridge.authorize=undefined;if (bridge.deliver === deliver) bridge.deliver = undefined;if(bridge.authorizeReply===authorizeReply)bridge.authorizeReply=undefined;if(bridge.contextState===contextState)bridge.contextState=undefined;}});
 }

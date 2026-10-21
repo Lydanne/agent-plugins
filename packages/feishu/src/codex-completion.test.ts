@@ -1077,3 +1077,56 @@ it.each(['not_sent','uncertain'] as const)('Main continuation retains safe retry
   expect(mocks.edit).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();
  }finally{start.mockRestore();hold.mockRestore();creation.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
+
+it.each([false,true])('long Main context retains full data while a bounded history and working card are delivered (shared=%s)',async shared=>{
+ const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');
+ const {FeishuWorkingCard}=await import('./working-card.js');
+ bindAsyncTaskCard(cardStateDir,event.provenance,shared?[event.jobId,'sibling']:[event.jobId],{messageId:'original',imageKey:'gif'});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'next',imageKey:'next-gif'});
+ const question={questionId:'long-main',question:'依据',reason:'缺少',progress:'已准备',expiresAt:Date.now()+60000,answer:'中'.repeat(16000),answerSource:'main_context',knownValues:{large:'值'.repeat(12000)}};
+ workerQuestionBridge.read=()=>({status:'queued',question});await service.start({} as Parameters<typeof service.start>[0]);
+ try{
+  await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:event.provenance,status:'resumed'});
+  const rendered=shared?mocks.send.mock.calls[0][0].card:mocks.edit.mock.calls[0][0].card;
+  expect(Buffer.byteLength(JSON.stringify(rendered))).toBeLessThan(28000);expect(JSON.stringify(rendered)).toContain('摘录');
+  expect(readQuestionCard(cardStateDir,question.questionId)?.note).toBe(question.answer);
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe('next');expect(hold).toHaveBeenCalledOnce();
+ }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
+it('history edit failure does not prevent Main continuation and startup repairs only history',async()=>{
+ const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');const {FeishuWorkingCard}=await import('./working-card.js');
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original',imageKey:'gif'});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'next',imageKey:'gif'});
+ const question={questionId:'history-fail',question:'依据',reason:'缺少',progress:'准备',expiresAt:Date.now()+60000,answer:'完整依据',answerSource:'main_context'};
+ workerQuestionBridge.read=()=>({status:'queued',question});await service.start({} as Parameters<typeof service.start>[0]);
+ try{
+  mocks.edit.mockRejectedValueOnce(Error('transient'));
+  await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:event.provenance,status:'resumed'});
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe('next');
+  expect(readQuestionCard(cardStateDir,question.questionId)?.rendered).not.toBe(true);
+  await service.start({} as Parameters<typeof service.start>[0]);
+  expect(readQuestionCard(cardStateDir,question.questionId)?.rendered).toBe(true);expect(start).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();
+ }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
+it.each(['safe','uncertain','cancelled','recalled','expired','older'] as const)('startup recovers only safe current Main continuation: %s',async scenario=>{
+ const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');const {FeishuWorkingCard}=await import('./working-card.js');
+ const question={questionId:'recover-main',question:'依据',reason:'缺少',progress:'准备',expiresAt:Date.now()+(scenario==='expired'?-1000:60000),answer:'已核实',answerSource:'main_context'};
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original',imageKey:'gif'});
+ saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question,messageId:'original',note:question.answer,answerSource:'main_context',status:'accepted',rendered:true,workingAttempted:scenario==='uncertain'});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'recovered',imageKey:'gif'});
+ workerQuestionBridge.read=()=>({status:scenario==='cancelled'?'cancelled':'running',question,latestQuestionId:scenario==='older'?'new-question':question.questionId});
+ if(scenario==='recalled')mocks.valid=false;
+ try{
+  await service.start({} as Parameters<typeof service.start>[0]);await service.start({} as Parameters<typeof service.start>[0]);
+  expect(start).toHaveBeenCalledTimes(scenario==='safe'?1:0);expect(mocks.run).not.toHaveBeenCalled();
+  expect(readQuestionCard(cardStateDir,question.questionId)?.note).toBe(question.answer);
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe(scenario==='safe'?'recovered':'original');
+ }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});

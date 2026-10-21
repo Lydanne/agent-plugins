@@ -190,7 +190,9 @@ async function queryInternal(params,context={}) {
   if(params.action==='await_user')rememberUserQuestion(continuationLease,resumed,params.questionId);
   const continuationHeld=newlyAnswered&&rememberAsyncContinuation(continuationLease,resumed,params.questionId);
   let presentation={interactive:false,state:'unavailable'};
-  if(sourceBound && (params.action==='await_user'||newlyAnswered)){
+  // An idempotent reply may repair presentation without resuming the business job again.
+  const repairPresentation=params.action==='reply' && ['queued','running'].includes(resumed.status) && resumed.questions?.at(-1)?.questionId===params.questionId;
+  if(sourceBound && (params.action==='await_user'||newlyAnswered||repairPresentation)){
    presentation=await contextPresentation(completionBridge.contextState,{jobId:original.jobId,questionId:params.questionId,provenance:original.provenance,status:params.action==='await_user'?'awaiting_user':'resumed',contextRequest:resumed.contextRequest});
    if(presentation.state==='failed')console.error('Worker context presentation update failed; task state remains authoritative');
   }

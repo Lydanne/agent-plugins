@@ -28,3 +28,9 @@ test('presentation distinguishes delivery failure and requires a usable text fal
  const delivered=await contextPresentation(async()=>({interactive:true}),event);assert.deepEqual(delivered,{interactive:true,state:'delivered'});assert.match(waitingPresentationInstruction(delivered),/成功投递/);assert.match(waitingPresentationInstruction(delivered),/不发送聊天消息/);assert.match(waitingPresentationInstruction(delivered),/不推测或向用户说明加急是否成功/);
  assert.deepEqual(await contextPresentation(async()=>({interactive:true}),{}),{interactive:false,state:'unavailable'});
 });
+
+test('late Worker bridge startup invokes presentation recovery after exposing the reader',async()=>{
+ const bridge=globalThis[Symbol.for('ada.worker-question.v1')];let service,recoveries=0;
+ registerQuestionBridge({registerService:s=>{service=s;}},{},{recoverContextCards:async()=>{assert.equal(typeof bridge.read,'function');recoveries++;}});
+ try{await service.start();assert.equal(recoveries,1);}finally{service.stop();}
+});
