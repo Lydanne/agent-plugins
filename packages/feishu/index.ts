@@ -1,3 +1,4 @@
+import {registerScheduledRequestAdapter} from './src/scheduled-request.js';
 // Feishu plugin entrypoint registers its OpenClaw integration.
 import {
   defineBundledChannelEntry,
@@ -39,6 +40,7 @@ export default defineBundledChannelEntry({
     registerFeishuPeopleTool(api);
     registerFeishuPeopleGroupSync(api);
     registerCodexCompletion(api);
+    registerScheduledRequestAdapter(api);
     registerDocumentBackground(api);
     registerFeishuSubagentHooks(api);
     registerWorkspaceContextHooks(api);

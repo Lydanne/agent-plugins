@@ -1,3 +1,4 @@
+import {registerScheduledRequests} from './scheduled-requests.mjs';
 import {createDiagnosticHub} from './dist/diagnostics-api.mjs';
 import {installRepositoryDiagnostics} from './diagnostic-source.mjs';
 import {createMainPluginCatalogReader} from './plugin-catalog.mjs';
@@ -76,6 +77,7 @@ export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',re
   (binding,options)=>createProjectService(binding,context.agentId,hostConfig,runtime.prepareScope).prepareExecutionScope({projectId:options.projectId,repository:options.repository}),
   (binding,options)=>createProjectService(binding,context.agentId,hostConfig,(selected,scope)=>runtime.prepareScope(selected,{...scope,syncSubmodules:true})).prepareExecutionScope({projectId:options.projectId,repository:options.repository})));
  api.registerTool(context=>{const binding=bindingFor(config,context);return binding?entitySyncTool(context,binding):null;},{optional:true});
+ registerScheduledRequests(api,config);
  api.on?.('message_received',(_event,context)=>{
   const agentId=parseAgentSessionKey(context.sessionKey??'')?.agentId;
   if(bindingFor(config,{agentId})?.sync?.enabled)api.logger?.debug?.('agent-repo: observed inbound message for '+agentId);

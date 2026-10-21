@@ -15,6 +15,8 @@ export type TaskLease = {
   chatType?: FeishuChatType;
   people?: TaskPeople;
   signal: AbortSignal;
+  /** Scheduler-created turns cannot grant new recurring authorization. */
+  scheduledRequest?: boolean;
   /** Trusted executor acknowledgements only; never filled from model prose. */
   asyncJobIds?: string[];
   asyncDispatchAccepted?: boolean;
