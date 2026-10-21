@@ -6,10 +6,10 @@ import {createFeishuCardInteractionEnvelope} from './card-interaction.js';
 import type {TaskLease} from './source-task.js';
 export const WORKER_QUESTION_SUBMIT='worker.question.submit';
 export const WORKER_QUESTION_CANCEL='worker.question.cancel';
-export type Question = ContextRequest & {questionId:string;expiresAt:number;knownValues?:Record<string,unknown>;answer?:string};
+export type Question = ContextRequest & {questionId:string;expiresAt:number;knownValues?:Record<string,unknown>;answer?:string;answerSource?:string};
 export type QuestionProvenance = Omit<TaskLease,'signal'> & {sessionId?:string;requestMessageIds:string[]};
 export type QuestionTextReply = {cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;chatId:string;senderId:string;messageId:string;parentId:string;text:string};
-export type QuestionCard = {jobId:string;provenance:QuestionProvenance;question:Question;messageId:string;status:'waiting'|'submitted'|'accepted'|'cancelled';answers?:Record<string,unknown>;note?:string;answerSource?:'user_card'|'user_text';answerMessageId?:string;validationNote?:string;submittedAt?:number;workingMessageId?:string;workingAttempted?:boolean;rendered?:boolean;creationState?:'retryable'|'uncertain';dispatchAttempts?:number;urgentAttemptedAt?:number;urgentOutcome?:'uncertain'|'sent'|'failed'};
+export type QuestionCard = {jobId:string;provenance:QuestionProvenance;question:Question;messageId:string;status:'waiting'|'submitted'|'accepted'|'cancelled';answers?:Record<string,unknown>;note?:string;answerSource?:'user_card'|'user_text'|'main_context';answerMessageId?:string;validationNote?:string;submittedAt?:number;workingMessageId?:string;workingAttempted?:boolean;rendered?:boolean;creationState?:'retryable'|'uncertain';dispatchAttempts?:number;urgentAttemptedAt?:number;urgentOutcome?:'uncertain'|'sent'|'failed'};
 type QuestionBridge={submission?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{answerText?:string;answerValues?:Record<string,unknown>;answerSource:'user_card'|'user_text';answerMessageId?:string;userSubmittedAt?:number}|undefined;cancel?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string};read?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string;question:Question};submit?:(card:QuestionCard)=>Promise<void>;textReply?:(params:QuestionTextReply)=>Promise<boolean>;action?:(params:{cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;event:import('./card-action.js').FeishuCardActionEvent})=>Promise<void>;authorize?:(p:QuestionProvenance)=>boolean};
 const symbol=Symbol.for('ada.worker-question.v1');
 const globalState=globalThis as typeof globalThis & {[symbol]?:QuestionBridge};
@@ -93,7 +93,7 @@ export function renderQuestionCard(card:QuestionCard,error?:string):Record<strin
   elements.push(markdown('已补充\n'+answerSummary(q,card.answers??{})+(note?'\n'+(card.answerSource==='user_text'?'文字补充：':'补充说明：')+note:'')));
   elements.push(markdown(card.status==='accepted'?'答案已受理，原任务继续处理。':'答案已保存，正在交回 Main。'));
   if(error&&card.status==='submitted')elements.push({tag:'button',text:text('重试交回 Main'),type:'primary',behaviors:[{type:'callback',value:{...questionAction(card),m:{questionId:q.questionId,retry:true}}}]});
-  elements.push(markdown('提交时间：'+new Date(card.submittedAt??Date.now()).toISOString()+' · 回答者为原提问者'));
+  elements.push(markdown('提交时间：'+new Date(card.submittedAt??Date.now()).toISOString()+(card.answerSource==='main_context'?' · Main 自动补充':' · 回答者为原提问者')));
  }
  const rendered={schema:'2.0',config:{update_multi:true,summary:{content:(waiting?'等待您补充：':'已补充：')+q.question.replace(/<[^>]*>/g,'')}},header:{title:text(waiting?'需要您补充':card.status==='cancelled'?'已取消':'已补充'),template:waiting?'orange':card.status==='cancelled'?'grey':'green'},body:{elements}};
  if(Buffer.byteLength(JSON.stringify(rendered),'utf8')>28000)throw Error('Question card exceeds size limit; use a plain-text question');

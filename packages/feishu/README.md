@@ -583,6 +583,8 @@ Worker 的 `context_request` 可携带 `fields`（最多 6 项）、`allowFreeTe
 
 答案先保存到宿主状态目录内的 `feishu-worker-questions/questions.sqlite`（权限 0600），再异步交回所属 Main 的同一个 FIFO，不让飞书回调等待模型执行。提交后卡片 A 保留问题与选择的答案，回复 A 创建仅显示干活中 GIF 的卡片 B；恢复执行事件只更新内部进度，不将 GIF 替换为文字确认卡；Main `reply` 后恢复原 job、原 Worker 会话和执行约束，不另发续接确认消息。B 承接进度，下一次提问原地更新 B，提交后再创建下一张工作卡。最终结果只更新最后一张工作卡，并在任务成功完成后 @ 原对话者提醒；旧问题卡保留问题与答案。结构化字段通过受信任桥接保存到 job 的 `questions[].answerValues`，并传入 `mainReplies`，侧边栏任务过程显示“用户 · 卡片选择”或“Main · 自动补充”，原始 JSON 保留来源和字段。
 
+Main 自动补充也使用同一续接机制：原卡保留问题与实际补充内容，并标记“Main 自动补充”，随后新建仅显示干活中 GIF 的工作卡，继续绑定原 job。共享工作卡时另建补充记录，不覆盖其他任务。重复恢复事件复用已创建的工作卡；发送结果不明时保留尝试标记，不自动重发。
+
 提交去重使用持久化问题状态；并发回调只启动一次续接。失败保留答案，提供显式“重试交回 Main”；重启时恢复提交卡的重试入口，不自动重放不确定的 Main 轮次或卡片创建。创建续接卡结果不确定时不重复创建，需核查实际消息。旧轮次、其他用户和已结束任务不能重复操作；等待阶段不占 Worker 执行并发槽位，不发送成功提醒。真实桌面/移动端控件渲染、回调权限及模型自动补齐效果仍需部署后验收。
 
 旧兼容入口的 Agent Repo 布局支持：workspaceSync.root 为角色仓库，submodules=[]；可配置 project={path:"project",expectedUrl:"登记远端",branch:"main",remote:"origin",submodules:[{name:"wiki",path:"wiki"}]}。project 必须是该角色仓库下真实独立 Git 根目录，禁止外部软链接、Git Submodule及远端不匹配。分别同步角色、项目和显式项目子模块；组合 skillDirectories=["skills","project/.agents/skills"] 的版本发布给 worker，主会话 workspace 应匹配 root。未配置 project 保持单仓行为；迁移前先初始化子模块，不在对话中自动克隆。

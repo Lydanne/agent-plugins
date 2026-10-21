@@ -289,6 +289,24 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
   const cfg=runtime.config.current();const storePath=runtime.agent.session.resolveStorePath(cfg.session?.store,{agentId});
   return !p.sessionId||runtime.agent.session.getSessionEntry({storePath,agentId,sessionKey:p.sessionKey,readConsistency:"latest"})?.sessionId===p.sessionId;
  };
+ const continueQuestion=async(card:QuestionCard):Promise<QuestionCard>=>{
+  const p=card.provenance,cfg=runtime.config.current() as ClawdbotConfig,stateDir=runtime.state.resolveStateDir();
+  const working=new FeishuWorkingCard({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:card.messageId,replyInThread:p.replyInThread??false,requester:{openId:p.senderId,name:'',key:''},log:message=>api.logger.warn(message)});
+  if(!card.workingMessageId){
+   if(card.workingAttempted)throw Error('Continuation card create was unconfirmed; manual inspection required');
+   card={...card,workingAttempted:true};saveQuestionCard(stateDir,card);
+   await working.start();const held=await working.holdForBackground();
+   if(!held){
+    // Upload/preparation failure proves no message was dispatched. Transport
+    // uncertainty keeps the durable attempt marker to prevent duplicate cards.
+    if(working.placeholderCreationState()==='not_sent'){card={...card,workingAttempted:false};saveQuestionCard(stateDir,card);}
+    throw Error('Unable to create continuation card');
+   }
+   if(!continueAsyncTaskCard(stateDir,p,card.jobId,card.question.questionId,held))throw Error('Continuation binding rejected');
+   card={...card,workingMessageId:held.messageId};saveQuestionCard(stateDir,card);
+  }
+  return card;
+ };
  const contextState:NonNullable<Bridge["contextState"]>=async event=>{
   const p=event.provenance;if(!authorizeReply(p))return;
   const stateDir=runtime.state.resolveStateDir();
@@ -300,7 +318,30 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
    bindAsyncTaskCard(stateDir,p,[event.jobId],{messageId:liveTarget});binding=readAsyncTaskCard(stateDir,event.jobId,p);
   }
   if(!binding || binding.result!==undefined)return;
-  const existing=readQuestionCard(stateDir,event.questionId);
+  let existing=readQuestionCard(stateDir,event.questionId);
+  const answered=event.status==='resumed'?workerQuestionBridge.read?.({jobId:event.jobId,questionId:event.questionId,provenance:p})?.question:undefined;
+  // Main answers have no human submission turn to create the next work card.
+  // Preserve their question/answer history and use the same durable continuation.
+  if(event.status==='resumed' && answered?.answerSource==='main_context' && answered.answer!==undefined){
+   if(!existing){
+    existing={jobId:event.jobId,provenance:p,question:answered,status:'accepted',note:answered.answer,answerSource:'main_context',submittedAt:Date.now(),messageId:sharesAsyncTaskCard(stateDir,binding)?'':binding.messageId};
+    saveQuestionCard(stateDir,existing);
+   }
+   if(!existing.rendered || existing.status!=='accepted'){
+    if(existing.creationState==='uncertain')throw Error('Question history create was unconfirmed; manual inspection required');
+    existing={...existing,status:'accepted',note:answered.answer,answerSource:'main_context'};
+    const cfg=runtime.config.current() as ClawdbotConfig;
+    if(!existing.messageId){
+     existing.creationState='uncertain';saveQuestionCard(stateDir,existing);
+     try{const sent=await sendCardFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:binding.messageId,replyInThread:p.replyInThread??false,card:renderQuestionCard(existing)});existing.messageId=sent.messageId;delete existing.creationState;}
+     catch(error){if(isFeishuCardValidationRejection(error)){existing.creationState='retryable';saveQuestionCard(stateDir,existing);}throw error;}
+    }else await editMessageFeishu({cfg,accountId:p.accountId,messageId:existing.messageId,card:renderQuestionCard(existing)});
+    existing.rendered=true;saveQuestionCard(stateDir,existing);
+   }
+   if(!authorizeReply(p))return;
+   await continueQuestion(existing);
+   return;
+  }
   if(event.status==='resumed' && existing && existing.status!=='accepted'){
    const latest=workerQuestionBridge.read?.({jobId:event.jobId,questionId:event.questionId,provenance:p});
    const accepted:QuestionCard={...existing,status:'accepted',note:existing.note??latest?.question.answer};
@@ -365,21 +406,7 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
    if(current?.question.answer!==undefined){saveQuestionCard(runtime.state.resolveStateDir(),{...card,status:'accepted'});return;}
    if(current?.status!=='awaiting_user')throw Error('Question is no longer awaiting user');
    const cfg=runtime.config.current() as ClawdbotConfig,stateDir=runtime.state.resolveStateDir();
-   const account=resolveFeishuRuntimeAccount({cfg,accountId:p.accountId});
-   const working=new FeishuWorkingCard({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:card.messageId,replyInThread:p.replyInThread??false,requester:{openId:p.senderId,name:'',key:''},log:message=>api.logger.warn(message)});
-   if(!card.workingMessageId){
-    if(card.workingAttempted)throw Error('Continuation card create was unconfirmed; manual inspection required');
-    card={...card,workingAttempted:true};saveQuestionCard(stateDir,card);
-    await working.start();const held=await working.holdForBackground();
-    if(!held){
-     // Upload/preparation failure proves no message was dispatched. Transport
-     // uncertainty keeps the durable attempt marker to prevent duplicate cards.
-     if(working.placeholderCreationState()==='not_sent'){card={...card,workingAttempted:false};saveQuestionCard(stateDir,card);}
-     throw Error('Unable to create continuation card');
-    }
-    if(!continueAsyncTaskCard(stateDir,p,card.jobId,card.question.questionId,held))throw Error('Continuation binding rejected');
-    card={...card,workingMessageId:held.messageId};saveQuestionCard(stateDir,card);
-   }
+   card=await continueQuestion(card);
    card={...card,dispatchAttempts:(card.dispatchAttempts??0)+1};saveQuestionCard(stateDir,card);
    const answerEventId='worker-answer:'+card.question.questionId+':'+card.dispatchAttempts;
    const answer=answerSummary(card.question,card.answers??{})+(card.note?'\n补充说明：'+card.note:'');
