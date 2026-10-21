@@ -36,7 +36,7 @@ import { deliverCodexCompletion, type CompletionEvent } from "./codex-completion
 import { bindAsyncTaskCard, readAsyncTaskCard } from "./async-task-card.js";
 import { readPreparedCompletion, savePreparedCompletion } from "./completion-outbox.js";
 
-const cfg = { channels: { feishu: { enabled: true, appId: "fixture-app", appSecret: "fixture-secret" } } };
+const cfg = { agents: { defaults: { workspace: "/fixture/agent-workspace" } }, channels: { feishu: { enabled: true, appId: "fixture-app", appSecret: "fixture-secret" } } };
 const event: CompletionEvent = {
   type: "agent_worker.completed", eventId: "event", jobId: "job", topic: "test",
   status: "completed", reportContent: "已核验结果", reportPaths: [],
@@ -87,7 +87,7 @@ it.each([false, true])("delivers native completion media with the owning runtime
   const receipt = vi.fn(() => { mocks.order.push("receipt"); });
   await deliverCodexCompletion(event, { beforeSend: vi.fn(), onReceipt: receipt }, runtime);
   expect(mocks.ambient).not.toHaveBeenCalled();
-  expect(mocks.load).toHaveBeenCalledExactlyOnceWith("/fixture/done.png", expect.objectContaining({ optimizeImages: false }));
+  expect(mocks.load).toHaveBeenCalledExactlyOnceWith("/fixture/done.png", expect.objectContaining({ optimizeImages: false, localRoots: expect.arrayContaining(["/fixture/agent-workspace"]) }));
   expect(mocks.upload).toHaveBeenCalledExactlyOnceWith({ data: { image_type: "message", image: png } });
   expect(mocks.image).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({
     content: JSON.stringify({ image_key: "img_fixture" }), msgType: "image",

@@ -1,3 +1,4 @@
+import {getAgentScopedMediaLocalRoots} from "openclaw/plugin-sdk/media-runtime";
 import {completionPayloadForMain} from "./completion-payload.js";
 import {urgentQuestion} from './question-urgent.js';
 import {handleWorkerQuestionAction,handleWorkerQuestionTextReply} from './worker-question-action.js';
@@ -189,7 +190,8 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      }
      for(const mediaUrl of document && "mediaUrls" in document ? document.mediaUrls ?? [] : splitMessageImages(finalText,[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],cfg.agents?.defaults?.workspace).images) {
       if(!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted){suppressed=true;return;}
-      await sendMediaFeishu({cfg:completionCfg,mediaRuntime:core.media,accountId:p.accountId,to:"chat:"+p.chatId,replyToMessageId:receipt.messageId,replyInThread:p.replyInThread ?? false,mediaUrl});
+      await sendMediaFeishu({cfg:completionCfg,mediaRuntime:core.media,accountId:p.accountId,to:"chat:"+p.chatId,replyToMessageId:receipt.messageId,replyInThread:p.replyInThread ?? false,mediaUrl,
+       mediaLocalRoots:agentId?getAgentScopedMediaLocalRoots(completionCfg,agentId):undefined});
      }
      callbacks.onReceipt(receipt); sent = true;
      clearPreparedCompletion(stateDir,event);
