@@ -11,8 +11,8 @@ export const defaultConfiguration = {
  state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
  node:'node', cli:'codex',
  codexHome:'~/.codex', pathPrefix:'',
- models:[], modelProfiles:{}, defaultModelId:'', thinkingLevel:0, skillContextRoot:'', projectRouting:'auto',
- model:'gpt-6.1-sol', reasoningEffort:'low', approvalMode:'dangerously-bypass-approvals-and-sandbox',
+ modelProfiles:{default:{enabled:true,harness:'codex',model:'gpt-6.1-sol',reasoningEffort:'low'}}, defaultModelId:'default', thinkingLevel:0, skillContextRoot:'', projectRouting:'auto',
+ approvalMode:'dangerously-bypass-approvals-and-sandbox',
  timeoutMs:600000, skillsEnabled:true, skillDirectories:['skills','.agents/skills'],
  executorInstructions, businessDataPolicy,
  asyncInstructions:'Async completion is enabled. First decide whether delegation is needed: complete short explanations, simple text organization, clarification and replies based on already verified results directly in Ada; do not create a job or call list merely to answer them. Local business queries, Mock operations, logs, source analysis, exports, repairs and report-file writing still require this executor regardless of expected duration. When delegation is needed, this is a dispatch turn. Delegate ALL long operations, delayed replies and waiting simulations to a background run; never hold this Ada turn open to wait for time or business completion. run returns immediately; end the current turn after submission. deliveryMode=wait is not allowed; wait only reads status immediately. Do not poll. The plugin queues completed reports to this Ada session. Use status only for explicit progress questions. ',
@@ -27,30 +27,25 @@ const effortSchema = {type:'string',enum:['minimal','low','medium','high','xhigh
 const speedSchema = {type:'string',enum:['default','fast']};
 const commandSchema = {type:'string',pattern:'\\S',maxLength:40000};
 const levelProfilesSchema = properties=>({type:'object',additionalProperties:false,properties:Object.fromEntries(Array.from({length:7},(_,level)=>[String(level),{type:'object',additionalProperties:false,properties}]))});
-const modelSchema = {type:'object',required:['id','harness','model'],additionalProperties:false,properties:{
- id:{type:'string',pattern:modelIdPattern},name:{type:'string',maxLength:160},description:{type:'string',maxLength:2000},
- harness:{type:'string',enum:['codex']},model:commandSchema,cli:commandSchema,reasoningEffort:effortSchema,speed:speedSchema,
+// Native dictionary keys are stable model IDs; newly added entries start disabled.
+const profileSchema={type:'object',default:{enabled:false,harness:'codex',model:'gpt-6.1-sol',reasoningEffort:'low'},required:['enabled','harness','model'],additionalProperties:false,properties:{
+ enabled:{type:'boolean',default:false},name:{type:'string',maxLength:160},description:{type:'string',maxLength:2000},
+ harness:{type:'string',enum:['codex']},model:commandSchema,cli:commandSchema,reasoningEffort:{...effortSchema,default:'low'},speed:speedSchema,
  thinkingProfiles:levelProfilesSchema({reasoningEffort:effortSchema,speed:speedSchema}),
 }};
-// Native dictionary fields supply the stable model ID. A complete disabled seed makes
-// OpenClaw's add-entry/save-on-blur workflow safe without conditional form schemas.
-const {id:profileId,...profileProperties}=modelSchema.properties;
-const profileSchema={type:'object',default:{enabled:false,harness:'codex',model:defaultConfiguration.model},required:['enabled','harness','model'],additionalProperties:false,properties:{enabled:{type:'boolean',default:false},...profileProperties}};
-const modelProfilesSchema={type:'object',default:{},propertyNames:{type:'string',pattern:modelIdPattern},additionalProperties:profileSchema};
+const modelProfilesSchema={type:'object',propertyNames:{type:'string',pattern:modelIdPattern},additionalProperties:profileSchema};
 export const configurationProperties = Object.fromEntries(Object.entries(defaultConfiguration).map(([key,value])=>{
  const schema={type:Array.isArray(value)?'array':typeof value==='number'?'integer':typeof value,default:value};
  if(typeof value==='string')schema.maxLength=40000;
  if(['state','cwd','codexHome'].includes(key))schema.pattern='^(?:/|~/)';
- if(['cli','node','model'].includes(key))schema.pattern='\\S';
+ if(['cli','node'].includes(key))schema.pattern='\\S';
  if(key==='skillDirectories')Object.assign(schema,{items:{type:'string',pattern:relativePathPattern,maxLength:40000},maxItems:20});
  if(key==='reportDirectory')schema.pattern=relativePathPattern;
  if(key==='projectRouting')schema.enum=['auto','agent-repo','legacy'];
  if(key==='skillContextRoot')schema.pattern='^(?:$|/|~/)';
  if(key==='modelProfiles')Object.assign(schema,modelProfilesSchema);
- if(key==='models')Object.assign(schema,{items:modelSchema,maxItems:50});
  if(key==='defaultModelId')schema.pattern='^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$';
  if(key==='thinkingLevel')Object.assign(schema,{minimum:0,maximum:6});
- if(key==='reasoningEffort')schema.enum=['minimal','low','medium','high','xhigh','max'];
  if(key==='approvalMode')schema.enum=['dangerously-bypass-approvals-and-sandbox','read-only','workspace-write'];
  if(key==='timeoutMs')Object.assign(schema,{minimum:1000,maximum:86400000});
  return [key,schema];
@@ -67,37 +62,39 @@ function validValue(value,schema) {
 const expandHome=value=>typeof value==='string'&&value.startsWith('~/')?join(homedir(),value.slice(2)):value;
 export function resolveConfiguration(input={}) {
  const config={...defaultConfiguration,...input};
+ // Model and effort are execution outputs, never operator-level fallback settings.
+ delete config.models;delete config.model;delete config.reasoningEffort;
  for(const key of ['state','cwd','codexHome','skillContextRoot','node','cli'])config[key]=expandHome(config[key]);
  if(typeof config.pathPrefix==='string')config.pathPrefix=config.pathPrefix.split(delimiter).map(expandHome).join(delimiter);
- if(Array.isArray(config.models))config.models=config.models.map(model=>model&&typeof model==='object'&&!Array.isArray(model)&&Object.hasOwn(model,'cli')?{...model,cli:expandHome(model.cli)}:model);
- if(config.modelProfiles&&typeof config.modelProfiles==='object'&&!Array.isArray(config.modelProfiles))config.modelProfiles=Object.fromEntries(Object.entries(config.modelProfiles).map(([id,profile])=>[id,profile&&typeof profile==='object'&&Object.hasOwn(profile,'cli')?{...profile,cli:expandHome(profile.cli)}:profile]));
+ if(config.modelProfiles&&typeof config.modelProfiles==='object'&&!Array.isArray(config.modelProfiles))config.modelProfiles=Object.fromEntries(Object.entries(config.modelProfiles).map(([id,profile])=>[id,profile&&typeof profile==='object'&&!Array.isArray(profile)?{reasoningEffort:'low',...profile,...(Object.hasOwn(profile,'cli')?{cli:expandHome(profile.cli)}:{})}:profile]));
  for(const [key,schema] of Object.entries(configurationProperties))if(!validValue(config[key],schema))throw Error('Invalid '+key);
- if(new Set(config.models.map(model=>model.id)).size!==config.models.length||new Set(config.models.map(model=>JSON.stringify([model.harness,model.model]))).size!==config.models.length)throw Error('Invalid models: duplicate ID or harness/model');
+ const entries=modelEntries(config),baseline=entries.find(model=>model.id===config.defaultModelId)??entries[0];
+ if(baseline){config.model=baseline.model;config.reasoningEffort=baseline.reasoningEffort;}
+ // Already-admitted execution snapshots retain their selected model and parameters.
+ if(input.harness){config.model=input.model;config.reasoningEffort=input.reasoningEffort;}
  return config;
 }
 function modelEntries(config) {
- const profiles=Object.entries(config.modelProfiles);
- const enabled=profiles.filter(([,profile])=>profile.enabled).map(([id,profile])=>({...profile,id}));
- if(enabled.length)return enabled;
- if(!profiles.length&&config.models.length)return config.models;
- return [{id:'default',harness:'codex',model:config.model,reasoningEffort:config.reasoningEffort}];
+ return Object.entries(config.modelProfiles).filter(([,profile])=>profile.enabled).map(([id,profile])=>({...profile,id}));
 }
 // Level 0 inherits the operator's baseline; it never disables reasoning.
 export function resolveExecution(input={},level,modelId) {
  const config=resolveConfiguration(input);
  const thinkingLevel=level===undefined?config.thinkingLevel:level;
  if(!Number.isInteger(thinkingLevel)||thinkingLevel<0||thinkingLevel>6)throw Error('Invalid thinkingLevel: expected integer 0–6');
- const models=modelEntries(config),selectedId=modelId===undefined?(models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:models[0].id):modelId;
+ const models=modelEntries(config);
+ if(!models.length)throw Error('No enabled model profiles: configure and enable a model in OpenClaw settings');
+ const selectedId=modelId===undefined?(models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:models[0].id):modelId;
  const selected=models.find(model=>model.id===selectedId);
  if(!selected)throw Error('Invalid modelId: choose a configured model');
  const profile=selected.thinkingProfiles?.[String(thinkingLevel)]??{};
- const reasoningEffort=thinkingLevel===0?(selected.reasoningEffort??config.reasoningEffort):['minimal','low','medium','high','xhigh','max'][thinkingLevel-1];
+ const reasoningEffort=thinkingLevel===0?(selected.reasoningEffort):['minimal','low','medium','high','xhigh','max'][thinkingLevel-1];
  const execution={...config,cli:selected.cli??config.cli,model:selected.model,reasoningEffort,...(selected.speed?{speed:selected.speed}:{}),...profile,thinkingLevel,harness:selected.harness,modelId:selected.id,modelName:selected.name||selected.id};
  return {...execution,modelSessionScope:createHash('sha256').update(JSON.stringify([execution.harness,execution.model])).digest('hex')};
 }
 export function modelCatalog(input={}) {
  const config=resolveConfiguration(input),models=modelEntries(config);
- return {defaultModelId:models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:models[0].id,defaultThinkingLevel:config.thinkingLevel,models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,levels:Array.from({length:7},(_,thinkingLevel)=>{const execution=resolveExecution(config,thinkingLevel,model.id);return {thinkingLevel,reasoningEffort:execution.reasoningEffort,...(execution.speed?{speed:execution.speed}:{})};})}))};
+ return {defaultModelId:models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:(models[0]?.id??''),defaultThinkingLevel:config.thinkingLevel,models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,levels:Array.from({length:7},(_,thinkingLevel)=>{const execution=resolveExecution(config,thinkingLevel,model.id);return {thinkingLevel,reasoningEffort:execution.reasoningEffort,...(execution.speed?{speed:execution.speed}:{})};})}))};
 }
 export function executionFingerprint(config,{policyVersion}={}) {
  const keys=['cwd','cli','codexHome','model',...(config.modelSessionScope?['harness']:['reasoningEffort']),'approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];

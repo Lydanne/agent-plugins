@@ -112,7 +112,7 @@ Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`
 
 | 智慧等级 | 默认推理参数 |
 | --- | --- |
-| 0 | 所选模型的默认 `reasoningEffort`；未设置时继承全局值，不表示关闭思考 |
+| 0 | 所选模型的默认 `reasoningEffort`；未设置时使用 `low`，不表示关闭思考 |
 | 1 / 2 / 3 | `minimal` / `low` / `medium` |
 | 4 / 5 / 6 | `high` / `xhigh` / `max` |
 
@@ -153,7 +153,7 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 
 会话按可信聊天 + 项目/仓库 + topic + harness + 模型分别保留。改变等级或速度继续复用当前模型的会话；切换模型使用另一会话，再切回来可恢复原模型的上下文。模型 ID 改名不改变会话身份。不同模型的任务可并行，同一模型的同 topic 仍串行；业务 resourceKeys 跨模型继续串行。任务历史、会话列表及详情携带模型信息，界面按模型分别展示。
 
-为兼容旧部署，`modelProfiles` 为空时仍读取旧 `models` 数组；两者都为空时以顶层 model/reasoningEffort 提供 ID 为 `default` 的 Codex 模型。`modelProfiles` 非空时优先使用其中启用项，全部停用则回退顶层兼容模型。新配置使用 `modelProfiles`，旧 `models` 放在高级配置中；档位覆盖仅在各模型内配置。0–6 的新默认映射适用于新任务；已经受理的旧任务保留原模型及参数。旧会话在下一次真实 run 迁移到模型绑定，保留旧 ID，不重跑任务。
+模型配置统一使用 `modelProfiles`。默认提供 `default`（Codex / `gpt-6.1-sol` / `low`），可直接编辑或按实际可用模型重新配置；新增条目默认停用。没有启用项时目录为空，新任务在创建前返回 `MODEL_NOT_CONFIGURED`，历史查看及已受理任务的状态、回复和取消仍可使用。旧 `models` 数组及顶层 `model`、`reasoningEffort` 已删除，不再回退或自动转换，升级时须删除旧字段并重新配置原生模型项。
 
 ## 本机配置与数据
 
@@ -171,10 +171,8 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 | --- | --- |
 | `cwd`、`cli`、`node` | 执行工作目录、Codex 命令、后台 Node 命令，默认 `~/.openclaw/workspace`、`codex`、`node`；程序可使用绝对路径或 PATH 中的命令名。 |
 | `state`、`codexHome`、`pathPrefix` | 任务存储、Codex 登录/配置目录和执行 PATH 前缀。 |
-| `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及 0–6 级覆盖。无启用项时使用顶层兼容模型。 |
-| `models` | 高级配置中的旧数组，modelProfiles 为空时继续兼容。 |
+| `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及 0–6 级覆盖。无启用项时不能提交新任务。 |
 | `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
-| `model`、`reasoningEffort` | 兼容 models 为空的部署；基线默认 `gpt-6.1-sol` / `low`，新配置使用 models。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
 | `timeoutMs` | 每个 job 的刷新与业务执行总时限，默认 600000 毫秒；排队时间不计入。 |
 | `executorInstructions`、`businessDataPolicy` | 完整替换执行器职责与业务数据展示规则；默认限制业务写入范围并禁止 Git 写操作；`{projectDir}` 在执行和委派提示中替换为当前 `cwd`。 |

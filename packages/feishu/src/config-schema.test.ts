@@ -782,16 +782,17 @@ it('host default application preserves inherited custom business settings',async
  expect(config.businessMessages?.completionMention).toBe('Custom global completion');
 });
 
-it("rejects codex-query invalid settings at the UI boundary with the same runtime constraints",()=>{
+it("rejects agent-worker invalid settings and removed model options at the UI boundary",()=>{
  const manifest=JSON.parse(readFileSync(new URL("../../agent-worker/openclaw.plugin.json",import.meta.url),"utf8"));
  const cases=[{cwd:"relative"},
-  {skillDirectories:["../private"]},{skillDirectories:["a/./b"]},{skillDirectories:["a\\b"]},{reportDirectory:"-flag"},{reportDirectory:"a//b"},{reportDirectory:"a\0b"},{model:"   "},{timeoutMs:0},
+  {skillDirectories:["../private"]},{skillDirectories:["a/./b"]},{skillDirectories:["a\\b"]},{reportDirectory:"-flag"},{reportDirectory:"a//b"},{reportDirectory:"a\0b"},{modelProfiles:{draft:{enabled:false,harness:"codex",model:"   "}}},{timeoutMs:0},
+  {modelProfiles:{}},{modelProfiles:{default:{enabled:true,harness:"codex",model:"fixture-model",reasoningEffort:"high"}}},
   {cwd:"/tmp/project",skillDirectories:[".agents/skills"],reportDirectory:"reports"}];
  for(const value of cases){
   let accepted=true;try{resolveConfiguration(value)}catch{accepted=false;}
   expect(validateJsonSchemaValue({schema:manifest.configSchema,value,applyDefaults:true}).ok,JSON.stringify(value)).toBe(accepted);
  }
- for(const key of ["memoryRoot","memoryToolName","memoryEnabled","memorySemanticEnabled","memoryEmbeddingTimeoutMs"]){
+ for(const key of ["models","model","reasoningEffort","memoryRoot","memoryToolName","memoryEnabled","memorySemanticEnabled","memoryEmbeddingTimeoutMs"]){
   expect(validateJsonSchemaValue({schema:manifest.configSchema,value:{[key]:true},applyDefaults:true}).ok).toBe(false);
  }
 });
