@@ -47,14 +47,14 @@ test('portable published paths resolve at runtime without writing a build-machin
  assert.equal(config.node,'node');assert.equal(config.cli,'codex');assert.equal(config.pathPrefix,'');
  assert.ok(!JSON.stringify(manifest).includes(homedir()));
  assert.ok(!delegationDescription(config).includes('{projectDir}'));
- const input={state:'/fixture/private state',cwd:'/fixture/business workspace',codexHome:'/fixture/codex',skillContextRoot:'~/fixture-agent',node:'~/bin/node',cli:'~/bin/codex',pathPrefix:['~/bin','/fixture/bin'].join(delimiter),thinkingProfiles:{'2':{cli:'~/bin/profile-codex'}}};
+ const input={state:'/fixture/private state',cwd:'/fixture/business workspace',codexHome:'/fixture/codex',skillContextRoot:'~/fixture-agent',node:'~/bin/node',cli:'~/bin/codex',pathPrefix:['~/bin','/fixture/bin'].join(delimiter),models:[{id:'custom',harness:'codex',model:'fixture-model',cli:'~/bin/model-codex'}]};
  const custom=resolveConfiguration(input);
  assert.equal(custom.state,input.state);assert.equal(custom.cwd,input.cwd);assert.equal(custom.codexHome,input.codexHome);
  assert.equal(custom.skillContextRoot,join(homedir(),'fixture-agent'));
  assert.equal(custom.node,join(homedir(),'bin/node'));assert.equal(custom.cli,join(homedir(),'bin/codex'));
  assert.equal(custom.pathPrefix,[join(homedir(),'bin'),'/fixture/bin'].join(delimiter));
- assert.equal(resolveExecution(custom,2).cli,join(homedir(),'bin/profile-codex'));
- assert.equal(input.thinkingProfiles['2'].cli,'~/bin/profile-codex');
+ assert.equal(resolveExecution(custom,2).cli,join(homedir(),'bin/model-codex'));
+ assert.equal(input.models[0].cli,'~/bin/model-codex');
  const args=cliArguments(custom),instructions=JSON.parse(args.find(value=>value.startsWith('developer_instructions=')).slice('developer_instructions='.length));
  assert.ok(instructions.includes(custom.cwd));assert.ok(!instructions.includes('{projectDir}'));
  assert.ok(delegationDescription(custom).includes(custom.cwd));
@@ -152,7 +152,7 @@ test('memory feature combinations advertise the actual admission and native tool
 test('registration and manifest expose only delegation without inactive history configuration',()=>{
  const manifest=JSON.parse(requireManifestText);
  assert.deepEqual(manifest.contracts.tools,['agent_worker']);
- for(const key of ['memoryRoot','memoryToolName','memoryEnabled','memorySemanticEnabled','memoryEmbeddingTimeoutMs','larkCli','openclawHome','larkPathPrefix','historyEnabled','historyLimit','historyTimeoutMs']) {
+ for(const key of ['memoryRoot','memoryToolName','memoryEnabled','memorySemanticEnabled','memoryEmbeddingTimeoutMs','larkCli','openclawHome','larkPathPrefix','historyEnabled','historyLimit','historyTimeoutMs','thinkingProfiles']) {
   assert.ok(!(key in defaultConfiguration));
   assert.ok(!(key in manifest.configSchema.properties));
   assert.ok(!(key in manifest.uiHints));
@@ -164,20 +164,20 @@ test('registration and manifest expose only delegation without inactive history 
 });
 
 
-test('seven thinking levels inherit baseline at zero and route only administrator-owned Codex settings',()=>{
+test('seven thinking levels inherit baseline at zero and use per-model profiles',()=>{
  const config=resolveConfiguration({model:'baseline-model',reasoningEffort:'medium'});
  assert.equal(resolveExecution(config,0).reasoningEffort,'medium');
  for(const [level,effort] of ['minimal','low','medium','high','xhigh','max'].entries())assert.equal(resolveExecution(config,level+1).reasoningEffort,effort);
- const custom=resolveExecution({...config,thinkingLevel:2,thinkingProfiles:{'2':{harness:'codex',cli:'/fixture/custom-codex',model:'other-model',reasoningEffort:'high',speed:'fast'}}});
+ const custom=resolveExecution({...config,thinkingLevel:2,models:[{id:'custom',harness:'codex',cli:'/fixture/custom-codex',model:'other-model',thinkingProfiles:{'2':{reasoningEffort:'high',speed:'fast'}}}]});
  assert.equal(custom.thinkingLevel,2);assert.equal(custom.cli,'/fixture/custom-codex');assert.equal(custom.model,'other-model');
  assert.ok(cliArguments(custom).includes('service_tier="fast"'));assert.ok(cliArguments(custom).includes('model_reasoning_effort="high"'));
  assert.equal(executionFingerprint(custom),executionFingerprint({...custom,speed:'default'}));
  for(const level of [-1,7,1.5,'3',null])assert.throws(()=>resolveExecution(config,level),/thinkingLevel/);
- for(const thinkingProfiles of [[],null,{'7':{}},{'1':{harness:'claude'}},{'0':{speed:'invalid'}},{'2':{shell:'command'}},{'3':{model:' '}}])assert.throws(()=>resolveConfiguration({thinkingProfiles}));
+ for(const thinkingProfiles of [[],null,{'7':{}},{'1':{harness:'claude'}},{'0':{speed:'invalid'}},{'2':{shell:'command'}},{'3':{model:' '}}])assert.throws(()=>resolveConfiguration({models:[{id:'custom',harness:'codex',model:'fixture-model',thinkingProfiles}]}));
 });
 
 test('selected level reaches the local CLI; effective routing changes migrate without hiding unchanged topics',async t=>{
- const base=await fixture(t),config={...base,thinkingProfiles:{'3':{model:'level-three',speed:'fast'}}};
+ const base=await fixture(t),config={...base,models:[{id:'level',harness:'codex',model:'level-three',thinkingProfiles:{'3':{speed:'fast'}}}]};
  const context={sessionKey:'level-routing-fixture'},params={action:'run',topic:'level-topic',task:'read',constraints:'read only',context:'none',thinkingLevel:3};
  const decode=response=>JSON.parse(response.content[0].text);
  const first=decode(await executeQuery(params,context,config));
@@ -185,18 +185,18 @@ test('selected level reaches the local CLI; effective routing changes migrate wi
  assert.equal(decode(await executeQuery({action:'list'},context,config)).tasks[0].needsMigration,false);
  const resumed=decode(await executeQuery(params,context,config));assert.equal(resumed.sessionId,first.sessionId);
  const migrated=decode(await executeQuery({...params,thinkingLevel:0},context,config));
- assert.equal(migrated.model,base.model);assert.equal(migrated.migratedFrom,undefined);
+ assert.equal(migrated.model,'level-three');assert.equal(migrated.migratedFrom,undefined);
  assert.equal(decode(await executeQuery(params,context,config)).sessionId,first.sessionId);
  const calls=(await readFile(join(config.cwd,'seen.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));
  assert.ok(calls[0].args.includes('service_tier="fast"'));assert.ok(calls[0].args.includes('level-three'));
 });
 
 test('admitted jobs freeze level routing while future jobs use the updated operator configuration',async t=>{
- let config={...await fixture(t),thinkingProfiles:{'5':{model:'accepted-model',speed:'fast'}}};
+ let config={...await fixture(t),models:[{id:'snapshot',harness:'codex',model:'accepted-model',thinkingProfiles:{'5':{speed:'fast'}}}]};
  const jobs=createJobs({root:join(config.state,'jobs'),node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:params=>resolveExecution(config,params?.thinkingLevel),logger:console});
  const params={topic:'snapshot-level',task:'read',context:'none',constraints:'read only',thinkingLevel:5,waitSeconds:0};
  const accepted=await jobs.run(params,'snapshot-level-fixture');
- config={...config,thinkingProfiles:{'5':{model:'later-model'}}};
+ config={...config,models:[{id:'snapshot',harness:'codex',model:'later-model'}]};
  const request=readJson(join(config.state,'jobs',accepted.jobId+'.request.json'));
  assert.equal(request.runtime.model,'accepted-model');assert.equal(request.runtime.thinkingLevel,5);assert.equal(request.runtime.speed,'fast');
  const completed=await jobs.wait(accepted.jobId,'snapshot-level-fixture',5);assert.equal(completed.status,'completed');
@@ -265,7 +265,12 @@ test('model catalog exposes seven levels per harness/model and rejects invalid o
  assert.deepEqual(catalog.models[0].levels[6],{thinkingLevel:6,reasoningEffort:'high',speed:'default'});
  assert.equal(resolveExecution(config).model,'fixture-deep');
  assert.equal(resolveExecution(config,6,'quick').model,'fixture-quick');
- assert.equal(resolveExecution({...config,thinkingProfiles:{'6':{model:'legacy-override'}}},6,'quick').model,'fixture-quick');
+ for(const models of [[],modelOptions()]) {
+  const execution=resolveExecution({...config,models,defaultModelId:'',thinkingProfiles:{'6':{model:'legacy-override',cli:'/legacy-cli',reasoningEffort:'minimal',speed:'fast'}}},6);
+  assert.equal(execution.model,models.length?'fixture-quick':config.model);
+  assert.equal(execution.cli,config.cli);assert.equal(execution.reasoningEffort,models.length?'high':'max');
+  assert.equal(execution.speed,models.length?'default':undefined);
+ }
  for(const models of [null,{},[null],[{id:'bad',model:'x'}],[{id:'bad',harness:'claude',model:'x'}],[{id:'bad id',harness:'codex',model:'x'}],[...modelOptions(),modelOptions()[0]],[modelOptions()[0],{...modelOptions()[1],model:'fixture-quick'}],[{...modelOptions()[0],thinkingProfiles:{'6':{model:'arbitrary'}}}],[{...modelOptions()[0],thinkingProfiles:{'7':{}}}],[{...modelOptions()[0],thinkingProfiles:{'0':{speed:'invalid'}}}]])assert.throws(()=>resolveConfiguration({models}),/models/);
  assert.throws(()=>resolveConfiguration({models:modelOptions(),defaultModelId:'missing'}),/defaultModelId/);
  for(const id of ['missing','',null,42])assert.throws(()=>resolveExecution(config,0,id),/modelId/);

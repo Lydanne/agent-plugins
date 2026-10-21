@@ -151,11 +151,11 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 
 会话按可信聊天 + 项目/仓库 + topic + harness + 模型分别保留。改变等级或速度继续复用当前模型的会话；切换模型使用另一会话，再切回来可恢复原模型的上下文。模型 ID 改名不改变会话身份。不同模型的任务可并行，同一模型的同 topic 仍串行；业务 resourceKeys 跨模型继续串行。任务历史、会话列表及详情携带模型信息，界面按模型分别展示。
 
-为兼容旧部署，models 为空时以顶层 model/reasoningEffort 提供 ID 为 `default` 的 Codex 模型，并继续接受顶层 thinkingProfiles。新配置应把模型与推理参数迁到 models；顶层 thinkingProfiles 不影响显式模型列表。0–6 的新默认映射适用于新任务；已经受理的旧任务保留原模型及参数。旧会话在下一次真实 run 迁移到模型绑定，保留旧 ID，不重跑任务。
+为兼容旧部署，models 为空时以顶层 model/reasoningEffort 提供 ID 为 `default` 的 Codex 模型。新配置应把模型与推理参数迁到 models；档位覆盖仅在各模型内配置。0–6 的新默认映射适用于新任务；已经受理的旧任务保留原模型及参数。旧会话在下一次真实 run 迁移到模型绑定，保留旧 ID，不重跑任务。
 
 ## 本机配置与数据
 
-默认通过宿主 PATH 中的 `codex` 和 `node` 执行。管理员可在 OpenClaw UI 显式设置程序绝对路径、工作目录、CODEX_HOME 和存储目录，不需要改源码。`state`、`cwd`、`codexHome`、`skillContextRoot`、`cli`、`node`、模型 CLI、兼容旧版档位 CLI 及 PATH 前缀中的 `~/` 在运行时按宿主用户展开；发布的插件清单只保存通用默认值。
+默认通过宿主 PATH 中的 `codex` 和 `node` 执行。管理员可在 OpenClaw UI 显式设置程序绝对路径、工作目录、CODEX_HOME 和存储目录，不需要改源码。`state`、`cwd`、`codexHome`、`skillContextRoot`、`cli`、`node`、模型 CLI 及 PATH 前缀中的 `~/` 在运行时按宿主用户展开；发布的插件清单只保存通用默认值。
 
 默认工作目录为 `~/.openclaw/workspace`，任务存储为 `~/.openclaw/codex-query-sessions`，Codex 配置目录为 `~/.codex`，PATH 前缀为空。路径约束不代表操作系统权限隔离；职责、数据规则和每轮授权仍须按部署用途配置。
 
@@ -171,7 +171,7 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 | `state`、`codexHome`、`pathPrefix` | 任务存储、Codex 登录/配置目录和执行 PATH 前缀。 |
 | `models`、`defaultModelId` | 可添加的 harness + 模型列表及默认模型 ID；每项可配置用途、CLI、推理强度、速度及 0–6 级覆盖。留空列表兼容顶层 model。 |
 | `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
-| `model`、`reasoningEffort`、`thinkingProfiles` | 兼容 models 为空的部署；基线默认 `gpt-6.1-sol` / `low`，新配置使用 models。 |
+| `model`、`reasoningEffort` | 兼容 models 为空的部署；基线默认 `gpt-6.1-sol` / `low`，新配置使用 models。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
 | `timeoutMs` | 每个 job 的刷新与业务执行总时限，默认 600000 毫秒；排队时间不计入。 |
 | `executorInstructions`、`businessDataPolicy` | 完整替换执行器职责与业务数据展示规则；默认限制业务写入范围并禁止 Git 写操作；`{projectDir}` 在执行和委派提示中替换为当前 `cwd`。 |
@@ -403,28 +403,7 @@ main 完成轮次按 `provenance.senderId` 读取原提问者的当前账号画�
 
 对外工具已更名为 `agent_worker`；插件 ID 已迁移为 `agent-worker`；原状态目录和可信桥接协议保持兼容，旧后台任务继续查询和取消。工具白名单需将 `codex_query` 换成 `agent_worker`。新完成事件为 `agent_worker.completed`，飞书适配器仍兼容旧事件。
 
-`run` 可传整数 `thinkingLevel`，省略时使用管理员 `thinkingLevel`（默认 0）。0 表示基线配置，不是关闭思考。1–5 默认映射 low、medium、high、xhigh、max。档位是一套路由配置，不代表不同模型之间严格等价的推理能力。实际支持的推理参数、模型与 fast 服务取决于本地 Codex 和账号；CLI 拒绝时任务如实失败，不降档或自动重跑。
-
-在 `plugins.entries.agent-worker.config` 配置，例如：
-
-```json
-{
-  "thinkingLevel": 0,
-  "cli": "codex",
-  "model": "gpt-6.1-sol",
-  "reasoningEffort": "low",
-  "thinkingProfiles": {
-    "0": {"harness": "codex", "speed": "default"},
-    "1": {"harness": "codex", "reasoningEffort": "low"},
-    "2": {"harness": "codex", "reasoningEffort": "medium"},
-    "3": {"harness": "codex", "reasoningEffort": "high"},
-    "4": {"harness": "codex", "reasoningEffort": "xhigh"},
-    "5": {"harness": "codex", "reasoningEffort": "max", "speed": "fast"}
-  }
-}
-```
-
-每档允许覆盖 harness、cli、model、reasoningEffort、speed。首批 harness 仅允许 codex；CLI 可指定不同本地 Codex 可执行程序，不执行 shell 拼接命令。speed 对应 Codex `service_tier`，default 为标准服务，fast 为快速服务；省略时保留 Codex 自身配置。每个已受理任务保存配置快照；不同有效执行配置触发 topic 会话迁移，保留历史会话 ID。仅模型可选档位，不能从工具参数注入 CLI、模型或任意命令。
+`run` 可传整数 `thinkingLevel`（0–6），省略时使用管理员默认等级。配置方式和各等级映射见上文“模型与智慧等级”；档位仅覆盖所选模型的推理强度与速度，不能改变 harness、模型或 CLI。已受理任务保留原配置快照。实际支持的参数和 fast 服务取决于本地 Codex 和账号；CLI 拒绝时任务如实失败，不降档或自动重跑。
 
 Codex 原始参数与服务档位定义：[官方配置参考](https://developers.openai.com/codex/config-reference/)。
 

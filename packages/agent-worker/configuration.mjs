@@ -11,7 +11,7 @@ export const defaultConfiguration = {
  state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
  node:'node', cli:'codex',
  codexHome:'~/.codex', pathPrefix:'',
- models:[], defaultModelId:'', thinkingLevel:0, thinkingProfiles:{}, skillContextRoot:'', projectRouting:'auto',
+ models:[], defaultModelId:'', thinkingLevel:0, skillContextRoot:'', projectRouting:'auto',
  model:'gpt-6.1-sol', reasoningEffort:'low', approvalMode:'dangerously-bypass-approvals-and-sandbox',
  timeoutMs:600000, skillsEnabled:true, skillDirectories:['skills','.agents/skills'],
  executorInstructions, businessDataPolicy,
@@ -44,7 +44,6 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='models')Object.assign(schema,{items:modelSchema,maxItems:50});
  if(key==='defaultModelId')schema.pattern='^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$';
  if(key==='thinkingLevel')Object.assign(schema,{minimum:0,maximum:6});
- if(key==='thinkingProfiles')Object.assign(schema,levelProfilesSchema({harness:{type:'string',enum:['codex']},cli:commandSchema,model:commandSchema,reasoningEffort:effortSchema,speed:speedSchema}));
  if(key==='reasoningEffort')schema.enum=['minimal','low','medium','high','xhigh','max'];
  if(key==='approvalMode')schema.enum=['dangerously-bypass-approvals-and-sandbox','read-only','workspace-write'];
  if(key==='timeoutMs')Object.assign(schema,{minimum:1000,maximum:86400000});
@@ -64,7 +63,6 @@ export function resolveConfiguration(input={}) {
  const config={...defaultConfiguration,...input};
  for(const key of ['state','cwd','codexHome','skillContextRoot','node','cli'])config[key]=expandHome(config[key]);
  if(typeof config.pathPrefix==='string')config.pathPrefix=config.pathPrefix.split(delimiter).map(expandHome).join(delimiter);
- if(config.thinkingProfiles&&typeof config.thinkingProfiles==='object'&&!Array.isArray(config.thinkingProfiles))config.thinkingProfiles=Object.fromEntries(Object.entries(config.thinkingProfiles).map(([level,profile])=>[level,profile&&typeof profile==='object'&&!Array.isArray(profile)&&Object.hasOwn(profile,'cli')?{...profile,cli:expandHome(profile.cli)}:profile]));
  if(Array.isArray(config.models))config.models=config.models.map(model=>model&&typeof model==='object'&&!Array.isArray(model)&&Object.hasOwn(model,'cli')?{...model,cli:expandHome(model.cli)}:model);
  for(const [key,schema] of Object.entries(configurationProperties))if(!validValue(config[key],schema))throw Error('Invalid '+key);
  if(new Set(config.models.map(model=>model.id)).size!==config.models.length||new Set(config.models.map(model=>JSON.stringify([model.harness,model.model]))).size!==config.models.length)throw Error('Invalid models: duplicate ID or harness/model');
@@ -72,7 +70,7 @@ export function resolveConfiguration(input={}) {
  return config;
 }
 function modelEntries(config) {
- return config.models.length?config.models:[{id:'default',harness:'codex',model:config.model,reasoningEffort:config.reasoningEffort,thinkingProfiles:config.thinkingProfiles}];
+ return config.models.length?config.models:[{id:'default',harness:'codex',model:config.model,reasoningEffort:config.reasoningEffort}];
 }
 // Level 0 inherits the operator's baseline; it never disables reasoning.
 export function resolveExecution(input={},level,modelId) {
