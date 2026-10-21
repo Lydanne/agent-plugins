@@ -1,3 +1,4 @@
+import {splitCompletionReportLink} from "./completion-report-link.js";
 import {randomUUID} from "node:crypto";
 import {mkdirSync,chmodSync} from "node:fs";
 import {join,basename} from "node:path";
@@ -18,7 +19,7 @@ import {runFeishuWorkingTurn} from "./working-turn-queue.js";
 import {withinCardTableLimit} from "./presentation-card.js";
 
 type Source=Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds">;
-type Job={confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"staging_failed"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
+type Job={reportInReminder?:boolean;confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"staging_failed"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
 export type StagedDocument={id:string;text:string};
 function database(stateDir:string) {
   const dir=join(stateDir,"feishu-document-uploads");mkdirSync(dir,{recursive:true,mode:0o700});
@@ -81,10 +82,11 @@ export async function stageBackgroundDocument(params:DeliveryParams & {stateDir:
 }
 
 /** Activate only after the first card's platform receipt, never after an uncertain send. */
-export function activateBackgroundDocument(stateDir:string,stage:StagedDocument,messageId:string,unbound=false,displayPrefix=""):void {
+export function activateBackgroundDocument(stateDir:string,stage:StagedDocument,messageId:string,unbound=false,displayPrefix="",reportInReminder=false):void {
   const job=jobs(stateDir,{id:stage.id})[0];if(!job || job.status!=="draft")return;
   if(unbound)job.completionJobId=undefined;
-  job.messageId=messageId;job.displayPrefix=displayPrefix;job.publishedText=displayPrefix+stage.text;job.status="queued";save(stateDir,job);
+  job.reportInReminder=reportInReminder;
+  job.messageId=messageId;job.displayPrefix=displayPrefix;job.publishedText=displayPrefix+(reportInReminder?splitCompletionReportLink(stage.text).text:stage.text);job.status="queued";save(stateDir,job);
   // The service timer starts uploads in its own scope, independent of the human turn.
 }
 
@@ -118,6 +120,7 @@ export function registerDocumentBackground(api:OpenClawPluginApi) {
           const client=createFeishuClient(resolveFeishuRuntimeAccount({cfg,accountId:job.source.accountId}));
           try {await writeDoc(client,job.documentId,"上传未完成\n\n"+(interrupted?"服务重启中断了上传。":"完整报告上传失败或文件不存在。")+"总结已经交付，请联系管理员核对报告。"+skippedNotice,20*1024*1024,30000);} catch {check();console.warn("Feishu upload status document update failed");}
         }
+        if(job.reportInReminder)text=splitCompletionReportLink(text).text;
         job.finalText=text;save(stateDir,job);
         console.info(`Feishu background document processed: upload=${success?"succeeded":job.uploadFailure?"failed":"not_attempted"} (${Date.now()-started}ms)`);
         // The published text has a platform receipt. An unchanged result does

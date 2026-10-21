@@ -1,3 +1,4 @@
+import {splitCompletionReportLink,hasCloudReportLink} from "./completion-report-link.js";
 const completionRules=readFileSync(new URL('../../agent-worker/skills/agent-worker-context/references/completion.md',import.meta.url),'utf8');
 import * as documentBackground from "./document-background.js";
 import * as documentDelivery from "./document-delivery.js";
@@ -109,7 +110,7 @@ it('adds the canonical full report when main omitted it, without duplicating an 
  expect(ensureCompletionReportLink('核验结论',sample)).toBe(`核验结论\n\n[完整报告](<${path}>)`);
  for(const text of [`结果 [完整报告](<${path}>)`,`结果 [报告](${path}:12)`])expect(ensureCompletionReportLink(text,sample)).toBe(text);
  expect(ensureCompletionReportLink('结果\n```md\n'+path+'\n```',sample)).toContain('[完整报告]');
- expect(completionRules).toContain('最终总结末尾必须附完整报告的 Markdown 链接');
+ expect(completionRules).toContain('正文已有报告链接时，提醒不重复添加');
 });
 it('never fabricates a report link when it was not written, captured or bound to the event paths',()=>{
  for(const sample of [event,{...event,taskReport:{storage:{state:'inline'}}},
@@ -129,7 +130,7 @@ it('persists a missing report link with the prepared final reply before converti
   bindAsyncTaskCard(cardStateDir,sample.provenance,[sample.jobId],{messageId:'original-card'});
   await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:vi.fn()});
   expect(prepare).toHaveBeenCalledWith(expect.objectContaining({text:finalText}));
-  const card=JSON.stringify(mocks.edit.mock.calls[0][0]);expect(card).toContain('核验结果');expect(card).toContain('https://feishu.cn/docx/full-report');expect(card).not.toContain('/workspace/');
+  const card=JSON.stringify(mocks.edit.mock.calls[0][0]);expect(card).toContain('核验结果');expect(card).not.toContain('https://feishu.cn/docx/full-report');expect(JSON.stringify(mocks.send.mock.calls)).toContain('https://feishu.cn/docx/full-report');expect(card).not.toContain('/workspace/');
  }finally{prepare.mockRestore();}
 });
 it.each(['completed','failed','timed_out','cancelled'])('retains terminal status %s and actionable experience review',status=>{
@@ -410,7 +411,7 @@ it('acknowledges the summarized completion on its original card before handing u
   const receipt=vi.fn();await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:receipt});
   expect(prepare).not.toHaveBeenCalled();expect(mocks.edit).toHaveBeenCalledOnce();
   expect(JSON.stringify(mocks.edit.mock.calls)).toContain('[完整报告](https://feishu.cn/docx/status)');expect(receipt).toHaveBeenCalledWith(expect.objectContaining({messageId:'original-card'}));
-  expect(activate).toHaveBeenCalledWith(cardStateDir,expect.objectContaining({id:'stage'}),'original-card',false);
+  expect(activate).toHaveBeenCalledWith(cardStateDir,expect.objectContaining({id:'stage'}),'original-card',false,'',false);
   expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toContain('[完整报告](https://feishu.cn/docx/status)');
  }finally{stage.mockRestore();activate.mockRestore();prepare.mockRestore();}
 });
@@ -987,4 +988,39 @@ it('sends a completion image as native media beside the accepted result card',as
  await deliverCodexCompletion(memberEvent,{beforeSend:vi.fn(),onReceipt:vi.fn()});
  expect(mocks.media).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({mediaUrl:'/workspace/received.png',replyToMessageId:'original-card'}));
  expect(mocks.send).not.toHaveBeenCalled();prepare.mockRestore();
+});
+
+it.each([false,true])('puts only the missing report in the reminder (existing: %s)',async existing=>{
+ const url='https://feishu.cn/docx/report',report=`核验结果\n\n[完整报告](${url})`;
+ const text=existing?report:'核验结果';
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original-card',imageKey:'working'});
+ mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text},{kind:'final'}));
+ const stage=vi.spyOn(documentBackground,'stageBackgroundDocument').mockResolvedValue(undefined);
+ const prepare=vi.spyOn(documentDelivery,'prepareFeishuDocumentDelivery').mockResolvedValue({text:report,mediaUrls:[]});
+ try {
+  await deliverCodexCompletion({...event,taskReport:{storage:{state:'written',path:event.reportPaths[0]}}},{beforeSend:vi.fn(),onReceipt:vi.fn()});
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe(existing?report:'核验结果');
+  expect(mocks.send.mock.calls.at(-1)![0]).toMatchObject({plainText:existing,text:'老师，结果已更新，请查看上方回复。'+(existing?'':` [完整报告](${url})`)});
+ }finally{stage.mockRestore();prepare.mockRestore();}
+});
+it('restores the report to the card if its reminder fails',async()=>{
+ const report='核验结果\n\n[完整报告](https://feishu.cn/docx/report)';
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original-card',imageKey:'working'});
+ const stage=vi.spyOn(documentBackground,'stageBackgroundDocument').mockResolvedValue(undefined);
+ const prepare=vi.spyOn(documentDelivery,'prepareFeishuDocumentDelivery').mockResolvedValue({text:report,mediaUrls:[]});
+ mocks.send.mockRejectedValue(Error('send failed'));
+ try {
+  await deliverCodexCompletion({...event,taskReport:{storage:{state:'written',path:event.reportPaths[0]}}},{beforeSend:vi.fn(),onReceipt:vi.fn()});
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe(report);
+  expect(mocks.edit).toHaveBeenCalledTimes(2);
+ }finally{stage.mockRestore();prepare.mockRestore();}
+});
+
+it('distinguishes report links from examples and preserves signed URLs',()=>{
+ const url='https://feishu.cn/docx/report?signature=a%2Fb&expires=123';
+ expect(splitCompletionReportLink(`结论\n\n[完整报告](${url})\n\n上传提示`)).toEqual({text:'结论\n\n上传提示',link:`[完整报告](${url})`});
+ const code=`\`\`\`md\n[完整报告](${url})\n\`\`\``;
+ expect(splitCompletionReportLink(code)).toEqual({text:code});expect(hasCloudReportLink(code)).toBe(false);
+ expect(hasCloudReportLink(`[业务下载](https://download.test/result.zip)`)).toBe(false);
+ expect(hasCloudReportLink(`[完整报告](${url})`)).toBe(true);
 });

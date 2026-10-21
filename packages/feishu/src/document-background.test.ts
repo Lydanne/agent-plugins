@@ -194,3 +194,13 @@ it("does not create a document placeholder for message images or capture mixed r
  }
  expect(mocks.create).not.toHaveBeenCalled();
 });
+
+it('does not reinsert a report delivered in the reminder after upload',async()=>{
+ const pending=await stage();
+ mocks.prepare.mockResolvedValue({text:'核验总结\n\n[完整报告](https://feishu.cn/docx/cloud)\n\n附件说明',documentId:'cloud'});
+ activateBackgroundDocument(root,pending,'original',true,'',true);start();
+ await vi.waitFor(()=>expect(rows()[0].status).toBe('done'));
+ expect(JSON.stringify(mocks.edit.mock.calls)).toContain('附件说明');
+ expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain('[完整报告]');
+ expect(rows()[0].finalText).toBe('核验总结\n\n附件说明');
+});

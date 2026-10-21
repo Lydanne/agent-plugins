@@ -1,3 +1,4 @@
+import {splitCompletionReportLink,hasCloudReportLink} from "./completion-report-link.js";
 import {getAgentScopedMediaLocalRoots} from "openclaw/plugin-sdk/media-runtime";
 import {completionPayloadForMain} from "./completion-payload.js";
 import {urgentQuestion} from './question-urgent.js';
@@ -53,7 +54,7 @@ export function ensureCompletionReportLink(text:string,event:CompletionEvent):st
    typeof storage.path==="string" && event.reportPaths.includes(storage.path))available.unshift(storage.path);
  }
  const paths=[...new Set(available)].filter(path=>path.startsWith("/") && !/[\r\n<>]/.test(path));
- if(!paths.length || findLocalFileReferences(text).some(ref=>paths.includes(ref.path)))return text;
+ if(!paths.length || hasCloudReportLink(text) || findLocalFileReferences(text).some(ref=>paths.includes(ref.path)))return text;
  return text+`\n\n[完整报告](<${paths[0]}>)`;
 }
 
@@ -148,7 +149,10 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,
       mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal});
      if (!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
-     const deliveryText=document?.text ?? finalText;
+     let deliveryText=document?.text ?? finalText;
+     const reportFallback=finalText!==replyText && !hasCloudReportLink(replyText) ? splitCompletionReportLink(deliveryText) : {text:deliveryText};
+     const reminderReport=binding && reportFallback.text.trim() && reportFallback.link && prepareAsyncCardResult(stateDir,binding,deliveryText,accountConfig).fits ? reportFallback.link : undefined;
+     if(reminderReport)deliveryText=reportFallback.text;
      let receipt;
      let resultMentionsRequester = false;
      if (binding) {
@@ -184,32 +188,40 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       receipt = await sendMessageFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
        replyToMessageId: messageId, text: `<at id="${p.senderId}"></at>${renderBusinessMessage(businessMessages,"mentionSuffix")}\n` + deliveryText, replyInThread: p.replyInThread ?? false});
      }
-     if(staged) {
-      if(binding)activateBackgroundDocument(stateDir,staged,receipt.messageId,false);
-      else activateBackgroundDocument(stateDir,staged,receipt.messageId,true,`<at id="${p.senderId}"></at>${renderBusinessMessage(businessMessages,"mentionSuffix")}\n`);
-     }
      for(const mediaUrl of document && "mediaUrls" in document ? document.mediaUrls ?? [] : splitMessageImages(finalText,[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],cfg.agents?.defaults?.workspace).images) {
       if(!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted){suppressed=true;return;}
       await sendMediaFeishu({cfg:completionCfg,mediaRuntime:core.media,accountId:p.accountId,to:"chat:"+p.chatId,replyToMessageId:receipt.messageId,replyInThread:p.replyInThread ?? false,mediaUrl,
        mediaLocalRoots:agentId?getAgentScopedMediaLocalRoots(completionCfg,agentId):undefined});
      }
-     callbacks.onReceipt(receipt); sent = true;
-     clearPreparedCompletion(stateDir,event);
+     if(!reminderReport){callbacks.onReceipt(receipt);sent=true;clearPreparedCompletion(stateDir,event);}
      if(binding?.originalMessageId && !listQuestionCards(stateDir).some(card=>card.jobId===event.jobId&&card.messageId===binding.originalMessageId&&card.provenance.accountId===p.accountId&&card.provenance.sessionKey===p.sessionKey) && isCompletionSourceAndAnswersCurrent(p,stateDir) && sessionCurrent() && !signal.aborted){
       try {
        const overview=prepareAsyncOriginalOverview(stateDir,binding,event.status,accountConfig);
        if(overview)await editMessageFeishu({cfg:completionCfg,accountId:p.accountId,messageId:binding.originalMessageId,card:overview});
       }catch{console.warn("Worker result accepted, but initial overview status update failed; latest result remains authoritative");}
      }
+     let reportInReminder=false;
      if (binding && isCompletionSourceAndAnswersCurrent(p, stateDir) && sessionCurrent() && !signal.aborted &&
-      (!resultMentionsRequester && (binding.imageKey || !recentlyMentioned({accountId:p.accountId,to:'chat:'+p.chatId,replyInThread:p.replyInThread,replyToMessageId:receipt.messageId},p.senderId)))) {
+      (reminderReport || (!resultMentionsRequester && (binding.imageKey || !recentlyMentioned({accountId:p.accountId,to:'chat:'+p.chatId,replyInThread:p.replyInThread,replyToMessageId:receipt.messageId},p.senderId))))) {
       try {
        await sendMessageFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
         replyToMessageId: receipt.messageId, replyInThread: p.replyInThread ?? false,
-        mentions: [{openId: p.senderId, name: "", key: ""}], plainText: true,
-        text: renderBusinessMessage(businessMessages,event.status==="timed_out"?"timeoutMention":event.status==="failed"?"failureMention":event.status==="cancelled"?"cancelledMention":"completionMention")});
+        mentions: [{openId: p.senderId, name: "", key: ""}], plainText: !reminderReport,
+        text: renderBusinessMessage(businessMessages,event.status==="timed_out"?"timeoutMention":event.status==="failed"?"failureMention":event.status==="cancelled"?"cancelledMention":"completionMention")+(reminderReport ? ` ${reminderReport}` : "")});
+       reportInReminder=Boolean(reminderReport);
       } catch {console.warn("Codex result accepted, but completion mention failed or is unconfirmed");}
      }
+     if(reminderReport && !reportInReminder && binding && isCompletionSourceAndAnswersCurrent(p,stateDir) && sessionCurrent() && !signal.aborted) {
+      deliveryText=document?.text ?? finalText;
+      const fallback=prepareAsyncCardResult(stateDir,binding,deliveryText,accountConfig);
+      await editMessageFeishu({cfg:completionCfg,accountId:p.accountId,messageId:binding.messageId,card:fallback.card});
+      acceptAsyncCardResult(stateDir,binding,deliveryText);
+     }
+     if(staged) {
+      if(binding)activateBackgroundDocument(stateDir,staged,receipt.messageId,false,"",reportInReminder);
+      else activateBackgroundDocument(stateDir,staged,receipt.messageId,true,`<at id="${p.senderId}"></at>${renderBusinessMessage(businessMessages,"mentionSuffix")}\n`);
+     }
+     if(reminderReport){callbacks.onReceipt(receipt);sent=true;clearPreparedCompletion(stateDir,event);}
      return {visibleReplySent: true, messageIds: [receipt.messageId], content: deliveryText};
     };
     // The host emits MEDIA replies as blocks even with block streaming disabled.
