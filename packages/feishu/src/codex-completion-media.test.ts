@@ -171,3 +171,36 @@ it("keeps a deferred completion retryable without orphaning its delivery callbac
   expect(mocks.image).toHaveBeenCalledOnce();
   expect(receipt).toHaveBeenCalledOnce();
 });
+
+// Real host contract: non-text output bypasses disableBlockStreaming and may
+// consume the final payload, leaving only a block callback for the attachment.
+it.each([false,true])("retains media blocks until Main completes (final=%s)", async (hasFinal) => {
+ const receipt=vi.fn();
+ run.mockImplementation(async ({adapter})=>{
+  const delivery=adapter.resolveTurn().delivery;
+  await delivery.deliver({text:"绿苹果生成好了",mediaUrl:"/fixture/done.png"},{kind:"block"});
+  expect(mocks.image).not.toHaveBeenCalled();
+  expect(receipt).not.toHaveBeenCalled();
+  if(hasFinal)await delivery.deliver({text:"最终核验完成",mediaUrls:["/fixture/done.png"]},{kind:"final"});
+ });
+ await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:receipt},runtime);
+ expect(mocks.image).toHaveBeenCalledTimes(1);
+ expect(receipt).toHaveBeenCalledTimes(1);
+ expect(readPreparedCompletion(state,event,"current")).toBeUndefined();
+});
+
+it("does not complete from commentary media or a failed Main run",async()=>{
+ const receipt=vi.fn();
+ run.mockImplementation(async({adapter})=>{
+  await adapter.resolveTurn().delivery.deliver({mediaUrl:"/fixture/progress.png",isCommentary:true},{kind:"block"});
+ });
+ await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:receipt},runtime);
+ expect(receipt).not.toHaveBeenCalled();
+ run.mockImplementation(async({adapter})=>{
+  await adapter.resolveTurn().delivery.deliver({mediaUrl:"/fixture/done.png"},{kind:"block"});
+  throw Error("Main failed");
+ });
+ await expect(deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:receipt},runtime)).rejects.toThrow("Main failed");
+ expect(mocks.image).not.toHaveBeenCalled();
+ expect(receipt).not.toHaveBeenCalled();
+});

@@ -212,8 +212,20 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      }
      return {visibleReplySent: true, messageIds: [receipt.messageId], content: deliveryText};
     };
+    // The host emits MEDIA replies as blocks even with block streaming disabled.
+    // Keep them until Main finishes so an intermediate attachment cannot complete the job.
+    const mediaBlocks: Parameters<typeof deliverResult>[0][] = [];
+    const withMediaBlocks = (payload: Parameters<typeof deliverResult>[0]) => !mediaBlocks.length ? payload : ({
+     ...payload,
+     text: payload.text || mediaBlocks.map(block => block.text).filter(Boolean).join("\n"),
+     mediaUrl: undefined,
+     mediaUrls: [...new Set([...mediaBlocks, payload].flatMap(block => [...(block.mediaUrls ?? []), ...(block.mediaUrl ? [block.mediaUrl] : [])]))],
+    });
     const deliver: typeof deliverResult = async (payload, info) => {
-     try {return await deliverResult(payload, info);} catch (error) {deliveryError ??= error; throw error;}
+     if(info.kind === "block" && !questionTurn && !payload.isReasoning && !payload.isCommentary &&
+      !(payload as {isStatusNotice?:boolean;isError?:boolean}).isStatusNotice && !(payload as {isError?:boolean}).isError &&
+      (payload.mediaUrl || payload.mediaUrls?.length)) {mediaBlocks.push(payload);return;}
+     try {return await deliverResult(info.kind === "final" ? withMediaBlocks(payload) : payload, info);} catch (error) {deliveryError ??= error; throw error;}
     };
     const sessionId=currentSessionId(),prepared=sessionId ? readPreparedCompletion(stateDir,event,sessionId) : undefined;
     if(prepared){await deliver(prepared,{kind:"final"});return;}
@@ -247,6 +259,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       delivery: {deliver, onError: error => {deliveryError ??= error; throw error;}}}),
     }});
     if (deliveryError) throw deliveryError;
+    if(!sent && mediaBlocks.length)await deliverResult(withMediaBlocks({}),{kind:"final"});
     if(questionTurn&&mainStarted&&!sent&&!suppressed&&!signal.aborted){callbacks.onReceipt({kind:"main_context_turn",eventId:event.eventId});sent=true;}
    }});
   return {suppressed, ...(interrupted ? {reason:"service_stopped"} : {}), ...(!sent && !suppressed && !interrupted ? {reason: "no_delivery_receipt"} : {})};
