@@ -133,3 +133,14 @@ test('combined skill snapshot uses the explicit Agent root and keeps the project
  const loaded=await readSkillVersion(state,root,['skills','project/.agents/skills']);assert.deepEqual(skillTaskContext(loaded).catalog,snapshot.catalog);assert.equal(skillTaskContext(loaded).root,root);
  await assert.rejects(readSkillVersion(state,'/agent/project',['skills','.agents/skills']));await assert.rejects(readSkillVersion(state,root,['skills']));
 });
+
+
+test('reviewed continuation is exact-session and exact-revision only and cannot retain removed skills',async()=>{
+ const {reviewedContinuationMatches,revisionOf}=await import('./skill-refresh.mjs');
+ const previous={skills:'old',roles:'old',catalog:['skills/a/SKILL.md']},current={skills:'new',roles:'new',catalog:['skills/a/SKILL.md']};
+ const review={sessionId:'original',previousRevision:revisionOf(previous),currentRevision:revisionOf(current),reason:'administrator reviewed'};
+ assert.equal(reviewedContinuationMatches(review,'original',previous,current),true);
+ for(const value of [undefined,{...review,sessionId:'other'},{...review,previousRevision:'wrong'},{...review,currentRevision:'wrong'}])assert.equal(reviewedContinuationMatches(value,'original',previous,current),false);
+ assert.equal(reviewedContinuationMatches(review,undefined,previous,current),false);
+ assert.equal(reviewedContinuationMatches({...review,currentRevision:revisionOf({...current,catalog:[]})},'original',previous,{...current,catalog:[]}),false);
+});

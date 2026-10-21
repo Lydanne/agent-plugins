@@ -13,7 +13,7 @@ import {acquireLock} from './locks.mjs';
 import {createCompletionService,completionBridge} from './completion.mjs';
 import {experienceInstructions,experienceReviewInstructions,collectExperience} from './experience.mjs';
 import {normalizeMemoryContext,memoryContextSchema,memoryPolicy,memoryHandoffSummary,memoryDelegationInstructions} from './memory-context.mjs';
-import {readSkillVersion,revisionOf,skillRefreshPlan,refreshSkillSession,skillTaskContext} from './skill-refresh.mjs';
+import {readSkillVersion,revisionOf,skillRefreshPlan,refreshSkillSession,skillTaskContext,reviewedContinuationMatches} from './skill-refresh.mjs';
 import {rememberDiagnostic,describeQueryJob,explainQueryError} from './diagnostics.mjs';
 import {sourceTaskBridge,hasSourceProvenance,bindSourceTask,taskProvenance,rememberAsyncJob,rememberAsyncContinuation,rememberUserQuestion} from './source-tasks.mjs';
 import {createJobs} from './jobs.mjs';
@@ -106,7 +106,7 @@ export async function executeQuery(params,context={},runtime=configuration){
   // New runs still migrate; unsafe older policies and other validation failures do not.
   const legacyContinuation=!!context.expectedSessionId && context.expectedSessionId===entry?.sessionId && entry?.executionPolicyVersion===5;
   const expectedFingerprint=legacyContinuation ? executionFingerprint(config,{policyVersion:5}) : fingerprint;
-  const resumeId=entry?.cwd!==cwd || entry?.configurationFingerprint!==expectedFingerprint || plan.migrate || entry?.skillsRefreshFailed || (config.skillsEnabled && !entry?.skillsSnapshot) ? undefined : legacyContinuation ? entry.sessionId : selectExecutionSession(entry);
+  const resumeId=entry?.cwd!==cwd || entry?.configurationFingerprint!==expectedFingerprint || (plan.migrate&&!reviewedContinuationMatches(config.reviewedContinuation,context.expectedSessionId,entry?.skillsSnapshot,currentSkills)) || entry?.skillsRefreshFailed || (config.skillsEnabled && !entry?.skillsSnapshot) ? undefined : legacyContinuation ? entry.sessionId : selectExecutionSession(entry);
   if(context.expectedSessionId && resumeId!==context.expectedSessionId)throw Error('Original Worker session cannot be resumed safely');
   skillsSnapshot=config.skillsEnabled?(resumeId?entry?.skillsSnapshot:undefined):config.scopedSkillSnapshot;
   threadId=resumeId;

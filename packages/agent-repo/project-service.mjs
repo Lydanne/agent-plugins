@@ -6,7 +6,7 @@ export async function registryRevision(binding) {
  const head=(await git(binding.repo,['rev-parse','HEAD'])).trim();
  const entry=(await git(binding.repo,['ls-tree',head,'--','projects.json'])).trim();
  if(!/^100(?:644|755) blob [a-f0-9]+\tprojects\.json$/.test(entry)||(await git(binding.repo,['status','--porcelain=v1','--untracked-files=all','--','projects.json'])).trim())throw new AgentRepoError('REGISTRY_CHANGED','Project registration must be committed and unchanged');
- return head+':'+entry.split(' ')[2].split('\t')[0];
+ return 'blob:'+entry.split(' ')[2].split('\t')[0];
 }
 export function createProjectService(binding,agentId,getHostConfig,prepareScope,prepareWorkerSkill) {
  async function read(){const revision=await registryRevision(binding),projects=await readProjects(binding.repo);if(await registryRevision(binding)!==revision)throw new AgentRepoError('REGISTRY_CHANGED','Project registration changed while reading');return {revision,projects};}
@@ -18,7 +18,7 @@ export function createProjectService(binding,agentId,getHostConfig,prepareScope,
    if(!selector||typeof selector!=='object'||Object.keys(selector).some(key=>!['projectId','repository','expectedRegistryRevision'].includes(key)))throw new AgentRepoError('PROJECT_SELECTOR_INVALID','Invalid project selector');
    if(selector.projectId!==undefined&&(typeof selector.projectId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(selector.projectId))||selector.repository!==undefined&&(typeof selector.repository!=='string'||!/^(?:project|projects\/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:\/repositories\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/.test(selector.repository)))throw new AgentRepoError('PROJECT_SELECTOR_INVALID','Invalid project selector');
    const {revision,projects}=await read();
-   if(selector.expectedRegistryRevision!==undefined&&selector.expectedRegistryRevision!==revision)throw new AgentRepoError('REGISTRY_CHANGED','Project registration changed; select the project again');
+   if(selector.expectedRegistryRevision!==undefined&&(!/^(?:blob|[a-f0-9]{40,64}):[a-f0-9]{40,64}$/.test(selector.expectedRegistryRevision)||selector.expectedRegistryRevision.split(':')[1]!==revision.split(':')[1]))throw new AgentRepoError('REGISTRY_CHANGED','Project registration changed; select the project again');
    if(selector.projectId!==undefined&&!Object.hasOwn(projects,selector.projectId))throw new AgentRepoError('PROJECT_NOT_FOUND','Project is not registered');
    if(selector.projectId===undefined&&selector.repository===undefined&&Object.keys(projects).length!==1)throw new AgentRepoError('PROJECT_SELECTION_REQUIRED','Multiple projects require an explicit projectId or repository');
    if(selector.projectId!==undefined&&selector.repository!==undefined&&selector.repository!==projects[selector.projectId].repository&&!selector.repository.startsWith(projects[selector.projectId].repository+'/repositories/'))throw new AgentRepoError('PROJECT_SELECTOR_CONFLICT','projectId and repository select different projects');

@@ -72,7 +72,10 @@ test('single-project default, registration drift and immutable queued snapshot',
  const registry=await readFile(join(f.root,'projects.json'),'utf8');await writeFile(join(f.root,'projects.json'),registry+'\n');
  await assert.rejects(f.api.listProjects(),{code:'REGISTRY_CHANGED'});await assert.rejects(readScopedSkillVersion(runtime),/registration changed/);
  await writeFile(join(f.root,'projects.json'),registry);assert.equal((await readScopedSkillVersion(runtime)).projectId,'a');
- await git(f.root,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','new registration version']);await assert.rejects(f.api.prepareExecutionScope({expectedRegistryRevision:runtime.projectContext.registryRevision}),{code:'REGISTRY_CHANGED'});
+ await git(f.root,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','new registration version']);await f.api.prepareExecutionScope({expectedRegistryRevision:runtime.projectContext.registryRevision});await readScopedSkillVersion(runtime);
+ await writeFile(join(f.root,'README.md'),'unrelated documentation');await commit(f.root);await readScopedSkillVersion(runtime);
+ const legacy={...runtime,scopedSkillSnapshot:{...runtime.scopedSkillSnapshot,registryRevision:'a'.repeat(40)+':'+runtime.projectContext.registryRevision.split(':')[1]}};await readScopedSkillVersion(legacy);
+ await writeFile(join(f.root,'projects.json'),registry+'\n');await commit(f.root);await assert.rejects(readScopedSkillVersion(runtime),/registration changed/);
 });
 test('A to B to A preserves CLI sessions and scope-specific skills, history and concurrent execution',async t=>{
  const f=await fixture(t),cli=join(f.temp,'fake-cli.mjs');

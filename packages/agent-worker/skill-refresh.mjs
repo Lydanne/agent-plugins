@@ -36,3 +36,8 @@ export async function refreshSkillSession({previous,current,runTurn,onApplied,si
  await onApplied(current);
  return true;
 }
+
+/** Local administrator recovery only; never accepted from model tool parameters. */
+export function reviewedContinuationMatches(review,expectedSessionId,previous,current) {
+ return !!expectedSessionId && review?.sessionId===expectedSessionId && review.previousRevision===revisionOf(previous) && review.currentRevision===revisionOf(current) && typeof review.reason==='string' && !!review.reason.trim() && !skillRefreshPlan(previous,current).removed.length;
+}

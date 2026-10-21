@@ -492,3 +492,9 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 支持 service scheduler 的宿主使用公开 `serviceContext.scheduler` 扫描和交付原完成事件，首次扫描也经调度入口，避免热加载请求结束后继承失效的 Gateway admission。回调等待交付结束，停服取消后续扫描并中止、等待在途交付。旧宿主缺少 scheduler 时保留原定时器兼容路径。此变更不创建或重跑 Worker，不修改原事件的来源校验、回执与不确定发送隔离规则。
 
 已保存的用户回答优先于无输入超时；给予提交后的三分钟处理窗口。超过窗口仍未续接时，使用经渠道验证的原回答、字段和来源续接同一任务，并记录 resumeReason=user_wait_timeout；不将真实回答误记为无输入，不丢弃文本消息撤回绑定。
+
+### 登记版本与管理员续接
+
+项目登记版本使用 `blob:<projects.json对象ID>`，兼容旧 `HEAD:对象ID` 快照；无关角色仓库提交不改变登记版本。排队任务仍检查登记未暂存/已暂存修改、项目路径、分支、远端、业务仓库版本以及角色和技能实际变动。
+
+管理员明确要求恢复旧任务时，可在核对原请求、当前来源、执行前失败记录及新规范后，为该任务的私有 runtime 写入 `reviewedContinuation`（sessionId、previousRevision、currentRevision、reason）。这只允许精确原会话的已复核角色刷新；目录、执行策略指纹和技能删除检查保持有效，其他任务及模型工具不能获得此覆盖。恢复必须留存原记录与证据，复用 jobId/resumeSessionId，且先取得只读技能刷新回执；禁止用此机制重放状态未知或已发生业务操作的失败轮次。
