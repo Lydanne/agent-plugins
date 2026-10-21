@@ -65,4 +65,6 @@ Feishu 编译为 `dist/` 并生成配置 schema；两个 ESM 插件进行语法�
 
 开发规则见 [AGENTS.md](AGENTS.md)；贡献者技能位于 `.agents/skills/`，Feishu 随包交付的业务技能位于 `packages/feishu/skills/`。本仓库在 main 上验证、提交和推送；生产配置及重启需单独授权。
 
+OpenClaw 宿主升级或重装后，检查 [Control UI 绑定表单补丁的部署、回滚与升级流程](patches/openclaw/2026.10.5-config-form/OPERATIONS.md)。该补丁不会由插件自动安装；必须按实际宿主版本复核，并验证正式配置保存不会丢字段。
+
 [早期飞书开发与本机验证记录](docs/history/initial-feishu-development.md) 只用于追溯，不作为当前操作指南。
