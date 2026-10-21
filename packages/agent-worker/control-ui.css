@@ -197,16 +197,3 @@
 .cq-delete-dialog p { margin: 0 0 12px; overflow-wrap: anywhere; }
 .cq-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .cq-delete-actions button { width: auto; padding: 6px 14px; }
-
-.cq-model-settings { height: auto; min-height: 100%; overflow: auto; padding: 24px; gap: 12px; }
-.cq-model-settings h2 { margin: 0; font-size: 18px; }
-.cq-model-settings input,.cq-model-settings select,.cq-model-settings textarea { width: 100%; margin: 0; padding: 8px; font: inherit; border: 1px solid #8884; border-radius: 6px; background: var(--bg, #faf9f7); color: inherit; }
-.cq-model-card { border: 1px solid #8883; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-.cq-model-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-.cq-model-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.cq-model-field>span { font-weight: 500; }
-.cq-model-level { display: grid; grid-template-columns: 70px 1fr 1fr; gap: 12px; align-items: center; margin: 10px 0; }
-.cq-model-actions { display: flex; gap: 12px; position: sticky; bottom: 0; padding: 12px 0; background: var(--bg, #faf9f7); }
-.cq-model-confirm { border: 1px solid #8884; border-radius: 8px; padding: 16px; }
-.cq-model-confirm button { margin-right: 8px; }
-@media(max-width: 520px) { .cq-model-settings { padding: 14px; } .cq-model-level { grid-template-columns: 1fr; } }

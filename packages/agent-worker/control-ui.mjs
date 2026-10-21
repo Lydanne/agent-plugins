@@ -1,5 +1,3 @@
-import {mountModelSettings} from './model-settings-ui.mjs';
-export {mountModelSettings} from './model-settings-ui.mjs';
 import './control-ui.css';
 import {readInspectionResponse} from './inspection-transport.mjs';
 import {currentUiTarget,registerWorkerNavigation} from './dist/ui-navigation.mjs';
@@ -152,8 +150,7 @@ export function mountPanel(container,initial){
   const expanded=new Set([...root.querySelectorAll('details[open]')].map(disclosureKey));
   root.replaceChildren();root.classList.toggle('cq-detail',!!selected);const header=element('header');
   const refreshButton=button('刷新',()=>{historyOffset=0;if(!selected)offset=0;signature='';refresh();},'cq-refresh');
-  const modelSettings=button('模型配置',()=>context.host.navigation.openPage({id:'models'}));
-  if(selected){header.append(button('← 会话列表',back,'cq-back'),modelSettings,refreshButton);}else header.append(element('strong','Agent Worker 会话'),modelSettings,refreshButton);root.append(header);
+  if(selected){header.append(button('← 会话列表',back,'cq-back'),refreshButton);}else header.append(element('strong','Agent Worker 会话'),refreshButton);root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!context.props.sessionKey){root.append(element('p','请选择当前 Agent 的会话后查看项目任务。'));return;}
   if(error){root.append(element('p',error,'cq-error'),button('重试',()=>refresh()));}
@@ -273,10 +270,8 @@ export function mountProjectPage(container,initial){
  return {update(next){context=next;panel.update(normalize(next));},dispose(){stop();panel.dispose();}};
 }
 export default {id:'agent-worker',activate(host){
- const models=host.ui.registerPage({id:'models',label:'Worker 模型配置',mount:mountModelSettings});
- const modelNavigation=host.ui.registerNavigation({id:'worker-models',label:'Worker 模型',page:{id:'models'},defaultVisible:false});
  const panel=host.ui.registerPanel({id:'agent-worker-sessions',label:'Agent Worker 会话',mount:mountPanel});
  const page=host.ui.registerPage({id:'project-tasks',label:'Worker 项目任务',mount:mountProjectPage});
  const navigation=registerWorkerNavigation(params=>host.navigation.openPage({id:'project-tasks',params}));
- return ()=>{navigation();page();panel();modelNavigation();models();};
+ return ()=>{navigation();page();panel();};
 }};

@@ -1,4 +1,3 @@
-import {modelSchema,validValue,validateModelSettings} from './model-settings.mjs';
 import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join,delimiter} from 'node:path';
@@ -23,6 +22,16 @@ export const defaultConfiguration = {
 };
 // The UI and registration use the same constraints so saved values remain loadable.
 const relativePathPattern = '^(?!-)(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*/$)[^\\\\\\u0000]+$';
+const modelIdPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
+const effortSchema = {type:'string',enum:['minimal','low','medium','high','xhigh','max']};
+const speedSchema = {type:'string',enum:['default','fast']};
+const commandSchema = {type:'string',pattern:'\\S',maxLength:40000};
+const levelProfilesSchema = properties=>({type:'object',additionalProperties:false,properties:Object.fromEntries(Array.from({length:7},(_,level)=>[String(level),{type:'object',additionalProperties:false,properties}]))});
+const modelSchema = {type:'object',required:['id','harness','model'],additionalProperties:false,properties:{
+ id:{type:'string',pattern:modelIdPattern},name:{type:'string',maxLength:160},description:{type:'string',maxLength:2000},
+ harness:{type:'string',enum:['codex']},model:commandSchema,cli:commandSchema,reasoningEffort:effortSchema,speed:speedSchema,
+ thinkingProfiles:levelProfilesSchema({reasoningEffort:effortSchema,speed:speedSchema}),
+}};
 export const configurationProperties = Object.fromEntries(Object.entries(defaultConfiguration).map(([key,value])=>{
  const schema={type:Array.isArray(value)?'array':typeof value==='number'?'integer':typeof value,default:value};
  if(typeof value==='string')schema.maxLength=40000;
@@ -40,6 +49,15 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='timeoutMs')Object.assign(schema,{minimum:1000,maximum:86400000});
  return [key,schema];
 }));
+function validValue(value,schema) {
+ if(schema.enum&&!schema.enum.includes(value)||schema.not?.enum.includes(value))return false;
+ if(schema.type==='string')return typeof value==='string'&&value.length<=(schema.maxLength??Infinity)&&(!schema.pattern||new RegExp(schema.pattern).test(value));
+ if(schema.type==='integer')return Number.isInteger(value)&&value>=schema.minimum&&value<=schema.maximum;
+ if(schema.type==='boolean')return typeof value==='boolean';
+ if(schema.type==='array')return Array.isArray(value)&&value.length<=schema.maxItems&&value.every(item=>validValue(item,schema.items));
+ if(schema.type==='object')return value!==null&&typeof value==='object'&&!Array.isArray(value)&&(schema.required??[]).every(key=>Object.hasOwn(value,key))&&Object.entries(value).every(([key,item])=>Object.hasOwn(schema.properties,key)&&validValue(item,schema.properties[key]));
+ return false;
+}
 const expandHome=value=>typeof value==='string'&&value.startsWith('~/')?join(homedir(),value.slice(2)):value;
 export function resolveConfiguration(input={}) {
  const config={...defaultConfiguration,...input};
@@ -47,7 +65,8 @@ export function resolveConfiguration(input={}) {
  if(typeof config.pathPrefix==='string')config.pathPrefix=config.pathPrefix.split(delimiter).map(expandHome).join(delimiter);
  if(Array.isArray(config.models))config.models=config.models.map(model=>model&&typeof model==='object'&&!Array.isArray(model)&&Object.hasOwn(model,'cli')?{...model,cli:expandHome(model.cli)}:model);
  for(const [key,schema] of Object.entries(configurationProperties))if(!validValue(config[key],schema))throw Error('Invalid '+key);
- validateModelSettings(config);
+ if(new Set(config.models.map(model=>model.id)).size!==config.models.length||new Set(config.models.map(model=>JSON.stringify([model.harness,model.model]))).size!==config.models.length)throw Error('Invalid models: duplicate ID or harness/model');
+ if(config.defaultModelId&&!modelEntries(config).some(model=>model.id===config.defaultModelId))throw Error('Invalid defaultModelId: choose a configured model');
  return config;
 }
 function modelEntries(config) {

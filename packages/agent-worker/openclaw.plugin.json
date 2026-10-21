@@ -553,7 +553,7 @@
     },
     "models": {
       "label": "可用模型 / Available models",
-      "help": "图形化配置入口：Agent Worker 会话侧栏 → 模型配置；也可在侧边导航固定「Worker 模型」。此处通用表单的添加框使用 JSON。添加模型配置：唯一 id、harness=codex、model；可选名称、用途描述、CLI、默认推理强度、速度和 thinkingProfiles（0–6）。同一 harness + 模型只能添加一次；档位仅覆盖推理强度与速度，不能切换模型。 / Add named harness/model entries with per-model effort and tier profiles."
+      "help": "添加模型配置：唯一 id、harness=codex、model；可选名称、用途描述、CLI、默认推理强度、速度和 thinkingProfiles（0–6）。同一 harness + 模型只能添加一次；档位仅覆盖推理强度与速度，不能切换模型。 / Add named harness/model entries with per-model effort and tier profiles."
     },
     "defaultModelId": {
       "label": "默认模型 ID / Default model ID",
@@ -561,9 +561,9 @@
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/b15565ea414d1762d7b5/index.js",
+    "entry": "dist/control-ui/1f0da86d06e14d59567d/index.js",
     "styles": [
-      "dist/control-ui/b15565ea414d1762d7b5/index.css"
+      "dist/control-ui/1f0da86d06e14d59567d/index.css"
     ]
   },
   "skills": [
