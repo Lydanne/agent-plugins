@@ -4,6 +4,7 @@ import {workerEnvironment} from './plugin-environment.mjs';
 import {finalizeJobReport} from './task-report.mjs';
 import {tryLock,acquireLock} from './locks.mjs';
 import {memoryHandoffSummary} from './memory-context.mjs';
+import {hasSourceProvenance} from './source-tasks.mjs';
 import {mkdirSync,readFileSync,writeFileSync,appendFileSync,renameSync,existsSync,readdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
@@ -138,8 +139,8 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   },
   tag(jobId,scope,tags,requester,mode='merge'){
    const j=get(jobId,scope);
-   if(j.provenance&&(!requester?.senderId||requester.senderId!==j.provenance.senderId||requester.accountId!==j.provenance.accountId))throw Error('Only the task requester can tag this job');
-   if(!j.provenance&&scope.includes(':feishu:'))throw Error('Job requester is unknown; administrator inspection required');
+   if(hasSourceProvenance(j.provenance)&&(!requester?.senderId||requester.senderId!==j.provenance.senderId||requester.accountId!==j.provenance.accountId))throw Error('Only the task requester can tag this job');
+   if(!hasSourceProvenance(j.provenance)&&scope.includes(':feishu:'))throw Error('Job requester is unknown; administrator inspection required');
    if(!['merge','replace'].includes(mode))throw Error('tagMode must be merge or replace');
    const values=normalizeTags(tags);
    const merged=mode==='merge'?[...new Map([...j.tags,...values].map(tag=>[tag.toLocaleLowerCase(),tag])).values()]:values;
@@ -149,8 +150,8 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   },
   status:(jobId,scope)=>view(get(jobId,scope)),wait,
   cancel(jobId,scope,requester){const j=get(jobId,scope);
-   if(j.provenance && (!requester?.senderId || requester.senderId!==j.provenance.senderId || requester.accountId!==j.provenance.accountId))throw Error('Only the task requester can cancel this job');
-   if(!j.provenance && scope.includes(':feishu:'))throw Error('Job requester is unknown; administrator inspection required');
+   if(hasSourceProvenance(j.provenance) && (!requester?.senderId || requester.senderId!==j.provenance.senderId || requester.accountId!==j.provenance.accountId))throw Error('Only the task requester can cancel this job');
+   if(!hasSourceProvenance(j.provenance) && scope.includes(':feishu:'))throw Error('Job requester is unknown; administrator inspection required');
    const stored=readJson(join(root,jobId+'.json'));
    if(waiting.has(stored.status)){terminalJob({...stored,status:'cancelled',finishedAt:Date.now(),notification:stored.notification?{state:'pending',eventKey:randomUUID()}:undefined});return view(get(jobId,scope));}
    if(active.has(stored.status)||stored.status==='unknown'){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});return {...view(j),status:j.status==='unknown'?'unknown':'cancelling',note:'Cancellation requested; business operations already accepted externally are not rolled back.'};}return view(j);},
@@ -160,8 +161,8 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const release=await acquireLock(lock);
    try {
     const job=get(jobId,scope);
-    if(job.provenance&&(!requester?.senderId||requester.senderId!==job.provenance.senderId||requester.accountId!==job.provenance.accountId))throw Error('Only the task requester Main can reply');
-    if(!job.provenance&&scope.includes(':feishu:'))throw Error('Job requester is unknown');
+    if(hasSourceProvenance(job.provenance)&&(!requester?.senderId||requester.senderId!==job.provenance.senderId||requester.accountId!==job.provenance.accountId))throw Error('Only the task requester Main can reply');
+    if(!hasSourceProvenance(job.provenance)&&scope.includes(':feishu:'))throw Error('Job requester is unknown');
     if(!authorize(job.provenance))throw Error('Original task authorization is no longer current');
     if(['cancelled','timed_out','failed'].includes(job.status))throw Error('Task cannot accept a reply');
     const previous=(job.questions??[]).find(q=>q.questionId===questionId);

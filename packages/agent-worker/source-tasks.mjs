@@ -2,6 +2,12 @@
 // never supply provenance or choose the task to cancel.
 const key = Symbol.for('ada.source-tasks.v1');
 export const sourceTaskBridge = globalThis[key] ??= {leases: new Map(), recalls: new Set()};
+// Agent/session metadata is also stored on local operator jobs. Only channel
+// provenance carries a requester or source lease; partial channel data stays
+// protected rather than being treated as a local job.
+export function hasSourceProvenance(provenance) {
+ return !!provenance && ['taskId','revision','accountId','chatId','sessionKey','senderId','sourceMessageIds','requestMessageIds'].some(key=>Object.hasOwn(provenance,key));
+}
 export function bindSourceTask(context) {
  const lease = context.agentAccountId ? sourceTaskBridge.leases.get(JSON.stringify([context.agentAccountId,context.sessionKey])) : undefined;
  if (!lease) return undefined;

@@ -15,7 +15,7 @@ import {experienceInstructions,experienceReviewInstructions,collectExperience} f
 import {normalizeMemoryContext,memoryContextSchema,memoryPolicy,memoryHandoffSummary,memoryDelegationInstructions} from './memory-context.mjs';
 import {readSkillVersion,revisionOf,skillRefreshPlan,refreshSkillSession,skillTaskContext} from './skill-refresh.mjs';
 import {rememberDiagnostic,describeQueryJob,explainQueryError} from './diagnostics.mjs';
-import {sourceTaskBridge,bindSourceTask,taskProvenance,rememberAsyncJob,rememberAsyncContinuation,rememberUserQuestion} from './source-tasks.mjs';
+import {sourceTaskBridge,hasSourceProvenance,bindSourceTask,taskProvenance,rememberAsyncJob,rememberAsyncContinuation,rememberUserQuestion} from './source-tasks.mjs';
 import {createJobs} from './jobs.mjs';
 import {asyncRunRequested,waitForQueryJob,discoverTopics} from './dispatch-policy.mjs';
 import {fileURLToPath} from 'node:url';
@@ -176,11 +176,12 @@ async function queryInternal(params,context={}) {
  if(params.action==='tag'){if(params.tags===undefined)throw Error('tags is required for tag');return wrap(jobs.tag(params.jobId,scope,params.tags,{senderId:context.requesterSenderId,accountId:context.agentAccountId},params.tagMode));}
  if(['reply','await_user'].includes(params.action)){
   const original=jobs.status(params.jobId,scope);
-  if(original.provenance && (!completionBridge.authorizeReply || !completionBridge.authorizeReply(original.provenance)))throw Error('Original task authorization is no longer current');
+  const sourceBound=hasSourceProvenance(original.provenance);
+  if(sourceBound && (!completionBridge.authorizeReply || !completionBridge.authorizeReply(original.provenance)))throw Error('Original task authorization is no longer current');
   const continuationLease=bindSourceTask(context);
   if(continuationLease)taskProvenance(continuationLease);
-  const requester={senderId:context.requesterSenderId,accountId:context.agentAccountId},authorize=p=>!p||completionBridge.authorizeReply?.(p)===true;
-  const submitted=params.action==='reply'&&original.provenance?globalThis[Symbol.for('ada.worker-question.v1')]?.submission?.({jobId:original.jobId,questionId:params.questionId,provenance:original.provenance}):undefined;
+  const requester={senderId:context.requesterSenderId,accountId:context.agentAccountId},authorize=p=>!hasSourceProvenance(p)||completionBridge.authorizeReply?.(p)===true;
+  const submitted=params.action==='reply'&&sourceBound?globalThis[Symbol.for('ada.worker-question.v1')]?.submission?.({jobId:original.jobId,questionId:params.questionId,provenance:original.provenance}):undefined;
   if(params.answerBasis!==undefined&&(typeof params.answerBasis!=='string'||params.answerBasis.length>1000))throw Error('Invalid answer basis');
   const resumed=params.action==='await_user'?await jobs.awaitUser(params.jobId,scope,params.questionId,requester,authorize,params.knownValues):await jobs.reply(params.jobId,scope,params.questionId,params.answer,requester,authorize,false,undefined,{answerSource:continuationLease?'user_text':'main_context',...submitted,...(params.answerBasis?{answerBasis:params.answerBasis}:{})});
   // Directory refresh is metadata maintenance, never a prerequisite for accepting an answer.
@@ -189,7 +190,7 @@ async function queryInternal(params,context={}) {
   if(params.action==='await_user')rememberUserQuestion(continuationLease,resumed,params.questionId);
   const continuationHeld=newlyAnswered&&rememberAsyncContinuation(continuationLease,resumed,params.questionId);
   let presentation={interactive:false,state:'unavailable'};
-  if(original.provenance && (params.action==='await_user'||newlyAnswered)){
+  if(sourceBound && (params.action==='await_user'||newlyAnswered)){
    presentation=await contextPresentation(completionBridge.contextState,{jobId:original.jobId,questionId:params.questionId,provenance:original.provenance,status:params.action==='await_user'?'awaiting_user':'resumed',contextRequest:resumed.contextRequest});
    if(presentation.state==='failed')console.error('Worker context presentation update failed; task state remains authoritative');
   }
