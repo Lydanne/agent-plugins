@@ -200,7 +200,37 @@ describe("chunkFeishuPostMarkdown", () => {
  describe("inline named colleague mentions", () => {
   it("preserves inline position and honorific while binding real users", () => {
     const value=JSON.parse(buildFeishuPostMessageContent({messageText:'请 <at id="ou_liuhuan"></at>同学和 <at id=ou_other></at>老师核对。'}));
-    expect(value.zh_cn.content[0]).toEqual([{tag:"md",text:"请 "},{tag:"at",user_id:"ou_liuhuan"},{tag:"md",text:"同学和 "},{tag:"at",user_id:"ou_other"},{tag:"md",text:"老师核对。"}]);
+    expect(value.zh_cn.content[0]).toEqual([{tag:"text",text:"请 "},{tag:"at",user_id:"ou_liuhuan"},{tag:"text",text:"同学和 "},{tag:"at",user_id:"ou_other"},{tag:"text",text:"老师核对。"}]);
+  });
+  it("keeps a greeting, native mention and honorific in one inline row", () => {
+    const value = JSON.parse(buildFeishuPostMessageContent({
+      messageText: 'Hello，<at id="ou_person"></at>老师，我在～',
+    }));
+    expect(value.zh_cn.content).toEqual([[
+      {tag: "text", text: "Hello，"},
+      {tag: "at", user_id: "ou_person"},
+      {tag: "text", text: "老师，我在～"},
+    ]]);
+  });
+  it("retains authored line breaks around inline mentions", () => {
+    const value = JSON.parse(buildFeishuPostMessageContent({
+      messageText: 'Hello，\n<at id="ou_person"></at>老师，我在～\n下一行',
+    }));
+    expect(value.zh_cn.content[0]).toEqual([
+      {tag: "text", text: "Hello，\n"},
+      {tag: "at", user_id: "ou_person"},
+      {tag: "text", text: "老师，我在～\n下一行"},
+    ]);
+  });
+  it("retains Markdown formatting and escaped examples beside mentions", () => {
+    const value = JSON.parse(buildFeishuPostMessageContent({
+      messageText: '**Hello**，<at id="ou_person"></at>老师，\\*原样\\*',
+    }));
+    expect(value.zh_cn.content[0]).toEqual([
+      {tag: "md", text: "**Hello**，"},
+      {tag: "at", user_id: "ou_person"},
+      {tag: "md", text: "老师，\\*原样\\*"},
+    ]);
   });
   it("does not prepend a duplicate native recipient already mentioned inline", () => {
     const value=JSON.parse(buildFeishuPostMessageContent({messageText:'<at id="ou_person"></at>同学',mentions:[{openId:"ou_person",name:"完整姓名",key:""}]}));

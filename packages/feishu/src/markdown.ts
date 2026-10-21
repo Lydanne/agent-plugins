@@ -7,6 +7,7 @@ import type { MentionTarget } from "./mention-target.types.js";
 
 export type FeishuMarkdownNode = {
   type: string;
+  value?: string;
   depth?: number;
   identifier?: string;
   url?: string;
@@ -16,6 +17,17 @@ export type FeishuMarkdownNode = {
   };
   children?: FeishuMarkdownNode[];
 };
+
+/** Markdown post elements are blocks; plain mention neighbours must stay inline. */
+function mentionNeighbourText(text: string): FeishuPostMessageElement {
+  const root = parseFeishuMarkdown(text);
+  const paragraph = root.children?.[0];
+  const child = paragraph?.children?.[0];
+  const plain = root.children?.length === 1 && paragraph?.type === "paragraph" &&
+    paragraph.children?.length === 1 && child?.type === "text" &&
+    child.value === text.trim();
+  return { tag: plain ? "text" : "md", text };
+}
 
 type FeishuPostMessageElement =
   | { tag: "at"; user_id: string; user_name?: string }
@@ -72,11 +84,14 @@ function buildInlineMentionElements(text: string): FeishuPostMessageElement[] {
   for (const match of text.matchAll(pattern)) {
     const start = match.index!;
     if (text[start - 1] === "\\" || protectedRanges.some(([a,b]) => start >= a && start < b)) continue;
-    if (start > cursor) elements.push({tag: "md", text: text.slice(cursor, start)});
+    if (start > cursor) elements.push(mentionNeighbourText(text.slice(cursor, start)));
     elements.push({tag: "at", user_id: match[1] ?? match[2]});
     cursor = start + match[0].length;
   }
-  if (cursor < text.length || !elements.length) elements.push({tag: "md", text: text.slice(cursor)});
+  if (cursor < text.length || !elements.length) {
+    const tail = text.slice(cursor);
+    elements.push(elements.length ? mentionNeighbourText(tail) : {tag: "md", text: tail});
+  }
   return elements;
 }
 
