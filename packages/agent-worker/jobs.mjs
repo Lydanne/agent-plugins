@@ -21,9 +21,11 @@ export function normalizeTags(tags=[]) {
  }
  return [...unique.values()];
 }
+export const USER_INPUT_WAIT_MS=3*60*1000;
+const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。保留已核验信息，未补充字段标为未知；跳过依赖这些字段、账号选择或额外授权的步骤，在原 task/constraints 范围内继续可独立完成的工作。不得猜测用户选择、扩大写入权限、重做已执行操作或重复询问同一缺口。无法继续时交付已核验结果、限制与未完成项，不把未知当成否定或成功。';
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,logger}) {
  const lock=join(root,'scheduler-lock');
  let timer;
  const files=()=>readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x)).map(x=>readJson(join(root,x)));
@@ -74,9 +76,35 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   finalizeJobReport({job,params:valid?request.params:{task:job.taskSummary},runtime:valid?request.runtime:getRuntime()});
   writeJson(join(root,job.jobId+'.json'),job);
  }
+ function resumeLocked(job,request,answer,metadata) {
+  const jobId=job.jobId,questionId=job.contextRequest.questionId,requestFile=join(root,jobId+'.request.json');
+    const questions=job.questions.map(q=>q.questionId===questionId?{...q,answer,...metadata,answeredAt:Date.now()}:q);
+    request.resumeParams={...request.params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
+    writeJson(requestFile,request);
+    const resumed={...job,questions,status:'queued',resumePending:true,heartbeatAt:Date.now(),progress:metadata.answerSource==='user_wait_timeout'?'用户等待超时，跳过缺失信息并继续原任务':'Main 已回复，等待继续执行',notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined};
+    delete resumed.contextRequest;delete resumed.finishedAt;delete resumed.result;
+    appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:metadata.answerSource==='user_wait_timeout'?'worker.user_wait_timeout':'main.context_reply',time:Date.now(),questionId,answer})+'\n',{mode:0o600});
+    writeJson(join(root,jobId+'.json'),resumed);
+  return resumed;
+ }
  function scheduleLocked(){
   const all=files();
   for(const job of all.filter(j=>waiting.has(j.status)&&j.contextRequest?.expiresAt<=Date.now())){job.status='timed_out';job.error='Context reply deadline exceeded';job.finishedAt=Date.now();if(job.notification)job.notification={state:'pending',eventKey:randomUUID()};terminalJob(job);}
+  for(const job of all.filter(j=>j.status==='awaiting_user')){
+   const question=job.contextRequest,at=Date.now();
+   if(!question||!Number.isFinite(question.waitingForUserAt)||at-question.waitingForUserAt<USER_INPUT_WAIT_MS||
+    question.expiresAt<=at||existsSync(join(root,job.jobId+'.cancel'))||!hasSourceProvenance(job.provenance)||
+    all.filter(queued).length>=limits().maxQueuedJobs)continue;
+   // No caller impersonation: the host revalidates the original source. Unknown
+   // authorization remains waiting; timeout never fabricates a user answer.
+   if(authorizeUserTimeout(job.provenance,job)!==true)continue;
+   const request=readJson(join(root,job.jobId+'.request.json'));
+   if(typeof request.scope!=='string'||scopeKey(request.scope)!==job.scope||
+    requestKeyFor(request.params,request.scope,job.provenance)!==job.requestKey)continue;
+   const answer=timeoutAnswer+(question.knownValues?' 已确认字段：'+JSON.stringify(question.knownValues):'');
+   Object.assign(job,resumeLocked(job,request,answer,{answerSource:'user_wait_timeout',userWaitTimedOutAt:at}));
+   delete job.contextRequest;delete job.finishedAt;delete job.result;
+  }
   for(const job of all.filter(queued)){
    if(existsSync(join(root,job.jobId+'.cancel'))){Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);}
   }
@@ -181,13 +209,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(files().filter(queued).length>=limits().maxQueuedJobs)throw Error('Waiting queue is full; question remains pending');
     const metadata={answerSource:job.status==='awaiting_main'?'main_context':'user_text',...answerMetadata};
     if(metadata.answerValues)metadata.answerValues=validateContextAnswers(job.contextRequest,metadata.answerValues);
-    const questions=job.questions.map(q=>q.questionId===questionId?{...q,answer,...metadata,answeredAt:Date.now()}:q);
-    request.resumeParams={...request.params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
-    writeJson(requestFile,request);
-    const resumed={...job,questions,status:'queued',resumePending:true,heartbeatAt:Date.now(),progress:'Main 已回复，等待继续执行',notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined};
-    delete resumed.contextRequest;delete resumed.finishedAt;delete resumed.result;
-    appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:'main.context_reply',time:Date.now(),questionId,answer})+'\n',{mode:0o600});
-    writeJson(join(root,jobId+'.json'),resumed);scheduleLocked();return view(get(jobId,scope));
+    resumeLocked(job,request,answer,metadata);scheduleLocked();return view(get(jobId,scope));
    }finally{release();}
   },
   async run(params,scope,provenance){

@@ -244,3 +244,41 @@ test('request kinds are optional for legacy tasks and strictly validated',()=>{
  assert.deepEqual(parseContextRequest(JSON.stringify({type:'request',...question})),question);
  for(const requestKind of ['other',null,1,{}])assert.throws(()=>parseContextRequest(JSON.stringify({type:'request',...question,requestKind})),/kind/);
 });
+
+test('three minute user timeout resumes the same job once with unknowns, frozen constraints and audit source',async()=>{
+ const f=fixture();try{
+  const original=await ask(f),worker=join(f.root,'timeout-worker.mjs');
+  writeFileSync(worker,`import{readFileSync,writeFileSync,appendFileSync}from'node:fs';const[root,id]=process.argv.slice(2);let input='';for await(const c of process.stdin)input+=c;const p=root+'/'+id+'.json',j=JSON.parse(readFileSync(p));appendFileSync(root+'/runs',id+'\\n');j.status='completed';j.result={params:JSON.parse(input).params};writeFileSync(p,JSON.stringify(j));`);
+  const jobs=createJobs({root:f.root,node:process.execPath,worker,authorizeUserTimeout:()=>true});
+  await jobs.awaitUser(f.id,f.scope,original.contextRequest.questionId,f.provenance);
+  const file=join(f.root,f.id+'.json'),waiting=readJson(file);
+  waiting.contextRequest.waitingForUserAt=Date.now()-120000;writeJson(file,waiting);jobs.tick();
+  assert.equal(jobs.status(f.id,f.scope).status,'awaiting_user');
+  waiting.contextRequest.waitingForUserAt=Date.now()-180001;writeJson(file,waiting);
+  const restarted=createJobs({root:f.root,node:process.execPath,worker,authorizeUserTimeout:()=>true});
+  restarted.tick();restarted.tick();const done=await restarted.wait(f.id,f.scope,2);
+  assert.equal(done.status,'completed');assert.equal(done.jobId,f.id);assert.equal(done.resumeSessionId,'original-thread');
+  assert.equal(done.questions[0].answerSource,'user_wait_timeout');
+  assert.equal(done.result.params.constraints,f.params.constraints);assert.equal(done.result.params.task,f.params.task);
+  assert.match(done.result.params.mainReplies[0].answer,/不是用户答复或授权/);
+  assert.match(done.result.params.mainReplies[0].answer,/不得猜测/);
+  assert.equal(readFileSync(join(f.root,'runs'),'utf8').trim(),f.id);
+  assert.equal(readFileSync(join(f.root,f.id+'.events.jsonl'),'utf8').split('worker.user_wait_timeout').length-1,1);
+  await assert.rejects(restarted.reply(f.id,f.scope,original.contextRequest.questionId,'late answer',f.provenance),/already answered/);
+ }finally{f.close();}
+});
+
+for(const blocked of ['authorization','cancel','binding','main','answered'])test('user timeout preserves '+blocked+' boundary',async()=>{
+ const f=fixture();try{
+  const original=await ask(f),jobs=createJobs({root:f.root,node:process.execPath,worker:'must-not-run',authorizeUserTimeout:()=>blocked!=='authorization'});
+  await jobs.awaitUser(f.id,f.scope,original.contextRequest.questionId,f.provenance);
+  const file=join(f.root,f.id+'.json'),j=readJson(file);j.contextRequest.waitingForUserAt=Date.now()-180001;
+  if(blocked==='main')j.status='awaiting_main';
+  if(blocked==='answered'){j.status='completed';delete j.contextRequest;}
+  writeJson(file,j);
+  if(blocked==='cancel')writeFileSync(join(f.root,f.id+'.cancel'),'cancel');
+  if(blocked==='binding'){const p=join(f.root,f.id+'.request.json'),r=readJson(p);r.params.task='tampered';writeJson(p,r);}
+  jobs.tick();assert.equal(readJson(file).status,j.status);
+  assert.equal(readJson(file).questions[0].answer,undefined);
+ }finally{f.close();}
+});
