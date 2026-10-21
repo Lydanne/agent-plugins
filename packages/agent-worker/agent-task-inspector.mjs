@@ -16,13 +16,13 @@ export function createAgentTaskInspector({state,jobs,now=()=>Date.now()}){
   try{files=await readdir(root);}catch(error){if(error.code!=='ENOENT')throw error;files=[];}
   const all=[];
   for(const file of files.filter(name=>/^[a-f0-9-]{36}\.json$/i.test(name))){
-   const saved=JSON.parse(await readFile(join(root,file),'utf8'));
+   let saved;try{saved=JSON.parse(await readFile(join(root,file),'utf8'));}catch(error){if(error.code==='ENOENT')continue;throw error;}
    if(saved.jobId+'.json'!==file)throw Error('Invalid saved job identity');
    if(saved.provenance?.agentId&&saved.provenance.agentId!==agentId)continue;
    let request;try{request=JSON.parse(await readFile(join(root,saved.jobId+'.request.json'),'utf8'));}catch(error){if(error.code==='ENOENT')continue;throw error;}
    const scope=request.scope;
    if(typeof scope!=='string'||!scope.startsWith('agent:'+agentId+':')||saved.scope!==hash(scope)||request.params?.topic!==saved.topic||saved.requestKey!==requestKeyFor(request.params,scope,saved.provenance))continue;
-   const job=jobs.status(saved.jobId,scope);
+   let job;try{job=jobs.status(saved.jobId,scope);}catch(error){if(error.code==='ENOENT')continue;throw error;}
    all.push({jobId:job.jobId,topic:job.topic,...modelFields(job),projectId:job.projectId??null,repository:job.repository??null,executionScope:job.executionScope??null,notificationState:job.notification?.state??null,notificationErrorCode:job.notification?.lastErrorCode??null,waitingSince:job.contextRequest?.createdAt??null,sessionKey:scope,status:states.includes(job.status)?job.status:'unknown',createdAt:job.createdAt,finishedAt:job.finishedAt??null,taskSummary:typeof job.taskSummary==='string'?job.taskSummary.slice(0,500):null});
   }
   const scoped=all.filter(job=>!projectId||job.projectId===projectId),counts=Object.fromEntries(states.map(status=>[status,scoped.filter(job=>job.status===status).length]));

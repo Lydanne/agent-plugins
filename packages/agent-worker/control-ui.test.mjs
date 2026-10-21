@@ -60,3 +60,34 @@ test('task deep link reads the original job directly and updates when another jo
  const view=f.track(f.ui.mountProjectPage(f.container,ctx));await settle();assert.equal(calls[0].actionId,'inspect-detail');assert.equal(calls[0].payload.jobId,ctx.props.jobId);assert.equal(calls[0].sessionKey,'agent:main:original');
  view.update({...ctx,props:{...ctx.props,topic:'next topic',jobId:'22222222-2222-4222-8222-222222222222'}});await settle();assert.equal(calls.at(-1).payload.topic,'next topic');assert.equal(calls.at(-1).payload.jobId,'22222222-2222-4222-8222-222222222222');
 });
+
+function deletableSession(patch={}){return {topic:'delete-me',projectId:'demo',executionScope:'a'.repeat(64),modelSessionScope:'b'.repeat(64),deletionRevision:'c'.repeat(64),canDelete:true,status:'completed',taskCount:2,tags:[],heat:0,interactionCount:4,...patch};}
+test('sidebar delete confirms exact model session and refreshes the list after success',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),row=deletableSession(),calls=[];let deleted=false;
+ const ctx=uiContext(async(_method,params)=>{calls.push(params);if(params.actionId==='inspect-deleteSession'){deleted=true;return {ok:true,result:{deleted:true,taskCount:2}};}return {ok:true,result:{...listing(null),sessions:deleted?[]:[row],groupCounts:{history:deleted?0:1,active:0,unknown:0}}};},{agentId:'main',sessionKey:'agent:main:test'});ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();click(f.container,'删除会话');assert.match(f.container.textContent,/删除会话？/);assert.match(f.container.textContent,/2 条历史任务/);assert.equal(calls.filter(p=>p.actionId==='inspect-deleteSession').length,0);
+ click(f.container,'取消');assert.equal(f.container.querySelector('dialog'),null);click(f.container,'删除会话');click(f.container,'确认删除');await settle();
+ assert.deepEqual(calls.find(p=>p.actionId==='inspect-deleteSession').payload,{topic:row.topic,executionScope:row.executionScope,modelSessionScope:row.modelSessionScope,projectId:'demo',revision:row.deletionRevision,confirmed:true});assert.equal(f.container.querySelector('dialog'),null);assert.match(f.container.textContent,/没有匹配的会话/);
+});
+test('read-only users have no delete button and active sessions explain why deletion is disabled',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),row=deletableSession({canDelete:false,deleteReason:'仍在执行',status:'running'});
+ const ctx=uiContext(async()=>({ok:true,result:{...listing(null),sessions:[row],groupCounts:{history:1,active:1,unknown:0}}}),{sessionKey:'chat'}),view=f.track(f.ui.mountPanel(f.container,ctx));await settle();assert.equal(f.container.querySelector('.cq-delete'),null);
+ ctx.host.connection.canWrite=true;view.update(ctx);await settle();click(f.container,'刷新');await settle();const remove=f.container.querySelector('.cq-delete');assert.equal(remove.disabled,true);assert.equal(remove.title,'仍在执行');
+});
+test('delete failures retain the session and switching chats dismisses the confirmation',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),row=deletableSession();
+ const ctx=uiContext(async(_method,p)=>p.actionId==='inspect-deleteSession'?{ok:false,error:'会话已变化，请刷新后重新确认删除。'}:{ok:true,result:{...listing(null),sessions:[row],groupCounts:{history:1,active:1,unknown:0}}},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();click(f.container,'删除会话');click(f.container,'确认删除');await settle();assert.match(f.container.querySelector('dialog').textContent,/会话已变化/);assert.ok(f.container.querySelector('.cq-row'));
+ view.update({...ctx,props:{sessionKey:'other'}});await settle();assert.equal(f.container.querySelector('dialog'),null);
+});
+
+test('detail deletion survives same-target host updates and returns to the refreshed session list',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),row=deletableSession();let deleted=false;
+ const ctx=uiContext(async(_method,p)=>{if(p.actionId==='inspect-deleteSession'){deleted=true;return {ok:true,result:{deleted:true}};}return {ok:true,result:p.actionId==='inspect-detail'?{session:row,records:[],currentTasks:[],taskHistory:[],hasMore:false}:{...listing(null),sessions:deleted?[]:[row],groupCounts:{history:deleted?0:1,active:0,unknown:0}}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();f.container.querySelector('.cq-row-open').click();await settle();click(f.container,'删除会话');view.update({...ctx});click(f.container,'确认删除');await settle();assert.equal(deleted,true);assert.equal(f.container.querySelector('dialog'),null);assert.match(f.container.textContent,/没有匹配的会话/);
+});
+test('losing write permission closes the delete dialog without sending a mutation',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),row=deletableSession(),calls=[];
+ const ctx=uiContext(async(_method,p)=>{calls.push(p.actionId);return {ok:true,result:{...listing(null),sessions:[row],groupCounts:{history:1,active:0,unknown:0}}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
+ const view=f.track(f.ui.mountPanel(f.container,ctx));await settle();click(f.container,'删除会话');ctx.host.connection.canWrite=false;view.update(ctx);await settle();assert.equal(f.container.querySelector('dialog'),null);assert.equal(f.container.querySelector('.cq-delete'),null);assert.ok(!calls.includes('inspect-deleteSession'));
+});

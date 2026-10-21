@@ -186,3 +186,14 @@
 .cq-panel .cq-calls>.cq-call-failed{border:1px solid #c94d45;background:#c94d4509}
 .cq-panel .cq-calls>.cq-call-failed>summary{color:#c94d45}
 .cq-panel .cq-calls>.cq-call-failed[open]>summary{border-bottom-color:#c94d4540;background:#c94d4510;color:#c94d45}
+
+.cq-panel .cq-delete { color: var(--error-color, #b42318); }
+.cq-panel .cq-delete:disabled { opacity: .5; cursor: not-allowed; }
+.cq-row-meta { flex-wrap: wrap; }
+
+.cq-raw-dialog.cq-delete-dialog { width: min(440px, calc(100vw - 32px)); height: fit-content; overflow: auto; }
+.cq-delete-dialog .cq-modal-panel { height: auto; flex: none; box-sizing: border-box; padding: 20px; }
+.cq-delete-dialog h2 { font-size: 16px; margin: 0 0 12px; }
+.cq-delete-dialog p { margin: 0 0 12px; overflow-wrap: anywhere; }
+.cq-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.cq-delete-actions button { width: auto; padding: 6px 14px; }

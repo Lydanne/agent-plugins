@@ -1,3 +1,4 @@
+import {createSessionDeletion,sessionDeletionState} from './session-deletion.mjs';
 import {collaborationDiagnostics} from './collaboration-diagnostics.mjs';
 import {createAgentTaskInspector} from './agent-task-inspector.mjs';
 import {trustedAgentId} from './dist/agent-repo-api.mjs';
@@ -42,8 +43,9 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
   let files;try{files=await readdir(root);}catch(e){if(e.code==='ENOENT')return [];throw e;}
   const result=[];
   for(const name of files.filter(name=>uuid.test(name.slice(0,-5))&&name.endsWith('.json'))){
-   const saved=await json(join(root,name));
-   if(saved.scope===hash(scope))result.push(jobs.status(saved.jobId,scope));
+   try{const saved=await json(join(root,name));
+    if(saved.scope===hash(scope))result.push(jobs.status(saved.jobId,scope));
+   }catch(error){if(error.code!=='ENOENT')throw error;}
   }
   return result.sort((a,b)=>b.createdAt-a.createdAt);
  }
@@ -64,10 +66,11 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
     row.activeCount=(row.activeCount??0)+(active.has(job.status)?1:0);
     groups.set(group,row);
    }
-  return [...groups.values()];
+  return [...groups.entries()].map(([key,row])=>({...row,...sessionDeletionState(Object.fromEntries(Object.entries(bindings??{}).filter(([,entry])=>bindingKey(entry.topic,entry)===key)),all.filter(job=>bindingKey(job.topic,job)===key))}));
  }
  return {
   agentTasks:createAgentTaskInspector({state,jobs,now}),
+  deleteSession:createSessionDeletion({state}),
   async list(scope,{query='',sort='heat',offset=0,limit=30,projectId}={}){
    if(typeof query!=='string'||query.length>500||!['heat','recent'].includes(sort)||!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>100)throw Error('Invalid list parameters');
    if(projectId!==undefined&&(typeof projectId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(projectId)))throw Error('Invalid project filter');
@@ -119,10 +122,15 @@ export function registerInspector(api,inspector,{now=()=>Date.now()}={}){
  const transfers=new Map();
  const prune=()=>{for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);};
  const part=(transferId,value,index)=>({encoding:'json-chunks',transferId,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
- for(const action of ['list','detail','chunk','agentTasks'])register({id:'inspect-'+action,description:action==='agentTasks'?'Read current Agent task summaries across conversations':'Read current conversation Codex '+action,requiredScopes:['operator.read'],handler:async context=>{
+ for(const action of ['list','detail','chunk','agentTasks','deleteSession'])register({id:'inspect-'+action,description:action==='deleteSession'?'Delete the selected settled Worker session in the current conversation':action==='agentTasks'?'Read current Agent task summaries across conversations':'Read current conversation Codex '+action,requiredScopes:action==='deleteSession'?['operator.write']:['operator.read'],handler:async context=>{
   try{
    if(typeof context.sessionKey!=='string'||!context.sessionKey)throw Error('Missing scope');
    prune();
+   if(action==='deleteSession'){
+    const result=await inspector.deleteSession(context.sessionKey,context.payload??{});
+    for(const [id,value]of transfers)if(value.scope===context.sessionKey)transfers.delete(id);
+    return {ok:true,result};
+   }
    if(action==='chunk'){
     const {transferId,index}=context.payload??{},value=transfers.get(transferId);
     if(!value||value.scope!==context.sessionKey||(value.agentId!==undefined&&value.agentId!==trustedAgentId(context))||!Number.isInteger(index)||index<0||index>=Math.ceil(value.text.length/inspectionChunkSize))throw Error('Invalid transfer');
@@ -138,6 +146,8 @@ export function registerInspector(api,inspector,{now=()=>Date.now()}={}){
    }
    return {ok:true,result:part(transferId,value,0)};
   }
-  catch{return {ok:false,error:action==='agentTasks'?'无法读取当前 Agent 的 Worker 任务，请核对插件版本、参数和存储状态。':'无法读取当前会话记录，请核对参数和存储状态。',code:'INSPECTION_UNAVAILABLE'};}
+  catch(error){if(action==='deleteSession')return {ok:false,error:[
+    '请确认要删除的具体会话。','会话不存在或已经删除，请刷新列表。','会话项目不匹配，请刷新列表。','会话已变化，请刷新后重新确认删除。','旧执行器仍占用存储，请先处理原任务。','会话仍有未结束或状态未知的任务，请先处理原任务。','会话仍有待交付或待核查的结果，请先处理交付状态。'
+   ].includes(error.message)?error.message:'无法删除会话，请刷新后核对任务和存储状态。',code:'SESSION_DELETE_UNAVAILABLE'};return {ok:false,error:action==='agentTasks'?'无法读取当前 Agent 的 Worker 任务，请核对插件版本、参数和存储状态。':'无法读取当前会话记录，请核对参数和存储状态。',code:'INSPECTION_UNAVAILABLE'};}
  }});
 }

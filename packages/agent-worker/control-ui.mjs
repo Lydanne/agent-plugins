@@ -95,6 +95,29 @@ export function mountPanel(container,initial){
  let context=initial,disposed=false,generation=0,selected=initial.props.topic??null,selectedScope=initial.props.executionScope,selectedModelScope=initial.props.modelSessionScope,selectedJobId=initial.props.jobId,view='records',filter='all',query='',projectFilter=initial.props.projectId??'',sort='heat',offset=0,historyOffset=0,rows=[],data=null,error=null,loading=false,signature='',timer;
  const root=element('section',undefined,'cq-panel');root.setAttribute('aria-label','Agent Worker 会话');container.append(root);
  const safe=value=>context.host.redact(String(value??''));
+ let deleteDialog=null,deleting=false,observedWrite=context.host.connection.canWrite;
+ function closeDelete(){const dialog=deleteDialog;deleteDialog=null;if(dialog){dialog.close();dialog.remove();}}
+ function deleteButton(row){
+  if(context.host.connection.canWrite!==true)return null;
+  const control=button('删除会话',()=>confirmDelete(row),'cq-delete');
+  control.disabled=deleting||row.canDelete!==true;control.title=safe(row.deleteReason??'删除此会话的历史任务和复用绑定');return control;
+ }
+ function confirmDelete(row){
+  if(disposed||deleting||context.host.connection.canWrite!==true||row.canDelete!==true)return;
+  closeDelete();const owner=context,dialog=element('dialog',undefined,'cq-raw-dialog cq-delete-dialog'),panel=element('section',undefined,'cq-panel cq-modal-panel');deleteDialog=dialog;
+  const title=element('h2','删除会话？');title.id='cq-delete-title-'+(++dialogSequence);dialog.setAttribute('aria-labelledby',title.id);
+  panel.append(title,element('p',safe((row.projectId?row.projectId+' / ':'')+row.topic+(row.model?' · '+row.model:''))),element('p',`将从列表移除此会话及其 ${row.taskCount} 条历史任务；再次使用此主题会开启新会话。已生成的报告和附件保留。`));
+  const feedback=element('p',undefined,'cq-error');feedback.setAttribute('role','alert');
+  const isCurrent=()=>!disposed&&deleteDialog===dialog&&owner.props.sessionKey===context.props.sessionKey&&owner.props.agentId===context.props.agentId&&context.presented&&context.host.connection.canRead&&context.host.connection.canWrite===true;
+  const cancel=button('取消',closeDelete),confirm=button('确认删除',async()=>{
+   if(deleting||!isCurrent())return;
+   deleting=true;generation++;confirm.disabled=cancel.disabled=true;feedback.textContent='';
+   try{await invoke('deleteSession',{topic:row.topic,executionScope:row.executionScope??null,modelSessionScope:row.modelSessionScope??null,projectId:row.projectId??undefined,revision:row.deletionRevision,confirmed:true});
+    if(!isCurrent())return;closeDelete();closeOriginal();collapsedTasks.clear();deleting=false;error=null;back();
+   }catch(e){if(isCurrent()){feedback.textContent=safe(e.message);confirm.disabled=cancel.disabled=false;}}finally{deleting=false;}
+  },'cq-delete');
+  cancel.autofocus=true;const actions=element('div',undefined,'cq-delete-actions');actions.append(cancel,confirm);panel.append(feedback,actions);dialog.append(panel);container.append(dialog);dialog.addEventListener('cancel',event=>{if(deleting)event.preventDefault();});dialog.addEventListener('close',()=>{dialog.remove();if(deleteDialog===dialog)deleteDialog=null;root.querySelector('.cq-refresh')?.focus();});dialog.showModal();
+ }
  let rawDialog=null;const collapsedTasks=new Set();
  function closeOriginal(){if(rawDialog){rawDialog.close();rawDialog.remove();rawDialog=null;}}
  function openOriginal(actor,record,snapshot){
@@ -110,7 +133,7 @@ export function mountPanel(container,initial){
 
  async function invoke(action,payload){const current=context;return readInspectionResponse(async(name,data)=>{current.signal.throwIfAborted();if(current!==context)throw Error('会话已切换');const response=await current.host.request('plugins.sessionAction',{pluginId:'agent-worker',actionId:'inspect-'+name,sessionKey:current.props.sessionKey,agentId:current.props.agentId,payload:data});current.signal.throwIfAborted();return response;},action,payload);}
  async function refresh(append=false,appendHistory=false){
-  if(disposed||context.signal.aborted||!context.presented||!context.host.connection.canRead||!context.props.sessionKey)return;
+  if(disposed||deleting||deleteDialog||context.signal.aborted||!context.presented||!context.host.connection.canRead||!context.props.sessionKey)return;
   const request=++generation;loading=true;if(!rows.length&&!data)render();
   try{const result=await invoke(selected?'detail':'list',selected?{topic:selected,executionScope:selectedScope,modelSessionScope:selectedModelScope,projectId:projectFilter||undefined,offset,limit:1,historyOffset,jobId:selectedJobId}:{query,projectId:projectFilter||undefined,sort,offset,limit:30});if(disposed||request!==generation||!context.presented||!context.host.connection.canRead)return;
    error=null;loading=false;
@@ -120,8 +143,8 @@ export function mountPanel(container,initial){
   }catch(e){if(disposed||request!==generation||!context.presented||!context.host.connection.canRead)return;loading=false;error=safe(e.message);render();}
  }
  let listResult=null,projectIds=[];
- function choose(topic,executionScope,modelSessionScope){selected=topic;selectedScope=executionScope??null;selectedModelScope=modelSessionScope??null;selectedJobId=undefined;offset=0;historyOffset=0;data=null;view='records';signature='';render();refresh();}
- function back(){selected=null;selectedScope=undefined;selectedModelScope=undefined;selectedJobId=undefined;offset=0;historyOffset=0;data=null;rows=[];signature='';render();refresh();}
+ function choose(topic,executionScope,modelSessionScope){closeDelete();selected=topic;selectedScope=executionScope??null;selectedModelScope=modelSessionScope??null;selectedJobId=undefined;offset=0;historyOffset=0;data=null;view='records';signature='';render();refresh();}
+ function back(){closeDelete();selected=null;selectedScope=undefined;selectedModelScope=undefined;selectedJobId=undefined;offset=0;historyOffset=0;data=null;rows=[];signature='';render();refresh();}
  function render(){
   const scroll=root.querySelector('.cq-scroll')?.scrollTop??0;
   const expanded=new Set([...root.querySelectorAll('details[open]')].map(disclosureKey));
@@ -131,7 +154,7 @@ export function mountPanel(container,initial){
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!context.props.sessionKey){root.append(element('p','请选择当前 Agent 的会话后查看项目任务。'));return;}
   if(error){root.append(element('p',error,'cq-error'),button('重试',()=>refresh()));}
-  if(selected){const heading=element('div',undefined,'cq-detail-title');const title=element('h2',safe(selected));title.title=safe(selected);heading.append(title);const current=data?.session??data?.records.at(-1);if(current)heading.append(element('span',labels[current.status]??current.status,'cq-state '+current.status));root.append(heading);const tabs=element('nav',undefined,'cq-detail-tabs');for(const [id,name] of [['records','对话记录'],['process','任务过程'],['info','任务信息'],['session','会话信息']]){const b=button(name,()=>{view=id;root.querySelector('.cq-scroll')?.scrollTo(0,0);render();},view===id?'cq-selected':'');b.setAttribute('aria-pressed',String(view===id));tabs.append(b);}root.append(tabs);}
+  if(selected){const heading=element('div',undefined,'cq-detail-title');const title=element('h2',safe(selected));title.title=safe(selected);heading.append(title);const current=data?.session??data?.records.at(-1);if(current)heading.append(element('span',labels[current.status]??current.status,'cq-state '+current.status));const remove=data?.session&&deleteButton(data.session);if(remove)heading.append(remove);root.append(heading);const tabs=element('nav',undefined,'cq-detail-tabs');for(const [id,name] of [['records','对话记录'],['process','任务过程'],['info','任务信息'],['session','会话信息']]){const b=button(name,()=>{view=id;root.querySelector('.cq-scroll')?.scrollTo(0,0);render();},view===id?'cq-selected':'');b.setAttribute('aria-pressed',String(view===id));tabs.append(b);}root.append(tabs);}
   else {
    const project=element('select');project.setAttribute('aria-label','Worker 项目筛选');const all=element('option','所有项目');all.value='';project.append(all);for(const id of [...new Set([...projectIds,projectFilter].filter(Boolean))]){const option=element('option',safe(id));option.value=id;project.append(option);}project.value=projectFilter;project.onchange=()=>{generation++;projectFilter=project.value;offset=0;rows=[];data=null;listResult=null;error=null;signature='';refresh();};root.append(project);
    if(projectFilter)root.append(element('p',safe('项目 · '+projectFilter),'cq-muted'));
@@ -157,7 +180,7 @@ export function mountPanel(container,initial){
      const progress=safe(row.progress);if(progress&&!['执行已完成','结果已交付','历史任务记录不可用'].includes(progress)){const description=element('p',progress,'cq-muted');description.title=progress;open.append(description);}entry.append(open);
      const metrics=element('div',undefined,'cq-row-meta');const stats=element('div',undefined,'cq-metrics');stats.append(element('span',`热度 ${row.heat}`,'cq-heat'),element('span',`${row.interactionCount} 次交互`),element('span',`${row.taskCount} 个任务`));
      const delivery=({delivered:'已交付',pending:'待交付',processing:'交付处理中',sending:'发送中',suppressed:'已抑制',uncertain:'交付待核查'})[row.notificationState]??(progress==='结果已交付'?'已交付':null);if(delivery)stats.append(element('span',delivery,'cq-delivery'));
-     const updated=element('time',time(row.updatedAt));updated.title='最近活动 · '+time(row.updatedAt);metrics.append(stats,updated);entry.append(metrics);
+     const updated=element('time',time(row.updatedAt));updated.title='最近活动 · '+time(row.updatedAt);metrics.append(stats,updated);const remove=deleteButton(row);if(remove)metrics.append(remove);entry.append(metrics);
      if(row.tags.length){const meta=element('div',undefined,'cq-tags');for(const tag of row.tags.slice(0,2)){const chip=element('span',safe(tag));chip.title=safe(tag);meta.append(chip);}if(row.tags.length>2){const extra=element('div',undefined,'cq-expanded-tags');for(const tag of row.tags.slice(2)){const chip=element('span',safe(tag));chip.title=safe(tag);extra.append(chip);}const more=fold(`+${row.tags.length-2}`,extra);more.dataset.foldKey='tags';more.classList.add('cq-tag-disclosure');meta.append(more);}entry.append(meta);}
      content.append(entry);
     }
@@ -237,7 +260,7 @@ export function mountPanel(container,initial){
   body.scrollTop=scroll;
  }
  timer=setInterval(()=>{if((offset===0||selectedJobId)&&historyOffset===0&&!(root.contains(document.activeElement)&&document.activeElement.matches('input,select')))refresh();},5000);render();refresh();
- return {update(next){const changed=next.props.sessionKey!==context.props.sessionKey||next.props.agentId!==context.props.agentId||next.props.projectId!==context.props.projectId||next.props.jobId!==context.props.jobId||next.props.topic!==context.props.topic||next.props.executionScope!==context.props.executionScope||next.props.modelSessionScope!==context.props.modelSessionScope;context=next;if(changed){projectFilter=next.props.projectId??'';closeOriginal();collapsedTasks.clear();generation++;selected=next.props.topic??null;selectedScope=next.props.executionScope;selectedModelScope=next.props.modelSessionScope;selectedJobId=next.props.jobId;query='';rows=[];data=null;listResult=null;projectIds=[];error=null;offset=0;historyOffset=0;signature='';render();}if(!next.presented){closeOriginal();generation++;return;}if(!next.host.connection.canRead){closeOriginal();generation++;rows=[];data=null;listResult=null;projectIds=[];signature='';render();return;}refresh();},dispose(){closeOriginal();disposed=true;generation++;clearInterval(timer);root.remove();}};
+ return {update(next){const changed=next.props.sessionKey!==context.props.sessionKey||next.props.agentId!==context.props.agentId||next.props.projectId!==context.props.projectId||next.props.jobId!==context.props.jobId||next.props.topic!==context.props.topic||next.props.executionScope!==context.props.executionScope||next.props.modelSessionScope!==context.props.modelSessionScope;context=next;const writeChanged=observedWrite!==next.host.connection.canWrite;observedWrite=next.host.connection.canWrite;if(writeChanged)render();if(changed){closeDelete();projectFilter=next.props.projectId??'';closeOriginal();collapsedTasks.clear();generation++;selected=next.props.topic??null;selectedScope=next.props.executionScope;selectedModelScope=next.props.modelSessionScope;selectedJobId=next.props.jobId;query='';rows=[];data=null;listResult=null;projectIds=[];error=null;offset=0;historyOffset=0;signature='';render();}if(!next.presented){closeDelete();closeOriginal();generation++;return;}if(next.host.connection.canWrite!==true)closeDelete();if(!next.host.connection.canRead){closeDelete();closeOriginal();generation++;rows=[];data=null;listResult=null;projectIds=[];signature='';render();return;}refresh();},dispose(){closeDelete();closeOriginal();disposed=true;generation++;clearInterval(timer);root.remove();}};
 }
 export function mountProjectPage(container,initial){
  let context=initial;

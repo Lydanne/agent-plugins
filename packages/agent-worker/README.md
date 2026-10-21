@@ -477,3 +477,9 @@ AgentRepo 概览和「Worker 任务」模块通过 agent-worker 的只读 `inspe
 ## Main 日志汇总
 
 AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在 Main 注册通用诊断来源，核验任务的 Agent、会话与请求归属后，只增量读取开启后的审计事件；不改变任务原有审计留存，也不新增 Worker 直接调用插件的通路。详见 [日志接入与边界](../../docs/log-console.md)。
+
+## 在侧边栏删除会话
+
+会话列表及详情提供「删除会话」，仅 `operator.write` 用户可操作；确认框说明所选项目、主题、模型及任务数量。`inspect-deleteSession` 使用宿主可信的当前聊天，必须传精确的 `topic`、`executionScope`、`modelSessionScope`（旧会话显式传 null）、列表/详情返回的 `deletionRevision`（作为 revision）和 `confirmed=true`，不能通过 payload 改换聊天。会话变化后需刷新并重新确认。
+
+只能删除全部任务已结束且异步交付已 delivered/suppressed 的会话；排队、运行、取消中、状态未知、等待 Main/用户，以及结果待交付/待核查时均拒绝。删除不取消任务，不回滚业务操作。删除会移除所选会话的复用绑定，将任务、请求、事件及标签等记录转存到私有 `state/deleted-sessions/<删除ID>/`，退出正常列表、任务统计和续接历史；同主题后续请求会新建会话。报告、附件及 Codex 原生会话正文不删除，也不清理其他聊天、项目或模型。私有归档没有 UI 恢复入口，仍须按原历史的访问范围保管。
