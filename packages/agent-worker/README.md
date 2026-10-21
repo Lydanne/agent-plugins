@@ -483,3 +483,11 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 会话列表及详情提供「删除会话」，仅 `operator.write` 用户可操作；确认框说明所选项目、主题、模型及任务数量。`inspect-deleteSession` 使用宿主可信的当前聊天，必须传精确的 `topic`、`executionScope`、`modelSessionScope`（旧会话显式传 null）、列表/详情返回的 `deletionRevision`（作为 revision）和 `confirmed=true`，不能通过 payload 改换聊天。会话变化后需刷新并重新确认。
 
 只能删除全部任务已结束且异步交付已 delivered/suppressed 的会话；排队、运行、取消中、状态未知、等待 Main/用户，以及结果待交付/待核查时均拒绝。删除不取消任务，不回滚业务操作。删除会移除所选会话的复用绑定，将任务、请求、事件及标签等记录转存到私有 `state/deleted-sessions/<删除ID>/`，退出正常列表、任务统计和续接历史；同主题后续请求会新建会话。报告、附件及 Codex 原生会话正文不删除，也不清理其他聊天、项目或模型。私有归档没有 UI 恢复入口，仍须按原历史的访问范围保管。
+
+## 图形化模型配置
+
+当前聊天的「Agent Worker 会话」面板中点击「模型配置」，打开当前实例的 Worker 模型配置页；也可在导航固定项中选择「Worker 模型」。原生插件设置的「可用模型」采用宿主通用 JSON 新增框，仍兼容原配置；图形化页面无需手写 JSON。该页是实例级配置，不随所选聊天或 Agent 改变。
+
+页面可以在草稿中新增、编辑、删除最多 50 个模型，选择默认模型，以及设置每个模型的 CLI、用途、推理强度、速度和 0–6 级覆盖参数。支持的 harness 仍为 codex，模型和推理参数的实际可用性由所选 CLI 与账号决定。模型 ID 和 harness + model 不得重复；删除默认模型后恢复列表首项。清空列表保留既有顶层兼容模型，不删除其他 Worker 配置。
+
+修改不会自动保存；点击「保存模型配置」并确认后，通过公开 config.patch 仅写入 plugins.entries.agent-worker.config.models 与 defaultModelId，使用 config.get 的 baseHash 防止覆盖并发变更，明确 replacePaths 避免按 ID 合并导致删除或参数清除无效。读取要求 operator.read，保存要求宿主 config.patch 对应的 operator.admin。宿主负责配置校验、应用及必要的 Gateway 重启；写入成功不表示新模型已能执行。已受理任务沿用原配置快照。保存结果不明或版本冲突时保留草稿，不自动重试，重新读取核对后再操作。
