@@ -3,9 +3,9 @@ const valid=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0;
 const terminal=new Set(['completed','failed','timed_out','cancelled']);
 export function duration(ms){
  if(!valid(ms))return '未记录';
- if(ms<1000)return ms===0?'0 秒':'不足 1 秒';
+ if(ms<1000)return ms===0?'0s':'<1s';
  const seconds=Math.floor(ms/1000),hours=Math.floor(seconds/3600),minutes=Math.floor(seconds/60)%60;
- return (hours?hours+' 小时 ':'')+(hours||minutes?minutes+' 分 ':'')+seconds%60+' 秒';
+ return (hours?hours+'h':'')+(minutes?minutes+'m':'')+(seconds%60||!hours&&!minutes?seconds%60+'s':'');
 }
 export function taskTime(task,now=Date.now()){
  if(!valid(task.createdAt))return '用时未记录';
@@ -34,12 +34,12 @@ export function toolCalls(events){
  return [...calls.values()];
 }
 export function callTime(call,task,now=Date.now()){
- if(!valid(call.startedAt)||call.event==='item.completed'&&!valid(call.finishedAt))return '耗时未记录';
- if(valid(call.finishedAt))return call.finishedAt>=call.startedAt?'耗时 '+duration(call.finishedAt-call.startedAt):'耗时未记录';
+ if(!valid(call.startedAt)||call.event==='item.completed'&&!valid(call.finishedAt))return '—';
+ if(valid(call.finishedAt))return call.finishedAt>=call.startedAt?duration(call.finishedAt-call.startedAt):'—';
  const ended=terminal.has(task.status),unknown=task.status==='unknown';
  const end=ended?task.finishedAt:unknown?task.heartbeatAt:now;
- if(!valid(end)||end<call.startedAt)return '耗时未记录';
- return (ended?'截至任务结束 ':unknown?'截至最后心跳 ':'已耗时 ')+duration(end-call.startedAt)+(ended?'（未返回）':unknown?'（状态待确认）':'');
+ if(!valid(end)||end<call.startedAt)return '—';
+ return duration(end-call.startedAt)+(ended?' · 未返回':unknown?' · 待确认':'');
 }
 export function bindTiming(node,textAt){node.dataset.workerClock='';node.workerTimingText=textAt;node.textContent=textAt(Date.now());return node;}
 export function updateTimings(root,now=Date.now()){for(const node of root.querySelectorAll('[data-worker-clock]')){const text=node.workerTimingText?.(now);if(text!==undefined&&node.textContent!==text)node.textContent=text;}}

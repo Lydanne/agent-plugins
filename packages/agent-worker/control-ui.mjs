@@ -71,7 +71,7 @@ function showCalls(events,redact,task={}){const area=element('div',undefined,'cq
  if(links.childElementCount)body.append(fold(`相关网站 · ${links.childElementCount}`,links));
  if(/SKILL\.md/i.test(item.command??''))body.append(element('p','包含技能文件路径的命令；不证明技能被完整读取或遵循。','cq-muted'));
  body.append(sourceView('原始记录',record,redact));
- const failed=callFailed(item),call=fold(redact((failed?'执行失败 · ':'')+kind+(name?' · '+name:'')),body);if(failed)call.classList.add('cq-call-failed');call.querySelector('summary').append(bindTiming(element('span',undefined,'cq-call-elapsed'),now=>callTime(record,task,now)));call.dataset.foldKey=redact(record.callKey);area.append(call);
+ const failed=callFailed(item),call=fold('',body);if(failed)call.classList.add('cq-call-failed');const clock=bindTiming(element('span',undefined,'cq-call-elapsed'),now=>callTime(record,task,now));clock.title=record.startedAt===undefined?'耗时未记录':record.finishedAt!==undefined?'工具调用耗时':'工具调用已用时；尚未取得完成记录';call.querySelector('summary').append(element('span',redact((failed?'执行失败 · ':'')+kind+(name?' · '+name:'')),'cq-call-name'),clock);call.dataset.foldKey=redact(record.callKey);area.append(call);
  }return area;}
 function processTimeline(record,safe){
  const wrapper=element('div',undefined,'cq-process-view');

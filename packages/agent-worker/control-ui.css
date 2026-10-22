@@ -228,7 +228,8 @@
 .cq-more>summary svg{display:block;flex:none}
 
 .cq-elapsed,.cq-call-elapsed{font-variant-numeric:tabular-nums;color:#827b73;font-size:10px;white-space:normal}
-.cq-call-elapsed{display:inline-block;margin-left:10px;font-weight:500}
+.cq-call-name{flex:1;min-width:0;overflow-wrap:anywhere}
+.cq-call-elapsed{flex:none;align-self:flex-start;white-space:nowrap;overflow-wrap:normal;margin-left:0;font-weight:500;text-align:right}
 .cq-run-heading,.cq-task-heading{flex-wrap:wrap;gap:6px}
 
 .cq-row-meta .cq-elapsed{font-size:inherit}

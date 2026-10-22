@@ -155,9 +155,9 @@ test('process clocks tick without replacing disclosures and stop at task complet
  const ctx=uiContext(async()=>({ok:true,result:{records:[record],offset:0,hasMore:false}}),{sessionKey:'fixture',topic:'clock'});
  f.track(f.ui.mountPanel(f.container,ctx));await settle();click(f.container,'任务过程');
  const call=f.container.querySelector('.cq-calls>details');call.open=true;
- assert.match(call.querySelector('summary').textContent,/已耗时 15 秒/);assert.match(f.container.textContent,/总用时 19 秒/);
- t.mock.timers.tick(1000);assert.equal(f.container.querySelector('.cq-calls>details'),call);assert.equal(call.open,true);assert.match(call.querySelector('summary').textContent,/已耗时 16 秒/);
+ assert.match(call.querySelector('summary').textContent,/15s/);assert.match(f.container.textContent,/总用时 19s/);
+ t.mock.timers.tick(1000);assert.equal(f.container.querySelector('.cq-calls>details'),call);assert.equal(call.open,true);assert.match(call.querySelector('summary').textContent,/16s/);
  record.status='completed';record.finishedAt=22000;record.events.push({event:'item.completed',time:21500,item:{id:'call',type:'mcp_tool_call',server:'fixture',tool:'lookup',status:'completed'}});
- click(f.container,'刷新');await settle();assert.match(f.container.textContent,/总用时 21 秒/);assert.match(f.container.querySelector('.cq-calls>details summary').textContent,/耗时 16 秒/);
- t.mock.timers.tick(1000);assert.match(f.container.textContent,/总用时 21 秒/);
+ click(f.container,'刷新');await settle();assert.match(f.container.textContent,/总用时 21s/);assert.match(f.container.querySelector('.cq-calls>details summary').textContent,/16s/);
+ t.mock.timers.tick(1000);assert.match(f.container.textContent,/总用时 21s/);
 });

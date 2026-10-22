@@ -26,9 +26,9 @@ test('management clocks tick locally, refresh terminal status, and stop reads af
  t.mock.timers.enable({apis:['Date','setInterval'],now:20000});let reads=0;
  const timed={...task,createdAt:1000,startedAt:2000};
  const ctx=uiContext(async()=>{reads++;return {ok:true,result:{...result,tasks:[{...timed}]}};});
- const view=f.track(f.ui.mountWorkerPage(f.container,ctx,'main'));await settle();assert.match(f.container.textContent,/总用时 19 秒/);const cell=f.container.querySelector('.ar-worker-elapsed');
- t.mock.timers.tick(1000);assert.equal(f.container.querySelector('.ar-worker-elapsed'),cell);assert.match(cell.textContent,/总用时 20 秒/);assert.equal(reads,1);
- timed.status='completed';timed.finishedAt=22000;t.mock.timers.tick(4000);await settle();assert.equal(reads,2);assert.match(f.container.textContent,/总用时 21 秒/);
- t.mock.timers.tick(5000);await settle();assert.match(f.container.textContent,/总用时 21 秒/);
+ const view=f.track(f.ui.mountWorkerPage(f.container,ctx,'main'));await settle();assert.match(f.container.textContent,/总用时 19s/);const cell=f.container.querySelector('.ar-worker-elapsed');
+ t.mock.timers.tick(1000);assert.equal(f.container.querySelector('.ar-worker-elapsed'),cell);assert.match(cell.textContent,/总用时 20s/);assert.equal(reads,1);
+ timed.status='completed';timed.finishedAt=22000;t.mock.timers.tick(4000);await settle();assert.equal(reads,2);assert.match(f.container.textContent,/总用时 21s/);
+ t.mock.timers.tick(5000);await settle();assert.match(f.container.textContent,/总用时 21s/);
  view.dispose();const before=reads;t.mock.timers.tick(10000);await settle();assert.equal(reads,before);
 });
