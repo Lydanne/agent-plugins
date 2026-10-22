@@ -1,6 +1,6 @@
 /* Match Agent Worker's compact sidebar, neutral controls and disclosure rows. */
 /* Full-page management uses host colors; sidebar density stays independent. */
-.ar-management{--ar-surface:var(--bg,#faf9f7);--ar-ink:var(--text,#302f2b);--ar-muted:var(--muted,#716e67);--ar-line:color-mix(in srgb,var(--ar-ink) 13%,transparent);--ar-accent:#496d63;max-width:1440px;width:100%;padding:32px 40px 48px;margin:auto;box-sizing:border-box;color:var(--ar-ink);font:13px/1.6 system-ui,sans-serif}
+.ar-management{--ar-surface:var(--bg,#faf9f7);--ar-ink:var(--text,#302f2b);--ar-muted:var(--muted,#716e67);--ar-line:color-mix(in srgb,var(--ar-ink) 13%,transparent);--ar-accent:#496d63;max-width:1200px;width:100%;padding:28px 32px 48px;margin:auto;box-sizing:border-box;color:var(--ar-ink);font:14px/1.6 system-ui,sans-serif}
 .ar-management *{box-sizing:border-box}
 .ar-management-header{display:flex;justify-content:space-between;align-items:center;gap:24px}
 .ar-management-eyebrow{display:block;color:var(--ar-muted);font-size:11px;letter-spacing:.08em;margin-bottom:4px}
@@ -552,3 +552,21 @@
 .ar-schedule-form>p.ar-muted{font-size:12px;line-height:1.6}
 @media(min-width:701px){.ar-schedule-sidebar{position:sticky;top:0;align-self:start;min-height:460px}}
 @media(max-width:700px){.ar-schedule-footer{padding:12px 18px}.ar-schedule-footer span{max-width:60%}.ar-schedule-manager .ar-sync-dialog-body{max-height:calc(100dvh - 220px)}}
+
+/* Management task cards keep plan, status and actions together. */
+.ar-management .ar-task-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:16px}
+.ar-management .ar-task-card{min-width:0;border:1px solid var(--ar-line);border-radius:12px;background:var(--ar-surface);overflow:hidden}
+.ar-management .ar-panel button.ar-scheduled-task{padding:22px;text-align:left;border:0;border-radius:0;height:calc(100% - 57px)}
+.ar-management .ar-task-row-top{align-items:flex-start;gap:16px;margin-bottom:14px}
+.ar-management .ar-task-row-top strong{font-size:16px;font-weight:600;line-height:1.5}
+.ar-management .ar-task-row-meta{font-size:13px;line-height:1.7;margin-top:6px}
+.ar-management .ar-task-row-bottom{display:flex;flex-direction:column;align-items:flex-start;gap:8px;border-top:1px solid var(--ar-line);padding-top:16px;margin-top:18px;font-size:12px}
+.ar-management .ar-task-card-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px;border-top:1px solid var(--ar-line);font-size:12px}
+.ar-management .ar-task-card-actions button{font-size:13px;padding:6px 12px}
+.ar-management .ar-sync-heading{justify-content:space-between}
+.ar-management .ar-sync-heading>.ar-meta{font-size:13px}
+.ar-management .ar-description,.ar-management .ar-attention-row p,.ar-management .ar-management-cards p{font-size:13px}
+.ar-management .ar-metric-label,.ar-management .ar-overview-info{font-size:13px}
+.ar-management .ar-management-nav button{font-size:14px;padding:14px 4px}
+@container agent-management (max-width:760px){.ar-management .ar-task-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.ar-management{padding:20px 16px 32px}.ar-management .ar-task-card-actions{flex-wrap:wrap}.ar-management .ar-panel button.ar-scheduled-task{padding:18px}}

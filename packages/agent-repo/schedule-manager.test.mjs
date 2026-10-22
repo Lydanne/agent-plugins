@@ -2,9 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {browserFixture,settle,click,select,deferred} from '../../scripts/control-ui-test.mjs';
 const task={id:'one',revision:'revision',name:'Daily',status:'enabled',sourceValid:true,busy:false,chatId:'original-group',requester:'Original requester',projectId:'demo',task:'Summarize only',constraints:'No new business writes',schedule:{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}};
-async function fixture(t,{write=true,tasks=[structuredClone(task)],mutate=async()=>({status:'succeeded',id:'one'})}={}){
+async function fixture(t,{write=true,initialTaskId=null,tasks=[structuredClone(task)],mutate=async()=>({status:'succeeded',id:'one'})}={}){
  const f=await browserFixture(t,new URL('./schedule-manager.mjs',import.meta.url).pathname),calls=[];let closed=0,changed=0;
- const view=f.track(f.ui.mountScheduleManager(f.container,{canWrite:()=>write,safe:String,onClose:()=>closed++,onChanged:()=>changed++,invoke:async(action,payload)=>{calls.push({action,payload});return action==='scheduleCatalog'?{available:true,canRun:true,tasks,operations:[]}:mutate(payload);}}));await settle();return {...f,calls,view,get changed(){return changed;},get closed(){return closed;}};
+ const view=f.track(f.ui.mountScheduleManager(f.container,{initialTaskId,canWrite:()=>write,safe:String,onClose:()=>closed++,onChanged:()=>changed++,invoke:async(action,payload)=>{calls.push({action,payload});return action==='scheduleCatalog'?{available:true,canRun:true,tasks,operations:[]}:mutate(payload);}}));await settle();return {...f,calls,view,get changed(){return changed;},get closed(){return closed;}};
 }
 test('panel previews scope, confirms native manual run once and displays submission truthfully',async t=>{
  const gate=deferred(),f=await fixture(t,{mutate:()=>gate.promise});f.container.querySelector('[aria-label="Daily · 已启用"]').click();click(f.container,'立即执行');assert.match(f.container.textContent,/original-group/);assert.match(f.container.textContent,/不会改变下一次/);assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
@@ -64,4 +64,11 @@ test('initial catalog failure exposes retry and recovers without reopening panel
  f.track(f.ui.mountScheduleManager(f.container,{safe:String,canWrite:()=>true,invoke:async()=>{if(++attempts===1)throw Error('网络不可用');return {available:true,tasks:[task],operations:[]};}}));
  await settle();assert.match(f.container.querySelector('[role="alert"]').textContent,/网络不可用/);
  click(f.container,'重新读取');await settle();assert.equal(attempts,2);assert.ok(f.container.querySelector('[aria-label="任务名称"]'));
+});
+
+test('direct editing selects the requested plan without executing it',async t=>{
+ const f=await fixture(t,{initialTaskId:'two',tasks:[task,{...task,id:'two',name:'Second plan'}]});
+ assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'Second plan');
+ assert.equal(f.container.querySelector('[aria-current="true"]').textContent.includes('Second plan'),true);
+ assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
 });

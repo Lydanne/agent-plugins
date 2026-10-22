@@ -69,3 +69,17 @@ test('module switches retain the management shell, navigation focus and consiste
   const before=calls.length;control.click();await settle();assert.equal(calls.length,before,'selecting the active module must not reload data');
  }
 });
+
+test('task cards open the selected schedule and retain history navigation',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();
+ const plan={id:'group-plan',name:'群整理',status:'enabled',sourceValid:true,chatId:'test-group',requester:'test-user',projectId:'demo',task:'Summarize',constraints:'Read only',schedule:{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}};
+ ctx.props.section='tasks';ctx.host.connection.canWrite=true;
+ ctx.host.request=async(method,p)=>{calls.push(p);return {ok:true,result:p.actionId==='projects-scheduleCatalog'?{available:true,tasks:[{...plan,id:'other',name:'Other'},plan],operations:[]}:p.actionId==='projects-list'?{...catalog,scheduledTasks:[{...plan,taskId:'scheduled-request:group-plan',type:'scheduled-request',enabled:true,nativeAvailable:true,scope:{label:'Test group'},records:[]}]}:{}};};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
+ assert.equal(f.container.querySelectorAll('h2').length,1);
+ assert.equal(f.container.querySelectorAll('.ar-task-card').length,1);
+ assert.match(f.container.querySelector('.ar-scheduled-task').textContent,/每天 09:00/);
+ f.container.querySelector('[aria-label="编辑群整理"]').click();await settle();
+ assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'群整理');
+ assert.equal(calls.some(c=>c.actionId==='projects-scheduleManage'),false);
+});
