@@ -110,13 +110,13 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   const binding=bindingFor(config,{agentId});
   if(!enabled(binding)||!binding.sync.submoduleSchedule)return;
   return serializePreparation(binding.repo,async()=>{
-   await checkWorkspace(binding,agentId);
    const receipt=await claimDailySync(binding.repo,agentId,date);
    if(!receipt)return {skipped:true};
    const failures=[];
    let result;
    try {
     await receipt.log({stage:'定时同步',status:'started'});
+    await checkWorkspace(binding,agentId);
     await sync(binding,agentId,undefined,{allowLocalChanges:false,onProgress:event=>receipt.log({...event,repository:event.repository==='主仓库'?'Agent Repo':event.repository})});
     const registry=await readRegistry(binding);
     for(const project of Object.values(registry.projects)) {

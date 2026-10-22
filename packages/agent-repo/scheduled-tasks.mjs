@@ -1,3 +1,4 @@
+export const repositoryScheduleBridge=globalThis[Symbol.for('agent-repo.repository-schedules.v1')]??={};
 // Logical task identities are independent of the day-keyed legacy receipt files.
 export const repositorySyncTaskId=agentId=>`repo-sync:${agentId}`;
 export const repositorySyncRunId=(agentId,date)=>`${repositorySyncTaskId(agentId)}:${date}`;

@@ -40,29 +40,4 @@ export function scheduleDate(now,schedule) {
  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:schedule.timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now).map(p=>[p.type,p.value]));
  return `${parts.hour}:${parts.minute}`>=schedule.time?`${parts.year}-${parts.month}-${parts.day}`:null;
 }
-export function createDailySyncService(config,synchronize,logger,{clock=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}={}) {
- let active=false,timer,pending;
- const attempted=new Map();
- async function tick() {
-  for(const [agentId,binding] of Object.entries(config.agents)) {
-   if(!active)break;
-   if(!binding.sync?.enabled||!binding.sync.submoduleSchedule)continue;
-   const date=scheduleDate(new Date(clock()),binding.sync.submoduleSchedule);
-   if(!date||attempted.get(agentId)===date)continue;
-   // Mark before awaiting so slow or failed preparations cannot be reentered.
-   attempted.set(agentId,date);
-   try{
-    const result=await synchronize(agentId,date);
-    if(!result?.skipped){
-     if(result?.ok)logger?.info?.(`agent-repo: daily submodule sync completed for ${agentId} (${date})`);
-     else logger?.warn?.(`agent-repo: daily submodule sync failed for ${agentId} (${date}); inspect Git daily sync receipt`);
-    }
-   }catch{logger?.warn?.(`agent-repo: daily submodule sync failed for ${agentId} (${date}); inspect repository state and Git daily sync receipt`);}
-  }
- }
- function loop(){
-  pending=tick().finally(()=>{pending=undefined;if(active){timer=setTimer(loop,60000-clock()%60000);timer?.unref?.();}});
-  return pending;
- }
- return {id:'agent-repo-daily-submodule-sync',start(){if(active)return pending;active=true;return loop();},async stop(){active=false;clearTimer(timer);await pending;}};
-}
+export {createDailySyncService} from './native-sync-scheduler.mjs';

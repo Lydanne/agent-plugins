@@ -111,3 +111,9 @@ test('schedule management actions enforce writer scope and trusted agent before 
  await assert.rejects(f.inspector.scheduleCatalog({...f.ctx,payload:{agentId:'other'}}),/范围/);
  const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.deepEqual(actions.find(a=>a.id==='projects-scheduleManage').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-scheduleCatalog').requiredScopes,['operator.read']);
 });
+test('repository schedule catalog and mutation stay bound to trusted Agent and writer permission',async t=>{
+ const {repositoryScheduleBridge}=await import('./scheduled-tasks.mjs'),saved={...repositoryScheduleBridge};t.after(()=>{for(const k of Object.keys(repositoryScheduleBridge))delete repositoryScheduleBridge[k];Object.assign(repositoryScheduleBridge,saved);});
+ const f=await fixture(t),calls=[];repositoryScheduleBridge.catalog=async id=>[{id:'repo-sync:'+id,kind:'repository-sync',operations:[]}];repositoryScheduleBridge.administer=async(...args)=>{calls.push(args);return {status:'succeeded'};};
+ const catalog=await f.inspector.scheduleCatalog(f.ctx);assert.equal(catalog.tasks[0].id,'repo-sync:main');
+ await assert.rejects(f.inspector.scheduleManage({...f.ctx,payload:{id:'repo-sync:main',action:'pause'}}),/写入/);await f.inspector.scheduleManage({...f.ctx,client:{scopes:['operator.write']},payload:{id:'repo-sync:main',action:'pause'}});assert.equal(calls[0][0],'main');assert.equal(calls.length,1);
+});

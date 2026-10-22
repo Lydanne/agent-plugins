@@ -77,7 +77,7 @@ export function mountProjects(container,initial){
  function scheduledTasks(){return list?.scheduledTasks??[];}
  function selectedTask(){return scheduledTasks().find(task=>task.taskId===syncTaskId);}
  function selectedRun(){return selectedTask()?.records.find(record=>record.runId===syncRunId);}
- function taskState(task){if(task.type==='scheduled-request'){if(!task.nativeAvailable)return '调度状态不可读取';if(task.nativeMissing&&task.status!=='removed')return '原生计划缺失';if(task.status==='enabled'&&!task.enabled)return '原生计划已暂停';return ({enabled:'已启用',paused:'已暂停',removed:'已移除',completed:'已结束',blocked:'来源失效',needs_review:'待检查',creating:'创建中'})[task.status]??'待检查';}return task.enabled?'已启用':task.schedule?'已暂停':'未配置';}
+ function taskState(task){if(task.type==='repository-sync'&&task.status){if(!task.nativeAvailable)return '调度状态不可读取';return ({enabled:task.enabled?'已启用':'原生计划已暂停',paused:'已暂停',removed:'已删除',creating:'创建中',needs_review:'待核验'})[task.status]??'待核验';}if(task.type==='scheduled-request'){if(!task.nativeAvailable)return '调度状态不可读取';if(task.nativeMissing&&task.status!=='removed')return '原生计划缺失';if(task.status==='enabled'&&!task.enabled)return '原生计划已暂停';return ({enabled:'已启用',paused:'已暂停',removed:'已移除',completed:'已结束',blocked:'来源失效',needs_review:'待检查',creating:'创建中'})[task.status]??'待检查';}return task.enabled?'已启用':task.schedule?'已暂停':'未配置';}
  function scheduleText(task){const s=task.schedule;if(!s)return '未配置执行计划';if(task.type!=='scheduled-request')return '每天 '+s.time+' · '+s.timeZone;return s.kind==='at'?date(s.at):'Cron '+s.expr+' · '+(s.tz??'Asia/Shanghai');}
  function planText(task){
   const next=task.nextPlanned;
@@ -90,7 +90,7 @@ export function mountProjects(container,initial){
   if(!Array.isArray(list.scheduledTasks))return null;
   const tasks=scheduledTasks(),section=element('section',undefined,'ar-sync-history'),heading=element('div',undefined,'ar-sync-heading');
   heading.append(element('h3','定时任务'),element('span',tasks.length+' 个任务','ar-meta'));section.append(heading);
-  heading.append(button('管理群任务',openScheduleManager));
+  heading.append(button('管理定时任务',openScheduleManager));
   if(list.scheduledRequestsAvailable===false)section.append(element('p','OpenClaw 联动任务服务暂不可读取，以下列表可能不完整。','ar-warning'));
   if(!tasks.length)section.append(element('p','暂无定时任务','ar-muted'));
   for(const task of tasks){
@@ -151,7 +151,7 @@ export function mountProjects(container,initial){
  }
  function taskSettings(task){
   const section=element('section',undefined,'ar-task-settings'),data=element('dl',undefined,'ar-task-config');
-  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['原群',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));section.append(data,element('p',task.type==='scheduled-request'?'在任务列表点击“管理群任务”可修改计划；原生调度成功或 Main 接纳不代表业务完成。':'此处只读展示；系统同步计划由部署配置管理。','ar-muted'));return section;
+  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['原群',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));if(task.type==='repository-sync'&&task.jobId)data.append(element('dt','OpenClaw 任务 ID'),element('dd',safe(task.jobId)));section.append(data,element('p',task.type==='scheduled-request'?'在任务列表点击“管理定时任务”可修改计划；原生调度成功或 Main 接纳不代表业务完成。':task.readOnly?'此处只读展示；系统同步计划由部署配置管理。':'在任务列表点击“管理定时任务”管理原生同步计划；当天已尝试的同步不会重跑。','ar-muted'));return section;
  }
  function renderSyncDialog(){
   if(!syncDialog||!syncTaskId)return;

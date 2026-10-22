@@ -25,3 +25,9 @@ test('closing an in-flight panel ignores delayed responses without changing anot
 test('panel reports uncertain action without automatic retry',async t=>{
  const f=await fixture(t,{mutate:async()=>{throw Error('结果未确认');}});click(f.container,'Daily · 已启用');click(f.container,'删除');click(f.container,'确认执行');await settle();assert.match(f.container.textContent,/结果未确认/);assert.ok(!f.container.textContent.includes('操作已完成'));assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,1);
 });
+test('system plans expose daily time editor and native controls without borrowing group provenance',async t=>{
+ const f=await browserFixture(t,new URL('./schedule-manager.mjs',import.meta.url).pathname),calls=[];const system={...task,id:'repo-sync:main',kind:'repository-sync',name:'每日仓库同步',schedule:{kind:'cron',time:'08:00',tz:'Asia/Shanghai'},canRun:false,alreadyAttempted:true};
+ f.track(f.ui.mountScheduleManager(f.container,{safe:String,canWrite:()=>true,onChanged(){},invoke:async(action,payload)=>{calls.push({action,payload});return action==='scheduleCatalog'?{available:true,tasks:[system,task],canRun:true,operations:[]}:{status:'succeeded',id:system.id};}}));await settle();click(f.container,'每日仓库同步 · 已启用');assert.match(f.container.textContent,/今日已有/);assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='立即执行').disabled,true);assert.equal(f.container.querySelector('[aria-label="Cron（五字段）"]'),null);
+ f.container.querySelector('[aria-label="每日执行时间"]').value='09:00';f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));assert.match(f.container.textContent,/当前 Agent 全部登记项目/);click(f.container,'确认执行');await settle();const p=calls.find(c=>c.action==='scheduleManage').payload;assert.equal(p.id,'repo-sync:main');assert.equal(p.time,'09:00');assert.ok(!('sourceId'in p));
+ click(f.container,'基于群请求新建');assert.equal(f.container.querySelector('[aria-label="来源群请求"]').options.length,1);
+});

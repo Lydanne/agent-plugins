@@ -12,7 +12,7 @@ import {bindingFor} from './configuration.mjs';
 import {containedPath,readProjects,inspectProject} from './repositories.mjs';
 import {readSkillSource,git} from './repository-skills.mjs';
 import {subagentInventory,resolveSubagentCatalog} from './subagents.mjs';
-import {repositorySyncTaskId,repositorySyncTasks} from './scheduled-tasks.mjs';
+import {repositoryScheduleBridge,repositorySyncTaskId,repositorySyncTasks} from './scheduled-tasks.mjs';
 import {readRepositoryLogs,clearRepositoryLogs} from './repository-log.mjs';
 import {readSyncHistory} from './sync-history.mjs';
 import {registryRevision} from './project-service.mjs';
@@ -116,7 +116,9 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    const agentSubagents=await subagentInventory(before.root,before.root,'agent');resolveSubagentCatalog([agentSubagents]);
    const history=await readSyncHistory(before.root,agentId),scannedAt=now();
    await checkRegistration(binding,before);
-   return {scheduledRequestsAvailable:typeof scheduledRequestBridge.inspect==='function',scheduledTasks:[...repositorySyncTasks(binding,agentId,history,projects,scannedAt),...(await scheduledRequestBridge.inspect?.(agentId)??[])],syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
+   const systemTasks=repositorySyncTasks(binding,agentId,history,projects,scannedAt),nativeSync=await repositoryScheduleBridge.inspect?.(agentId);
+   if(nativeSync)for(const task of systemTasks)Object.assign(task,nativeSync);
+   return {scheduledRequestsAvailable:typeof scheduledRequestBridge.inspect==='function',scheduledTasks:[...systemTasks,...(await scheduledRequestBridge.inspect?.(agentId)??[])],syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
   },
   async repositoryLogs(ctx){
    const {agentId,binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('日志不接受其他范围参数');
@@ -130,14 +132,16 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
   },
   async scheduleCatalog(ctx){
    const {agentId}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('定时任务列表不接受其他范围参数');
-   if(!scheduledRequestBridge.catalog)return {agentId,available:false,tasks:[],operations:[]};
-   return scheduledRequestBridge.catalog(agentId);
+   const group=await scheduledRequestBridge.catalog?.(agentId)??{agentId,available:false,tasks:[],operations:[]};
+   const system=await repositoryScheduleBridge.catalog?.(agentId)??[];
+   return {...group,available:group.available||system.length>0,tasks:[...system,...group.tasks],operations:[...system.flatMap(t=>t.operations??[]),...group.operations].sort((a,b)=>b.createdAt-a.createdAt).slice(0,30)};
   },
   async scheduleManage(ctx){
    const {agentId,binding}=await context(ctx);
    if(!ctx.client?.scopes?.some(scope=>['operator.write','operator.admin'].includes(scope)))throw Error('定时任务管理需要写入权限');
-   if(!scheduledRequestBridge.administer)throw Error('定时任务服务不可用');
    const params=ctx.payload??{};
+   if(params.id===repositorySyncTaskId(agentId)){if(!repositoryScheduleBridge.administer)throw Error('仓库同步调度服务不可用');return repositoryScheduleBridge.administer(agentId,params);}
+   if(!scheduledRequestBridge.administer)throw Error('定时任务服务不可用');
    if(['create','resume','run'].includes(params.action)){
     const catalog=await scheduledRequestBridge.catalog(agentId),task=catalog.tasks.find(t=>t.id===(params.action==='create'?params.sourceId:params.id));
     const projects=await readProjects(binding.repo);if(!task||!Object.hasOwn(projects,task.projectId))throw Error('请选择当前 Agent 已登记项目的群请求');

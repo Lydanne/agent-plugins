@@ -46,6 +46,7 @@
     "dist/inspection-transport.mjs",
     "subagents.mjs",
     "scheduled-sync.mjs",
+    "native-sync-scheduler.mjs",
     "sync-history.mjs",
     "repository-log.mjs",
     "scheduled-tasks.mjs",

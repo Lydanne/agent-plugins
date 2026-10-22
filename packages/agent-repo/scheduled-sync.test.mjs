@@ -33,25 +33,6 @@ test('exclusive persisted daily receipt prevents concurrent and restarted replay
  const tomorrow=await claimDailySync(root,'main','2026-10-14');await tomorrow.finish({ok:true});
  await assert.rejects(claimDailySync(root,'../main','2026-10-13'));
 });
-test('service attempts each enabled Agent once per date, isolates failures, and stops timers',async()=>{
- let now=Date.parse('2026-10-12T23:59:00Z'),timer,cleared=0;
- const calls=[],warnings=[];
- const config={agents:{main:{sync:{enabled:true,submoduleSchedule:schedule}},another:{sync:{enabled:true,submoduleSchedule:schedule}},disabled:{sync:{enabled:false,submoduleSchedule:schedule}},legacy:{sync:{enabled:true}}}};
- const service=createDailySyncService(config,async(agent,date)=>{calls.push([agent,date]);if(agent==='main')throw Error('private stderr');return {ok:true};},{warn:message=>warnings.push(message)},{clock:()=>now,setTimer:fn=>{timer=fn;return 1;},clearTimer:()=>cleared++});
- await service.start();assert.deepEqual(calls,[]);
- now+=60000;await timer();assert.equal(calls.length,2);assert.equal(warnings.length,1);assert(!warnings[0].includes('private stderr'));
- now+=60000;await timer();assert.equal(calls.length,2);
- now+=86400000;await timer();assert.equal(calls.length,4);
- await service.stop();assert.equal(cleared,1);
-});
-test('service stop waits for in-flight preparation and prevents further Agent starts',async()=>{
- let release,entered;const started=new Promise(r=>entered=r),wait=new Promise(r=>release=r),calls=[];
- const binding={sync:{enabled:true,submoduleSchedule:schedule}};
- const service=createDailySyncService({agents:{main:binding,another:binding}},async agent=>{calls.push(agent);entered();await wait;return {ok:true};},{},{clock:()=>Date.parse('2026-10-13T00:00:00Z'),setTimer:()=>{throw Error('stopped service scheduled timer');},clearTimer:()=>{}});
- const pending=service.start();await started;let stopped=false;const stop=service.stop().then(()=>stopped=true);await Promise.resolve();assert.equal(stopped,false);release();await pending;await stop;assert.deepEqual(calls,['main']);
-});
-
-
 test('receipt logs persist before completion, remain bounded, and legacy failures stay readable',async t=>{
  const base=fileURLToPath(new URL('../../.tmp/daily-sync-tests/',import.meta.url));await mkdir(base,{recursive:true});
  const root=await mkdtemp(join(base,'history-'));t.after(()=>rm(root,{recursive:true,force:true}));await git(root,['init','-b','main']);
