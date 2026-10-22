@@ -230,3 +230,5 @@
 .cq-elapsed,.cq-call-elapsed{font-variant-numeric:tabular-nums;color:#827b73;font-size:10px;white-space:normal}
 .cq-call-elapsed{display:inline-block;margin-left:10px;font-weight:500}
 .cq-run-heading,.cq-task-heading{flex-wrap:wrap;gap:6px}
+
+.cq-row-meta .cq-elapsed{font-size:inherit}
