@@ -143,6 +143,8 @@ prepare 复用项目同步与技能准备队列：单项目自动选择，多项
 
 准备失败沿用 SYNC_BLOCKED（同步启用）或 PROJECT_NOT_READY（同步关闭）；明确的仓库安全阻塞、Git 状态检查超时和索引输出超限会保留可公开的具体原因，其他异常不回显原始命令、stderr 或凭证。登记读取也采用相同错误边界。本地 Git 检查使用最长 15 秒的单命令预算；Git 同步调用仍采用配置的 timeoutMs。超时停止准备，不自动重放业务请求或跳过安全检查。
 
+同步超时的失败原因记录仓库、阶段、固定 Git 命令形态、该命令耗时、同步总耗时及预算，沿用仓库日志持久化；同步器结果同时提供结构化 `diagnostic`。日志省略远端 URL、配置值、任意路径、环境变量和子进程输出。Git 的 `merge --ff-only` 会等待仓库的 `post-merge` Hook，因此 HEAD 已快进不代表同步已完成；诊断为 merge 超时时还需检查 Hook 链路。同步器仅设置 `OPENCLAW_WORKSPACE_SYNC_ACTIVE=1`，项目 Hook 是否识别该标志由项目实现决定，不自动禁用 Hook 或放宽超时。
+
 配套 Worker 新增 projects/projectId，兼容 repository，并按项目/仓库范围分别保留 topic 上下文。技能继承与隔离不变；服务支持代际释放和热重载，旧 scope provider 暂留兼容。设计见 docs/agent-repo-worker-project-api.md。
 
 ## 项目、技能与子代理侧边栏

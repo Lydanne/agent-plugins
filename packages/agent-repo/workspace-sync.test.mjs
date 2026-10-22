@@ -254,10 +254,43 @@ test('the Agent lock remains held while a project Git hook runs', async () => {
 
 test('fails closed on timeout, removes its lock, and remains inert when disabled', async () => {
   const f = fixture();
-  blocked(await syncWorkspace({ ...f.config, timeoutMs: 1 }), /^资料同步超时$/);
+  blocked(await syncWorkspace({ ...f.config, timeoutMs: 1 }), /^资料同步超时/);
   assert(!existsSync(join(f.root, '.git/ada-workspace-sync.lock')));
   assert.deepEqual(await syncWorkspace(), { ok: true });
   assert.deepEqual(await syncWorkspace({ enabled: false, root: 'missing' }), { ok: true });
+});
+
+test('post-merge hook timeout identifies merge after HEAD advances, without exposing hook output or URLs', async () => {
+  const f = fixture(), hooks = join(f.root, '.git/hooks');
+  git(f.root, 'config', 'core.hooksPath', hooks);
+  // These strings must never escape the child-process diagnostic boundary.
+  writeFileSync(join(hooks, 'post-merge'), '#!/bin/sh\nprintf "secret-hook-output https://example.invalid/private?token=secret\\n" >&2\nexec sleep 5\n', {mode:0o755});
+  const target = f.commit(f.seed, 'SOUL.md', 'updated role');
+  const events = [];
+  const result = await syncWorkspace({...f.config, timeoutMs:3000, onProgress:event=>events.push(event)});
+  blocked(result, /资料同步超时.*git merge --ff-only --no-edit <commit>/);
+  assert.equal(git(f.root, 'rev-parse', 'HEAD'), target);
+  assert.equal(result.diagnostic.operation, 'git merge --ff-only --no-edit <commit>');
+  assert.equal(result.diagnostic.stage, '快进更新');
+  assert.equal(result.diagnostic.timeoutMs, 3000);
+  assert(result.diagnostic.commandElapsedMs > 0);
+  assert(result.diagnostic.elapsedMs >= result.diagnostic.commandElapsedMs);
+  assert.equal(events.at(-1).reason, result.reason);
+  assert(!JSON.stringify({result,events}).includes('secret'));
+  assert(!JSON.stringify({result,events}).includes(f.remote));
+  assert(!existsSync(join(f.root,'.git/ada-workspace-sync.lock')));
+});
+
+test('fetch timeout identifies fetch rather than a merge hook and keeps private transport arguments out of diagnostics', async () => {
+  const f = fixture(), transport = join(f.directory, 'private-upload-pack'), before = git(f.root,'rev-parse','HEAD');
+  writeFileSync(transport, '#!/bin/sh\nexec sleep 5\n', {mode:0o755});
+  git(f.root, 'config', 'remote.origin.uploadpack', transport);
+  const result = await syncWorkspace({...f.config,timeoutMs:3000});
+  blocked(result, /资料同步超时.*git fetch --no-tags --no-recurse-submodules <remote> <refspec>/);
+  assert.equal(result.diagnostic.stage,'拉取');
+  assert.equal(git(f.root,'rev-parse','HEAD'),before);
+  assert(!JSON.stringify(result).includes(transport));
+  assert(!JSON.stringify(result).includes(f.remote));
 });
 
 test('upstream integration retains private provenance, never pushes, and refuses ordinary local commits', async () => {

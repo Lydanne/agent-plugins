@@ -77,14 +77,39 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
   if (![branch, remote, upstreamRemote].every(gitName)) return { ok: false, reason: "非法 Git 分支或远端名称" };
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) return { ok: false, reason: "非法资料同步超时配置" };
   const signal = AbortSignal.timeout(timeoutMs);
+  const startedAt = performance.now();
+  let failedGit;
+  // Describe only our fixed command shape. Never log remote URLs, config values,
+  // filesystem paths, child output or caller-provided Git environment variables.
+  const describeGit = (args) => ({
+    fetch: 'git fetch --no-tags --no-recurse-submodules <remote> <refspec>',
+    merge: 'git merge --ff-only --no-edit <commit>',
+    status: 'git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all',
+    'merge-base': 'git merge-base --is-ancestor <commit> <commit>',
+    'merge-tree': 'git merge-tree --write-tree <commit> <commit>',
+    'commit-tree': 'git commit-tree <tree> <parents> <message>',
+    'rev-parse': 'git rev-parse <selector>',
+    remote: 'git remote get-url <remote>',
+    diff: 'git diff <selectors>',
+    config: 'git config <selectors>',
+    'ls-tree': 'git ls-tree <selectors>'
+  }[args[0]] ?? 'git <operation>');
   const progress = async (stage, status, extra = {}) => { if (config.onProgress) await config.onProgress({repository: repo, stage, status, ...extra}); };
   const git = async (cwd, args) => {
-    const result = await exec("git", ["-c", "submodule.recurse=false", ...args], {
-      cwd,
-      signal,
-      maxBuffer: 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -oBatchMode=yes -oConnectTimeout=10", ...config.gitEnvironment ?? { OPENCLAW_WORKSPACE_SYNC_ACTIVE: "1" } }
-    });
+    failedGit = undefined;
+    const commandStartedAt = performance.now();
+    let result;
+    try {
+      result = await exec("git", ["-c", "submodule.recurse=false", ...args], {
+        cwd,
+        signal,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -oBatchMode=yes -oConnectTimeout=10", ...config.gitEnvironment ?? { OPENCLAW_WORKSPACE_SYNC_ACTIVE: "1" } }
+      });
+    } catch (error) {
+      failedGit = { operation: describeGit(args), commandElapsedMs: Math.round(performance.now() - commandStartedAt) };
+      throw error;
+    }
     return args.includes("-z") ? result.stdout : result.stdout.trim();
   };
   let lockPath;
@@ -289,9 +314,11 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       ...upstreamHead ? { upstreamHead } : {}
     });
   } catch (error) {
-    const reason = signal.aborted ? "资料同步超时" : error instanceof SyncBlocked ? error.message : `${repo}${stage}失败，请管理员检查仓库权限、网络或 Git 状态`;
+    const diagnostic = signal.aborted && failedGit ? { ...failedGit, repository: repo, stage,
+      elapsedMs: Math.round(performance.now() - startedAt), timeoutMs } : undefined;
+    const reason = signal.aborted ? `资料同步超时${diagnostic ? `（${repo}${stage}；${diagnostic.operation}；命令耗时 ${diagnostic.commandElapsedMs}ms；总耗时 ${diagnostic.elapsedMs}ms；预算 ${timeoutMs}ms）` : ''}` : error instanceof SyncBlocked ? error.message : `${repo}${stage}失败，请管理员检查仓库权限、网络或 Git 状态`;
     await progress(stage, "failed", {reason});
-    return { ok: false, reason, ...(!signal.aborted && error instanceof SyncBlocked && error.code ? {code: error.code} : {}) };
+    return { ok: false, reason, ...(diagnostic ? {diagnostic} : {}), ...(!signal.aborted && error instanceof SyncBlocked && error.code ? {code: error.code} : {}) };
   } finally {
     if (lock) {
       await lock.close().catch(() => {
