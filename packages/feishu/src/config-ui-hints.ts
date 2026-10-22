@@ -13,6 +13,7 @@ function prefixed(prefix: string, hints: Hints): Hints {
 const conversationHints: Hints = {
   conversationWindow: hint("接话窗口 / Conversation window", "允许在被 @ 后的限时窗口内继续接话。 / Allow follow-up messages within a limited window after a mention."),
   "conversationWindow.enabled": hint("启用接话窗口 / Enable conversation window"),
+  "conversationWindow.decisionMode": hint("接话决策模式 / Conversation decision mode", "auto：优先使用宿主为当前 Agent 配置的 Kev，超限、不可用或不确定时回退普通模型；off：仅使用普通模型。 / auto: prefer host-configured Kev, with LLM fallback; off: LLM only."),
   "conversationWindow.durationSeconds": hint("窗口时长（秒） / Window duration (seconds)"),
   mentionGreeting: hint("空 @ 问候语 / Empty-mention greeting", "关闭 @ 历史读取时，使用此文案回复空 @。 / Reply to empty mentions with this text when mention history is disabled."),
   groupSessionScope: hint("群会话隔离范围 / Group session scope", "group：按群；group_sender：按群和发送者；group_topic：按群话题；group_topic_sender：按群话题和发送者。 / group: per group; group_sender: per group and sender; group_topic: per group topic; group_topic_sender: per group topic and sender."),

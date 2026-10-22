@@ -721,7 +721,14 @@ export async function handleFeishuMessage(params: {
           rootId: ctx.rootId, threadId: effectiveThreadId, contentType:event.message.message_type,
           mentionedBot: ctx.mentionedBot, replyChainMentionsBot,
           mentionsOthers: Boolean(ctx.hasAnyMention && !ctx.mentionedBot), isBot: false,
-        }, conversationWindow.durationSeconds ?? 600);
+        }, conversationWindow.durationSeconds ?? 600, {
+          config: cfg, decisionMode: conversationWindow.decisionMode, signal: turnAdoptionLifecycle?.abortSignal,
+          agentId: getFeishuRuntime().channel.routing.resolveAgentRoute({
+            cfg, channel: "feishu", accountId: account.accountId,
+            peer: {kind: "group", id: groupSession?.peerId ?? ctx.chatId},
+            parentPeer: groupSession?.parentPeer ?? null,
+          }).agentId,
+        });
         if (activationQuoteChain) {
           log(`feishu[${account.accountId}]: reply chain activation ${JSON.stringify({
             count: activationQuoteChain.messages.length, incomplete: !!activationQuoteChain.notice,

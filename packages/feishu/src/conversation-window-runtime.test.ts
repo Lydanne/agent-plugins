@@ -2,8 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-const mocks = vi.hoisted(() => ({ complete: vi.fn(), stateDir: '' }));
-vi.mock('./runtime.js', () => ({ getFeishuRuntime: () => ({state: {resolveStateDir: () => mocks.stateDir}, llm: {complete: mocks.complete}}) }));
+const mocks = vi.hoisted(() => ({ complete: vi.fn(), evaluate: vi.fn(), stateDir: '' }));
+vi.mock('./runtime.js', () => ({ getFeishuRuntime: () => ({state: {resolveStateDir: () => mocks.stateDir}, llm: {complete: mocks.complete}, decisions: {evaluate: mocks.evaluate}}) }));
 import { admitConversationWindow, getConversationWindowStore } from './conversation-window-runtime.js';
 import { windowKey } from './conversation-window.js';
 afterEach(() => {vi.useRealTimers(); if(mocks.stateDir) rmSync(mocks.stateDir,{recursive:true,force:true}); vi.clearAllMocks();});
@@ -31,4 +31,38 @@ it('opens on bare mention, classifies a follow-up with greeting context and rene
  vi.setSystemTime(2120000);
  expect(await admitConversationWindow({...message,messageId:'empty-verdict',timestamp:Date.now(),text:'消息',mentionedBot:false},600)).toBe(false);
  expect(getConversationWindowStore().get(windowKey(message),Date.now())?.expiresAt).toBe(2660000);
+});
+
+it.each(['unavailable', 'uncertain', 'low-probability', 'oversize', 'off', 'missing-selection'])('retains the LLM fallback for %s', async reason => {
+ mocks.stateDir=mkdtempSync(join(tmpdir(),'feishu-window-decision-'));
+ const message={accountId:'test',chatId:'group',senderOpenId:'user',messageId:'mention',timestamp:Date.now()-1000,text:'查询任务',mentionedBot:true,mentionsOthers:false,isBot:false};
+ const options={agentId:'support',config:{agents:{defaults:{decisionModel:'typesafe/kev-latest'}}},decisionMode:reason==='off'?'off':'auto'} as Parameters<typeof admitConversationWindow>[2];
+ if(reason==='missing-selection') options!.config=undefined;
+ expect(await admitConversationWindow(message,600,options)).toBe(true);
+ getConversationWindowStore().reply(windowKey(message),message.messageId,'请补充编号',Date.now());
+ mocks.evaluate.mockResolvedValue(reason==='unavailable'?{status:'unavailable',reason:'deadline'}:{status:'ok',result:{answers:{continuation:{type:'choice',choice:reason==='uncertain'?'uncertain':'directed',probabilities:{directed:reason==='low-probability'?0.5:0.95,not_directed:0.02,uncertain:0.03}}}}});
+ mocks.complete.mockResolvedValue({text:'directed'});
+ const text=reason==='oversize'?'中文'.repeat(4000):'编号是123';
+ expect(await admitConversationWindow({...message,messageId:'follow',timestamp:Date.now(),text,mentionedBot:false},600,options)).toBe(true);
+ expect(mocks.complete).toHaveBeenCalledOnce();
+ expect(JSON.parse(mocks.complete.mock.calls[0][0].messages[0].content).message).toBe(text.slice(0,4000));
+ if(['oversize','off','missing-selection'].includes(reason)) expect(mocks.evaluate).not.toHaveBeenCalled();
+});
+it.each(['directed','not_directed'])('uses a decisive Kev %s without invoking the LLM', async choice => {
+ mocks.stateDir=mkdtempSync(join(tmpdir(),'feishu-window-kev-'));
+ const message={accountId:'test',chatId:'group',senderOpenId:'user',messageId:'mention',timestamp:Date.now()-1000,text:'你好',mentionedBot:true,mentionsOthers:false,isBot:false};
+ const options={agentId:'support',config:{agents:{defaults:{decisionModel:'typesafe/kev-latest'}}}} as Parameters<typeof admitConversationWindow>[2];
+ await admitConversationWindow(message,600,options);
+ mocks.evaluate.mockResolvedValue({status:'ok',result:{answers:{continuation:{type:'choice',choice,probabilities:{[choice]:0.95}}}}});
+ expect(await admitConversationWindow({...message,messageId:'follow',timestamp:Date.now(),text:'继续',mentionedBot:false},600,options)).toBe(choice==='directed');
+ expect(mocks.evaluate).toHaveBeenCalledOnce();
+ expect(mocks.complete).not.toHaveBeenCalled();
+});
+it('does not call either classifier after cancellation', async () => {
+ mocks.stateDir=mkdtempSync(join(tmpdir(),'feishu-window-cancel-'));
+ const message={accountId:'test',chatId:'group',senderOpenId:'user',messageId:'mention',timestamp:Date.now()-1000,text:'你好',mentionedBot:true,mentionsOthers:false,isBot:false};
+ await admitConversationWindow(message,600);
+ const controller=new AbortController();controller.abort();
+ expect(await admitConversationWindow({...message,messageId:'follow',timestamp:Date.now(),text:'继续',mentionedBot:false},600,{signal:controller.signal})).toBe(false);
+ expect(mocks.evaluate).not.toHaveBeenCalled();expect(mocks.complete).not.toHaveBeenCalled();
 });

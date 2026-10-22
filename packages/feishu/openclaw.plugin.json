@@ -930,6 +930,14 @@
                 "type": "integer",
                 "minimum": 30,
                 "maximum": 3600
+              },
+              "decisionMode": {
+                "default": "auto",
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "off"
+                ]
               }
             },
             "additionalProperties": false
@@ -1001,6 +1009,14 @@
                       "type": "integer",
                       "minimum": 30,
                       "maximum": 3600
+                    },
+                    "decisionMode": {
+                      "default": "auto",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "off"
+                      ]
                     }
                   },
                   "additionalProperties": false
@@ -2635,6 +2651,14 @@
                       "type": "integer",
                       "minimum": 30,
                       "maximum": 3600
+                    },
+                    "decisionMode": {
+                      "default": "auto",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "off"
+                      ]
                     }
                   },
                   "additionalProperties": false
@@ -2706,6 +2730,14 @@
                             "type": "integer",
                             "minimum": 30,
                             "maximum": 3600
+                          },
+                          "decisionMode": {
+                            "default": "auto",
+                            "type": "string",
+                            "enum": [
+                              "auto",
+                              "off"
+                            ]
                           }
                         },
                         "additionalProperties": false
@@ -3816,6 +3848,10 @@
         "conversationWindow.enabled": {
           "label": "启用接话窗口 / Enable conversation window"
         },
+        "conversationWindow.decisionMode": {
+          "label": "接话决策模式 / Conversation decision mode",
+          "help": "auto：优先使用宿主为当前 Agent 配置的 Kev，超限、不可用或不确定时回退普通模型；off：仅使用普通模型。 / auto: prefer host-configured Kev, with LLM fallback; off: LLM only."
+        },
         "conversationWindow.durationSeconds": {
           "label": "窗口时长（秒） / Window duration (seconds)"
         },
@@ -3851,6 +3887,10 @@
         },
         "groups.*.conversationWindow.enabled": {
           "label": "启用接话窗口 / Enable conversation window"
+        },
+        "groups.*.conversationWindow.decisionMode": {
+          "label": "接话决策模式 / Conversation decision mode",
+          "help": "auto：优先使用宿主为当前 Agent 配置的 Kev，超限、不可用或不确定时回退普通模型；off：仅使用普通模型。 / auto: prefer host-configured Kev, with LLM fallback; off: LLM only."
         },
         "groups.*.conversationWindow.durationSeconds": {
           "label": "窗口时长（秒） / Window duration (seconds)"
@@ -4706,6 +4746,10 @@
         "accounts.*.conversationWindow.enabled": {
           "label": "启用接话窗口 / Enable conversation window"
         },
+        "accounts.*.conversationWindow.decisionMode": {
+          "label": "接话决策模式 / Conversation decision mode",
+          "help": "auto：优先使用宿主为当前 Agent 配置的 Kev，超限、不可用或不确定时回退普通模型；off：仅使用普通模型。 / auto: prefer host-configured Kev, with LLM fallback; off: LLM only."
+        },
         "accounts.*.conversationWindow.durationSeconds": {
           "label": "窗口时长（秒） / Window duration (seconds)"
         },
@@ -4741,6 +4785,10 @@
         },
         "accounts.*.groups.*.conversationWindow.enabled": {
           "label": "启用接话窗口 / Enable conversation window"
+        },
+        "accounts.*.groups.*.conversationWindow.decisionMode": {
+          "label": "接话决策模式 / Conversation decision mode",
+          "help": "auto：优先使用宿主为当前 Agent 配置的 Kev，超限、不可用或不确定时回退普通模型；off：仅使用普通模型。 / auto: prefer host-configured Kev, with LLM fallback; off: LLM only."
         },
         "accounts.*.groups.*.conversationWindow.durationSeconds": {
           "label": "窗口时长（秒） / Window duration (seconds)"

@@ -119,12 +119,23 @@ Worker 可在原任务授权及自身已有权限内直接使用 Feishu CLI、�
 ```json
 {
   "requireMention": true,
-  "conversationWindow": { "enabled": true, "durationSeconds": 600 },
+  "conversationWindow": { "enabled": true, "durationSeconds": 600, "decisionMode": "auto" },
   "mentionGreeting": "你好，请说明要处理的项目、问题和期望结果。"
 }
 ```
 
-窗口默认关闭，时长支持 30–3600 秒。真人 @ 开启账号＋群＋用户的窗口；窗口内非 @ 文本经宿主无工具分类，严格返回 directed 才接话并续期。明确 @ 别人、不确定或分类失败时保持安静，附件无可识别文字时仍需 @。分类调用宿主模型，产生额外延迟和费用；窗口不用于 broadcast 多 Agent 群。
+窗口默认关闭，时长支持 30–3600 秒。真人 @ 开启账号＋群＋用户的窗口；窗口内非 @ 文本判断是否继续跟助手聊天。明确 @ 别人时保持安静，附件无可识别文字时仍需 @；窗口不用于 broadcast 多 Agent 群。
+
+`conversationWindow.decisionMode` 可在全局、账号或群配置：
+
+- `auto`（默认）：宿主提供公开 `runtime.decisions.evaluate`，且该群路由的 Agent 有效 `decisionModel` 为 `typesafe/kev-latest` 时，优先使用 Kev；不覆盖 Agent 的显式禁用或其他模型选择，不自行连接服务、下载模型或读取凭证。旧宿主和未配置 Kev 的部署自动使用原来的 `runtime.llm.complete`。
+- `off`：仅使用原来的无工具模型分类，不调用 Decision API。
+
+Kev 使用 directed / not_directed / uncertain 三选一，明确标签且对应概率至少 0.8 时采用；该阈值是消费策略，不代表准确率保证。不可用、超时、输入不支持、结果不确定或概率不足时，回退原模型。原模型仍须严格返回 directed 才接话，分类失败则静默；已取消或宿主关闭调用权限时不启动托底请求。Kev 的独立预算为 1500 毫秒，托底模型仍为 8 秒；一次分类可能先后消耗两段预算。
+
+决策只发送当前消息、当前发送者及有界的近期对话/群消息，不发送 Agent 全部系统提示或技能索引。完整 state 与 rubric 序列化后按 UTF-8 **6000 字节**限制，包含 JSON 转义开销，为 Kev-0.8B 的 8K 验证上下文及服务端包装留余量；这不是 tokenizer 的精确 token 计数，也不承诺其他服务配置的容量。先移除最早的整条群消息，再移除较早对话，保留完整当前消息及最近两条对话，并传递省略数量。必要内容仍超限时不发送 Kev，直接走托底；服务端若拒绝输入，同样托底，不截断后重复提交。托底保留原有上下文和当前消息最多 4000 字符的既有处理。
+
+分类调用宿主配置的模型，可能产生额外延迟和费用。接话判定只决定是否受理消息，不提供业务操作或跨会话数据权限。
 
 ## 与 Agent Repo / Worker 组合
 

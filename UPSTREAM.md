@@ -122,3 +122,5 @@ form analyzer and protects incremental repair from worsening count violations.
 The plugin manifest schema and runtime are unchanged. The patch includes
 browser/save regressions, synthetic schema fixtures, visual evidence, and the
 upstream MIT license; it is not an installed-runtime patch or automatic deploy.
+
+- 接话窗口新增 conversationWindow.decisionMode（auto/off，默认 auto）：通过宿主公开 Decision API 使用当前路由 Agent 配置的 Kev，采用有预算的三分类；不确定、超限或不可用时保留原 LLM 分类托底，取消与权限失效不触发托底。旧宿主不要求新增 SDK 运行时导入。

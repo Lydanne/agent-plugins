@@ -1520,6 +1520,7 @@ describe("handleFeishuMessage command authorization", () => {
       event: createFeishuTestEvent({messageId:`window-${accepted}`,senderOpenId:"ou-sender",chatId:"oc-window",chatType:"group",text:"那进度呢"}),
     });
     expect(mockAdmitConversationWindow).toHaveBeenCalledOnce();
+    expect(mockAdmitConversationWindow.mock.calls[0][2]).toMatchObject({agentId: 'main', config: expect.any(Object)});
     if (accepted) {
       expect(mockDispatchReplyFromConfig).toHaveBeenCalled();
       expect(lastMockCallArg<{ctx:{agentText:string}}>(mockDispatchReplyFromConfig).ctx.agentText).toContain("window-only-evidence");
@@ -1540,7 +1541,7 @@ describe("handleFeishuMessage command authorization", () => {
       event:createFeishuTestEvent({messageId:`chain-reply-${depth}-${idType}`,senderOpenId:"ou-replier",chatId:"oc-chain",chatType:"group",text:"继续查这个",message:{parent_id:"chain-parent-1"}}),
       botOpenId:"ou-ada",
     });
-    expect(mockAdmitConversationWindow).toHaveBeenCalledWith(expect.objectContaining({senderOpenId:"ou-replier",mentionedBot:false,replyChainMentionsBot:true}),600);
+    expect(mockAdmitConversationWindow).toHaveBeenCalledWith(expect.objectContaining({senderOpenId:"ou-replier",mentionedBot:false,replyChainMentionsBot:true}),600,expect.objectContaining({agentId:"main"}));
     expect(mockDispatchReplyFromConfig).toHaveBeenCalledOnce();
     expect(mockGetMessageFeishu).toHaveBeenCalledTimes(depth);
     expect(lastMockCallArg<{ctx:{agentText:string}}>(mockDispatchReplyFromConfig).ctx.agentText).toContain(`parent ${depth}`);
@@ -1562,7 +1563,7 @@ describe("handleFeishuMessage command authorization", () => {
         event:createFeishuTestEvent({messageId:`chain-negative-${reason}`,senderOpenId:"ou-replier",chatId:"oc-chain",chatType:"group",text:"继续",message:{parent_id:"chain-parent"}}),
         botOpenId:"ou-ada",
       });
-      expect(mockAdmitConversationWindow).toHaveBeenCalledWith(expect.objectContaining({replyChainMentionsBot:false}),600);
+      expect(mockAdmitConversationWindow).toHaveBeenCalledWith(expect.objectContaining({replyChainMentionsBot:false}),600,expect.objectContaining({agentId:"main"}));
       expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
       expect(mockGetMessageFeishu).toHaveBeenCalledOnce();
     },

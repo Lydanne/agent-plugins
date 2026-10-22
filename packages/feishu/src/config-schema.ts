@@ -231,7 +231,7 @@ const ReactionNotificationModeSchema = z.enum(["off", "own", "all"]).optional();
  */
 const ReplyInThreadSchema = z.enum(["disabled", "enabled"]).optional();
 
-const ConversationWindowSchema = z.object({ enabled: z.boolean().default(false), durationSeconds: z.number().int().min(30).max(3600).default(600) }).strict().optional();
+const ConversationWindowSchema = z.object({ enabled: z.boolean().default(false), durationSeconds: z.number().int().min(30).max(3600).default(600), decisionMode: z.enum(["auto", "off"]).default("auto") }).strict().optional();
 
 const FeishuGroupSchema = buildGroupEntrySchema({
   conversationWindow: ConversationWindowSchema,

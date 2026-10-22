@@ -844,3 +844,11 @@ it("validates completion candidates globally and per account and substitutes onl
  expect(renderBusinessMessage({completionMentions:["老师，{result}"]},"completionMention",{result:"搞定了"})).toBe("老师，搞定了");
  expect(renderBusinessMessage({completionMentions:[" "]},"completionMention")).toBe("老师，结果已更新，请查看上方回复。");
 });
+
+it('defaults conversation decisions to auto and accepts off at global, account and group scope', () => {
+ const parsed=FeishuConfigSchema.parse({conversationWindow:{enabled:true},accounts:{test:{conversationWindow:{enabled:true,decisionMode:'off'}}},groups:{test:{conversationWindow:{enabled:true,decisionMode:'off'}}}});
+ expect(parsed.conversationWindow).toMatchObject({enabled:true,durationSeconds:600,decisionMode:'auto'});
+ expect(parsed.accounts?.test.conversationWindow?.decisionMode).toBe('off');
+ expect(parsed.groups?.test.conversationWindow?.decisionMode).toBe('off');
+ expect(FeishuConfigSchema.safeParse({conversationWindow:{enabled:true,decisionMode:'on'}}).success).toBe(false);
+});
