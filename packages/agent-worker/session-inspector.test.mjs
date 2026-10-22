@@ -177,3 +177,12 @@ test('task overview separates all current work from paged history and lazily sel
  assert.equal((await inspector.detail(scope,{topic,jobId:rows[1].jobId})).records[0].request.availability,'unavailable');
  await assert.rejects(inspector.detail(scope,{topic,historyOffset:-1}));await assert.rejects(inspector.detail(scope,{topic,historyOffset:1.5}));
 }));
+
+test('session and task clocks use the selected job timestamps without replacing session history dates',()=>fixture(async state=>{
+ const scope='timing-chat',old={jobId:id,scope:hash(scope),topic:'clock',status:'completed',createdAt:1000,startedAt:1500,finishedAt:9000},current={jobId:id2,scope:hash(scope),topic:'clock',status:'awaiting_user',createdAt:10000,startedAt:11000,heartbeatAt:15000,questions:[{createdAt:12000,waitingForUserAt:13000,question:'private full question'}]};
+ const rows=[old,current];for(const job of rows)await writeFile(join(state,'jobs',job.jobId+'.json'),JSON.stringify(job));
+ const inspector=createSessionInspector({state,jobs:{status:key=>rows.find(job=>job.jobId===key)}});
+ const summary=(await inspector.list(scope)).sessions[0];assert.equal(summary.createdAt,1000);assert.equal(summary.jobCreatedAt,10000);assert.equal(summary.startedAt,11000);assert.equal(summary.heartbeatAt,15000);assert.equal(summary.finishedAt,undefined);
+ assert.deepEqual(summary.questions,[{createdAt:12000,waitingForUserAt:13000}]);
+ const detail=await inspector.detail(scope,{topic:'clock'});assert.equal(detail.currentTasks[0].startedAt,11000);assert.equal(detail.records.find(job=>job.jobId===id2).heartbeatAt,15000);assert.deepEqual(detail.currentTasks[0].questions,summary.questions);
+}));

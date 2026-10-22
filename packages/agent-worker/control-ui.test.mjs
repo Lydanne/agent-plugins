@@ -46,7 +46,7 @@ test('failed commands have red frames and collapsed failure labels in records an
  f.track(f.ui.mountPanel(f.container,ctx));await settle();f.container.querySelector('.cq-row-open').click();await settle();
  const verify=()=>{
   const calls=[...f.container.querySelectorAll('.cq-calls>.cq-disclosure')];assert.equal(calls.length,items.length);
-  assert.deepEqual(calls.filter(node=>node.classList.contains('cq-call-failed')).map(node=>node.dataset.foldKey),['nonzero','failed','error']);
+  assert.deepEqual(calls.filter(node=>node.classList.contains('cq-call-failed')).map(node=>node.dataset.foldKey),['0:nonzero','0:failed','0:error']);
   for(const call of calls.slice(0,3)){assert.equal(call.open,false);assert.match(call.querySelector('summary').textContent,/执行失败/);}
   calls[0].open=true;assert.ok(calls[0].classList.contains('cq-call-failed'));
  };
@@ -146,4 +146,18 @@ test('selection persists across loaded pages and same-topic models delete by dis
  const input=f.container.querySelector('[aria-label="选择会话 demo / same · deep"]');input.checked=true;input.dispatchEvent(new f.window.Event('change'));assert.match(f.container.textContent,/已选 2 个会话/);
  click(f.container,'删除所选 (2)');assert.match(f.container.querySelector('dialog').textContent,/quick/);assert.match(f.container.querySelector('dialog').textContent,/deep/);click(f.container,'确认批量删除');await settle();
  assert.equal(calls.length,2);assert.equal(calls[0].topic,calls[1].topic);assert.notEqual(calls[0].modelSessionScope,calls[1].modelSessionScope);
+});
+
+test('process clocks tick without replacing disclosures and stop at task completion',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname);
+ t.mock.timers.enable({apis:['Date','setInterval'],now:20000});
+ const record={jobId:'clock-job',status:'running',createdAt:1000,startedAt:2000,request:{availability:'available',task:'Clock fixture'},questions:[],eventsAvailability:'available',events:[{event:'turn.started',time:2000},{event:'item.started',time:5000,item:{id:'call',type:'mcp_tool_call',server:'fixture',tool:'lookup',status:'in_progress'}}]};
+ const ctx=uiContext(async()=>({ok:true,result:{records:[record],offset:0,hasMore:false}}),{sessionKey:'fixture',topic:'clock'});
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();click(f.container,'任务过程');
+ const call=f.container.querySelector('.cq-calls>details');call.open=true;
+ assert.match(call.querySelector('summary').textContent,/已耗时 15 秒/);assert.match(f.container.textContent,/总用时 19 秒/);
+ t.mock.timers.tick(1000);assert.equal(f.container.querySelector('.cq-calls>details'),call);assert.equal(call.open,true);assert.match(call.querySelector('summary').textContent,/已耗时 16 秒/);
+ record.status='completed';record.finishedAt=22000;record.events.push({event:'item.completed',time:21500,item:{id:'call',type:'mcp_tool_call',server:'fixture',tool:'lookup',status:'completed'}});
+ click(f.container,'刷新');await settle();assert.match(f.container.textContent,/总用时 21 秒/);assert.match(f.container.querySelector('.cq-calls>details summary').textContent,/耗时 16 秒/);
+ t.mock.timers.tick(1000);assert.match(f.container.textContent,/总用时 21 秒/);
 });

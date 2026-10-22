@@ -1,4 +1,5 @@
 import './control-ui.css';
+import {taskTime,toolCalls,callTime,bindTiming,updateTimings} from './timing.mjs';
 import {readInspectionResponse} from './inspection-transport.mjs';
 import {currentUiTarget,registerWorkerNavigation} from './dist/ui-navigation.mjs';
 const labels={awaiting_user:'等待用户',awaiting_main:'等待 Main',queued:'排队中',running:'运行中',completed:'已完成',failed:'失败',timed_out:'超时',cancelled:'已取消',cancelling:'取消中',unknown:'状态未知'};
@@ -28,12 +29,13 @@ function messageHeading(actor,at,openOriginal){
 }
 function information(fields){
  const list=element('dl',undefined,'cq-information');
- for(const [label,value] of fields){if(value===undefined||value===null||value==='')continue;list.append(element('dt',label),element('dd',value,['任务标识','会话标识'].includes(label)?'cq-identifier':undefined));}return list;
+ for(const [label,value] of fields){if(value===undefined||value===null||value==='')continue;const cell=element('dd',undefined,['任务标识','会话标识'].includes(label)?'cq-identifier':undefined);if(value?.nodeType)cell.append(value);else cell.textContent=value;list.append(element('dt',label),cell);}return list;
 }
 function processStage(label,at,state='done'){
  const stage=element('div',undefined,'cq-stage '+state);stage.append(element('span',undefined,'cq-stage-dot'),element('strong',label),element('time',time(at)));return stage;
 }
-function toolRecords(events){const items=new Map();for(const event of events){if(event.item&&event.item.type!=='agent_message')items.set(event.item.id??JSON.stringify(event.item),event);}return [...items.values()];}
+const toolRecords=toolCalls;
+const taskClock=task=>{const node=bindTiming(element('span',undefined,'cq-elapsed'),now=>taskTime(task,now));node.title='从任务受理到结束，包含排队、执行及等待；不包含结果交付。';return node;};
 function sourceLine(text,json){
  const code=element('code',undefined,'cq-line-content');if(!json){code.textContent=text||' ';return code;}let offset=0;
  for(const token of text.matchAll(/"(?:\\.|[^"\\])*"(?:\s*:)?|\b(?:true|false|null)\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g)){code.append(document.createTextNode(text.slice(offset,token.index)));const kind=token[0].endsWith(':')?'key':token[0].startsWith('"')?'string':'literal';code.append(element('span',token[0],'cq-token-'+kind));offset=token.index+token[0].length;}
@@ -52,11 +54,13 @@ function sourceView(title,value,redact){
  section.addEventListener('toggle',()=>{if(!section.open||code.childElementCount)return;for(const [index,line] of lines.entries()){const row=element('span',undefined,'cq-source-line'),number=element('span',String(index+1),'cq-line-number');number.setAttribute('aria-hidden','true');row.append(number,sourceLine(line,!isText));code.append(row);}});return section;
 }
 function callFailed(item){return item.status==='failed'||(typeof item.exit_code==='number'&&item.exit_code!==0)||Boolean(item.error);}
-function showCalls(events,redact){const area=element('div',undefined,'cq-calls');for(const record of toolRecords(events)){
+function showCalls(events,redact,task={}){const area=element('div',undefined,'cq-calls');for(const record of events.every(e=>e.callKey!==undefined)?events:toolRecords(events)){
  const {item,time:at}=record;
  const kind=item.type==='mcp_tool_call'?'MCP':item.type==='web_search'?'网站访问 / 搜索':item.type==='file_change'?'文件变更':/SKILL\.md/i.test(item.command??'')?'技能相关命令':'工具命令';
  const name=item.type==='mcp_tool_call'?`${item.server} / ${item.tool}`:item.command?.split('\n')[0];
  const body=element('div'),meta=element('div',undefined,'cq-call-meta');meta.append(element('time',time(at)));
+ if(record.startedAt!==undefined)meta.append(element('span','开始 '+time(record.startedAt)));
+ if(record.finishedAt!==undefined)meta.append(element('span','结束 '+time(record.finishedAt)));
  if(item.status)meta.append(element('span',redact(labels[item.status]??item.status)));
  if(item.exit_code!==undefined)meta.append(element('span',`退出码 ${item.exit_code}`));body.append(meta);
  const add=(title,value)=>{if(value!==undefined&&value!==null)body.append(sourceView(title,value,redact));};
@@ -67,7 +71,7 @@ function showCalls(events,redact){const area=element('div',undefined,'cq-calls')
  if(links.childElementCount)body.append(fold(`相关网站 · ${links.childElementCount}`,links));
  if(/SKILL\.md/i.test(item.command??''))body.append(element('p','包含技能文件路径的命令；不证明技能被完整读取或遵循。','cq-muted'));
  body.append(sourceView('原始记录',record,redact));
- const failed=callFailed(item),call=fold(redact((failed?'执行失败 · ':'')+kind+(name?' · '+name:'')),body);if(failed)call.classList.add('cq-call-failed');call.dataset.foldKey=redact(String(item.id??JSON.stringify(item)));area.append(call);
+ const failed=callFailed(item),call=fold(redact((failed?'执行失败 · ':'')+kind+(name?' · '+name:'')),body);if(failed)call.classList.add('cq-call-failed');call.querySelector('summary').append(bindTiming(element('span',undefined,'cq-call-elapsed'),now=>callTime(record,task,now)));call.dataset.foldKey=redact(record.callKey);area.append(call);
  }return area;}
 function processTimeline(record,safe){
  const wrapper=element('div',undefined,'cq-process-view');
@@ -76,14 +80,14 @@ function processTimeline(record,safe){
  const timeline=element('div',undefined,'cq-process'),entries=[{kind:'accepted',at:record.createdAt,label:'任务受理'},{kind:'started',at:record.startedAt,label:'Worker 开始执行'}].filter(e=>e.at);
  for(const round of record.executionRounds??[])if(round.resumed)entries.push({kind:'resumed',at:round.startedAt,label:'Worker 继续执行'});
  for(const event of toolRecords(record.events)){
-  const type=event.item.type;entries.push({kind:'tool',at:event.time,event,label:({command_execution:'Worker · 执行命令',mcp_tool_call:'Worker · 调用 MCP',web_search:'Worker · 网站访问 / 搜索',file_change:'Worker · 文件变更'})[type]??'Worker · 工具调用'});
+  const type=event.item.type;entries.push({kind:'tool',at:event.startedAt??event.time,event,label:({command_execution:'Worker · 执行命令',mcp_tool_call:'Worker · 调用 MCP',web_search:'Worker · 网站访问 / 搜索',file_change:'Worker · 文件变更'})[type]??'Worker · 工具调用'});
  }
  for(const q of record.questions??[]){entries.push({kind:'question',at:q.createdAt,label:q.requestKind==='plugin'?'Worker · 请求插件能力':'Worker · 请求上下文',question:q});if(q.waitingForUserAt)entries.push({kind:'waiting_user',at:q.waitingForUserAt,label:'Main · 等待用户补充'});if(q.answer)entries.push({kind:'answer',at:q.answeredAt,label:q.answerSource==='user_card'?'用户 · 卡片选择':q.answerSource==='main_context'?'Main · 自动补充':'Main · 补充上下文',question:q});}
  if(record.finishedAt)entries.push({kind:'finished',at:record.finishedAt,label:labels[record.status]??record.status});
  for(const entry of entries.sort((a,b)=>(a.at??0)-(b.at??0))){
   const node=element('section',undefined,'cq-process-node'),state=entry.kind==='question'&&!entry.question.answer?'awaiting_main':entry.kind==='waiting_user'?'awaiting_user':entry.kind==='finished'?record.status:entry.kind==='tool'&&callFailed(entry.event.item)?'failed':'done';
   node.append(processStage(entry.label,entry.at,state));const content=element('div',undefined,'cq-process-body');
-  if(entry.kind==='tool')content.append(showCalls([entry.event],safe));
+  if(entry.kind==='tool')content.append(showCalls([entry.event],safe,record));
   if(entry.kind==='question'){const q=entry.question;content.append(messageText(safe(q.question)),fold('原因与已完成工作',messageText(safe(q.reason+'\n'+q.progress))),sourceView('提问原文',q,safe));}
   if(entry.kind==='answer'){const q=entry.question;content.append(messageText(safe(q.answer)));if(q.answerBasis)content.append(element('small',safe('依据：'+q.answerBasis),'cq-muted'));if(q.answerValues)content.append(fold('已提交字段',information(Object.entries(q.answerValues).map(([id,value])=>[q.fields?.find(f=>f.id===id)?.label??id,safe(typeof value==='string'?value:JSON.stringify(value))]))));content.append(sourceView('补充上下文原文',q,safe));}
   if(entry.kind==='waiting_user')content.append(element('p','等待用户回答；收到补充后继续原任务。','cq-muted'));
@@ -222,7 +226,7 @@ export function mountPanel(container,initial){
      if(row.model)open.append(element('small',safe((row.harness??'codex')+' / '+row.model),'cq-muted'));
      top.append(title,element('span',(labels[row.status]??row.status)+(row.activeCount>1?` · ${row.activeCount}`:''),'cq-state '+row.status));open.append(top);
      const progress=safe(row.progress);if(progress&&!['执行已完成','结果已交付','历史任务记录不可用'].includes(progress)){const description=element('p',progress,'cq-muted');description.title=progress;open.append(description);}entry.append(open);
-     const metrics=element('div',undefined,'cq-row-meta');const stats=element('div',undefined,'cq-metrics');stats.append(element('span',`热度 ${row.heat}`,'cq-heat'),element('span',`${row.interactionCount} 次交互`),element('span',`${row.taskCount} 个任务`));
+     const metrics=element('div',undefined,'cq-row-meta');const stats=element('div',undefined,'cq-metrics');stats.append(taskClock({...row,createdAt:row.jobCreatedAt}),element('span',`热度 ${row.heat}`,'cq-heat'),element('span',`${row.interactionCount} 次交互`),element('span',`${row.taskCount} 个任务`));
      const delivery=({delivered:'已交付',pending:'待交付',processing:'交付处理中',sending:'发送中',suppressed:'已抑制',uncertain:'交付待核查'})[row.notificationState]??(progress==='结果已交付'?'已交付':null);if(delivery)stats.append(element('span',delivery,'cq-delivery'));
      const updated=element('time',time(row.updatedAt));updated.title='最近活动 · '+time(row.updatedAt);metrics.append(stats,updated);const menu=!selectionMode&&moreMenu(row);if(menu)metrics.append(menu);entry.append(metrics);
      if(row.tags.length){const meta=element('div',undefined,'cq-tags');for(const tag of row.tags.slice(0,2)){const chip=element('span',safe(tag));chip.title=safe(tag);meta.append(chip);}if(row.tags.length>2){const extra=element('div',undefined,'cq-expanded-tags');for(const tag of row.tags.slice(2)){const chip=element('span',safe(tag));chip.title=safe(tag);extra.append(chip);}const more=fold(`+${row.tags.length-2}`,extra);more.dataset.foldKey='tags';more.classList.add('cq-tag-disclosure');meta.append(more);}entry.append(meta);}
@@ -245,7 +249,7 @@ export function mountPanel(container,initial){
      const record=data.records.find(record=>record.jobId===task.jobId),expanded=record&&!collapsedTasks.has(task.jobId),card=element('article',undefined,'cq-task-card');card.dataset.recordKey=task.jobId;
      const entry=button('',()=>{if(record){if(expanded)collapsedTasks.add(task.jobId);else collapsedTasks.delete(task.jobId);render();return;}collapsedTasks.delete(task.jobId);selectedJobId=task.jobId;offset=task.index;signature='';refresh(false,true);},'cq-task-entry');
      entry.setAttribute('aria-expanded',String(!!expanded));
-     const heading=element('div',undefined,'cq-task-heading');heading.append(element('time',time(task.createdAt)),element('span',labels[task.status]??task.status,'cq-state '+task.status));entry.append(heading);card.append(entry);
+     const heading=element('div',undefined,'cq-task-heading');heading.append(element('time',time(task.createdAt)),taskClock(task),element('span',labels[task.status]??task.status,'cq-state '+task.status));entry.append(heading);card.append(entry);
      if(expanded){
       card.classList.add('cq-task-selected');const details=element('div',undefined,'cq-task-details');
       if(record.request.availability==='available'){
@@ -253,7 +257,7 @@ export function mountPanel(container,initial){
        if(record.request.context)details.append(fold('任务上下文',messageText(safe(record.request.context))));
        if(record.request.constraints)details.append(fold('执行限制',messageText(safe(record.request.constraints))));
       }else details.append(element('p',safe(task.task??'原始任务正文不可用，旧任务不会补造任务内容。'),'cq-muted'));
-      details.append(information([['任务标识',safe(record.jobId)],['执行模型',safe(record.model?(record.harness??'codex')+' / '+record.model:'旧任务未记录模型')],['智慧等级',record.thinkingLevel===undefined?'旧任务未记录':String(record.thinkingLevel)],['受理时间',time(record.createdAt)],['开始时间',time(record.startedAt)],['结束时间',time(record.finishedAt)],[record.notificationKind==='context_request'?'提问投递':'结果交付',({delivered:'已交付',pending:'待交付',processing:'处理中',sending:'发送中',suppressed:'已抑制',uncertain:'待核查'})[record.notificationState]??record.notificationState??'无异步交付记录']]));
+      details.append(information([['任务标识',safe(record.jobId)],['执行模型',safe(record.model?(record.harness??'codex')+' / '+record.model:'旧任务未记录模型')],['智慧等级',record.thinkingLevel===undefined?'旧任务未记录':String(record.thinkingLevel)],['用时',taskClock(record)],['受理时间',time(record.createdAt)],['开始时间',time(record.startedAt)],['结束时间',time(record.finishedAt)],[record.notificationKind==='context_request'?'提问投递':'结果交付',({delivered:'已交付',pending:'待交付',processing:'处理中',sending:'发送中',suppressed:'已抑制',uncertain:'待核查'})[record.notificationState]??record.notificationState??'无异步交付记录']]));
       if(record.collaboration){const diagnostic=record.collaboration,delivery=diagnostic.delivery;details.append(fold('Main–Worker 协作诊断',information([['插件请求额度',diagnostic.requests.plugin.used+' / '+diagnostic.requests.plugin.limit],['信息追问额度',diagnostic.requests.context.used+' / '+diagnostic.requests.context.limit],['事件投递尝试',String(delivery.attempts)],['下次重试',time(delivery.retryAt)],['最近失败代码',safe(delivery.lastErrorCode??'无记录')],['等待时长',diagnostic.waiting?Math.floor(diagnostic.waiting.ageMs/1000)+' 秒':'未等待'],['会话最近通知的技能版本',safe(diagnostic.skill.lastNotifiedRevision??'未记录')],['实际读取技能', '未知；更新通知不代表已读取'],['投递说明',safe(delivery.meaning)],['诊断采集时间',time(diagnostic.observedAt)]])));}
       if(record.progress)details.append(fold('当前进度',element('p',safe(record.progress))));if(record.error)details.append(element('p',safe(record.error),'cq-error'));
       const links=element('div',undefined,'cq-task-links');for(const [id,label] of [['records','查看对话'],['process','查看执行过程']])links.append(button(label,()=>{view=id;root.querySelector('.cq-scroll')?.scrollTo(0,0);render();}));links.append(button('原始任务 JSON',()=>openOriginal('Main',record),'cq-original-button'));details.append(links);card.append(details);
@@ -268,7 +272,7 @@ export function mountPanel(container,initial){
     taskList('历史任务 · '+(data.historyTotal??0),history,'还没有历史任务。');
     if(data.historyHasMore)body.append(button('加载更多历史任务',()=>{historyOffset+=30;refresh(false,true);},'cq-load-earlier'));
    }
-   for(const record of ['session','info'].includes(view)?[]:data.records){const block=element('section',undefined,'cq-run');block.dataset.recordKey=record.jobId;const runHeading=element('div',undefined,'cq-run-heading');runHeading.append(element('span',time(record.createdAt)),element('span',labels[record.status]??record.status,'cq-state '+record.status));block.append(runHeading);
+   for(const record of ['session','info'].includes(view)?[]:data.records){const block=element('section',undefined,'cq-run');block.dataset.recordKey=record.jobId;const runHeading=element('div',undefined,'cq-run-heading');runHeading.append(element('span',time(record.createdAt)),taskClock(record),element('span',labels[record.status]??record.status,'cq-state '+record.status));block.append(runHeading);
     if(view==='process'){block.append(processTimeline(record,safe));}
     else {
      if(filter!=='Worker'){const main=element('article',undefined,'cq-message main');main.append(messageHeading('Main',record.createdAt,()=>openOriginal('Main',record)));if(record.request.availability==='available'){main.append(messageText(safe(record.request.task)));if(record.request.context)main.append(fold('任务上下文',messageText(safe(record.request.context))));if(record.request.constraints)main.append(fold('执行限制',messageText(safe(record.request.constraints))));}else main.append(element('p','原始任务正文不可用','cq-unavailable'));block.append(main);}
@@ -283,14 +287,14 @@ export function mountPanel(container,initial){
        const item=element('article',undefined,'cq-message '+entry.actor.toLowerCase());item.append(messageHeading(entry.actor,entry.at,()=>openOriginal(entry.actor,record,entry)),messageText(safe(entry.text)));
        if(entry.question){const q=entry.question;item.append(element('small',q.requestKind==='plugin'?'请求 Main 调用插件':'请求 Main 补充上下文'),fold('提问原因与已完成工作',messageText(safe(q.reason+'\n'+q.progress))));if(!q.answer)item.append(element('p',['awaiting_main','awaiting_user'].includes(record.status)?(labels[record.status]+' 回复 · ')+time(q.expiresAt)+' 前有效':'任务已结束，问题未回答','cq-muted'));}block.append(item);
       }
-      if(filter!=='Main'&&toolRecords(record.events).length)block.append(fold('Worker · 工具与执行记录',showCalls(record.events,safe)));
+      if(filter!=='Main'&&toolRecords(record.events).length)block.append(fold('Worker · 工具与执行记录',showCalls(record.events,safe,record)));
      }
      else if(filter!=='Main'){
       const messages=record.events.filter(e=>e.event==='item.completed'&&e.item?.type==='agent_message'),calls=toolRecords(record.events);const worker=element('article',undefined,'cq-message worker');worker.append(messageHeading('Worker',messages.at(-1)?.time??record.finishedAt??record.startedAt,()=>openOriginal('Worker',record)));
       for(const m of messages){if(messages.length>1)worker.append(element('small',time(m.time),'cq-reply-time'));worker.append(messageText(safe(m.item.text)));}
       if(record.result&&messages.at(-1)?.item.text!==record.result)worker.append(messageText(safe(record.result)));
       if(!messages.length&&!record.result)worker.append(element('p',active.has(record.status)?'尚未收到执行回复':'执行回复不可用','cq-muted'));
-      if(calls.length){const mcp=calls.filter(e=>e.item.type==='mcp_tool_call').length,web=calls.filter(e=>e.item.type==='web_search').length,skills=calls.filter(e=>/SKILL\.md/i.test(e.item.command??'')).length;worker.append(fold(`${calls.length} 条执行记录 · MCP ${mcp} · 网站 ${web} · 技能相关命令 ${skills}`,showCalls(record.events,safe)));}block.append(worker);
+      if(calls.length){const mcp=calls.filter(e=>e.item.type==='mcp_tool_call').length,web=calls.filter(e=>e.item.type==='web_search').length,skills=calls.filter(e=>/SKILL\.md/i.test(e.item.command??'')).length;worker.append(fold(`${calls.length} 条执行记录 · MCP ${mcp} · 网站 ${web} · 技能相关命令 ${skills}`,showCalls(record.events,safe,record)));}block.append(worker);
      }
     }
     if(view!=='info'&&record.eventsAvailability!=='available')block.append(element('p','该任务没有可读取的详细过程记录。旧任务不会补造工具细节。','cq-muted'));
@@ -303,8 +307,9 @@ export function mountPanel(container,initial){
   for(const node of root.querySelectorAll('details'))if(!node.classList.contains('cq-more')&&expanded.has(disclosureKey(node)))node.open=true;
   body.scrollTop=scroll;
  }
+ const clockTimer=setInterval(()=>{if(!disposed&&context.presented&&context.host.connection.canRead)updateTimings(root);},1000);
  timer=setInterval(()=>{if((offset===0||selectedJobId)&&historyOffset===0&&!(root.contains(document.activeElement)&&document.activeElement.matches('input,select')))refresh();},5000);render();refresh();
- return {update(next){const changed=next.props.sessionKey!==context.props.sessionKey||next.props.agentId!==context.props.agentId||next.props.projectId!==context.props.projectId||next.props.jobId!==context.props.jobId||next.props.topic!==context.props.topic||next.props.executionScope!==context.props.executionScope||next.props.modelSessionScope!==context.props.modelSessionScope;context=next;const writeChanged=observedWrite!==next.host.connection.canWrite;observedWrite=next.host.connection.canWrite;if(writeChanged){if(next.host.connection.canWrite!==true)clearSelection();render();}if(changed){clearSelection();deleteFeedback=null;closeDelete();projectFilter=next.props.projectId??'';closeOriginal();collapsedTasks.clear();generation++;selected=next.props.topic??null;selectedScope=next.props.executionScope;selectedModelScope=next.props.modelSessionScope;selectedJobId=next.props.jobId;query='';rows=[];data=null;listResult=null;projectIds=[];error=null;offset=0;historyOffset=0;signature='';render();}if(!next.presented){clearSelection();closeDelete();closeOriginal();generation++;return;}if(next.host.connection.canWrite!==true)closeDelete();if(!next.host.connection.canRead){clearSelection();closeDelete();closeOriginal();generation++;rows=[];data=null;listResult=null;projectIds=[];signature='';render();return;}refresh();},dispose(){document.removeEventListener('pointerdown',outsideMenu);clearSelection();closeDelete();closeOriginal();disposed=true;generation++;clearInterval(timer);root.remove();}};
+ return {update(next){const changed=next.props.sessionKey!==context.props.sessionKey||next.props.agentId!==context.props.agentId||next.props.projectId!==context.props.projectId||next.props.jobId!==context.props.jobId||next.props.topic!==context.props.topic||next.props.executionScope!==context.props.executionScope||next.props.modelSessionScope!==context.props.modelSessionScope;context=next;const writeChanged=observedWrite!==next.host.connection.canWrite;observedWrite=next.host.connection.canWrite;if(writeChanged){if(next.host.connection.canWrite!==true)clearSelection();render();}if(changed){clearSelection();deleteFeedback=null;closeDelete();projectFilter=next.props.projectId??'';closeOriginal();collapsedTasks.clear();generation++;selected=next.props.topic??null;selectedScope=next.props.executionScope;selectedModelScope=next.props.modelSessionScope;selectedJobId=next.props.jobId;query='';rows=[];data=null;listResult=null;projectIds=[];error=null;offset=0;historyOffset=0;signature='';render();}if(!next.presented){clearSelection();closeDelete();closeOriginal();generation++;return;}if(next.host.connection.canWrite!==true)closeDelete();if(!next.host.connection.canRead){clearSelection();closeDelete();closeOriginal();generation++;rows=[];data=null;listResult=null;projectIds=[];signature='';render();return;}refresh();},dispose(){document.removeEventListener('pointerdown',outsideMenu);clearSelection();closeDelete();closeOriginal();disposed=true;generation++;clearInterval(timer);clearInterval(clockTimer);root.remove();}};
 }
 export function mountProjectPage(container,initial){
  let context=initial;

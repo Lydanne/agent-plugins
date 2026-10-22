@@ -17,6 +17,7 @@
     "test": "node --test *.test.mjs"
   },
   "files": [
+    "dist/worker-timing.mjs",
     "skills",
     "index.mjs",
     "configuration.mjs",

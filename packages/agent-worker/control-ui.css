@@ -226,3 +226,7 @@
 .cq-panel>header>strong{min-width:0;flex:1}
 .cq-panel .cq-header-actions .cq-refresh{padding:4px 6px}
 .cq-more>summary svg{display:block;flex:none}
+
+.cq-elapsed,.cq-call-elapsed{font-variant-numeric:tabular-nums;color:#827b73;font-size:10px;white-space:normal}
+.cq-call-elapsed{display:inline-block;margin-left:10px;font-weight:500}
+.cq-run-heading,.cq-task-heading{flex-wrap:wrap;gap:6px}

@@ -17,11 +17,12 @@ test('Agent aggregate verifies scope bindings, separates Agents and counts all c
   const saved={jobId,scope:hash(scope),requestKey:requestKeyFor(params,scope,provenance),provenance,topic:params.topic,taskSummary:'summary '+chat,status,projectId,createdAt:rows.length+1,...overrides};rows.push(saved);
   await writeFile(join(state,'jobs',jobId+'.json'),JSON.stringify(saved));await writeFile(join(state,'jobs',jobId+'.request.json'),JSON.stringify({scope,params,runtime:{secret:'must-not-leak'}}));return saved;
  }
- await save('alice','one','running','a');await save('alice','two','queued','b');await save('bob','other','running','a');await save('alice','bad','completed','a',{scope:hash('agent:bob:other')});
+ await save('alice','one','running','a',{startedAt:10,heartbeatAt:20,questions:[{createdAt:11,waitingForUserAt:12,question:'private question body'}]});await save('alice','two','queued','b');await save('bob','other','running','a');await save('alice','bad','completed','a',{scope:hash('agent:bob:other')});
  const jobs={status:(id,scope)=>{const job=rows.find(row=>row.jobId===id);assert.equal(job.scope,hash(scope));return job;}};
  const inspect=createAgentTaskInspector({state,jobs,now:()=>100}),ctx={agentId:'alice',sessionKey:'agent:alice:catalog'};
  const result=await inspect(ctx,{limit:1,query:'two'});assert.equal(result.taskTotal,2);assert.equal(result.conversationTotal,2);assert.equal(result.total,1);assert.equal(result.counts.running,1);assert.equal(result.counts.queued,1);assert.equal(result.tasks[0].sessionKey,'agent:alice:two');assert.deepEqual(result.projectIds,['a','b']);assert.ok(!JSON.stringify(result).includes('must-not-leak'));assert.ok(!JSON.stringify(result).includes('private-token'));
  const project=await inspect(ctx,{projectId:'a',status:'queued'});assert.equal(project.counts.running,1);assert.equal(project.total,0);assert.equal(project.taskTotal,1);
+ const timed=(await inspect(ctx,{query:'one'})).tasks[0];assert.equal(timed.startedAt,10);assert.equal(timed.heartbeatAt,20);assert.deepEqual(timed.questions,[{createdAt:11,waitingForUserAt:12}]);assert.ok(!JSON.stringify(timed).includes('private question body'));
  const page=await inspect(ctx,{limit:1});assert.equal(page.hasMore,true);assert.equal((await inspect(ctx,{limit:1,offset:1})).tasks[0].status,'running');
  for(const payload of [{agentId:'bob'},{sessionKey:'agent:bob:other'},{projectId:123},{status:'invented'},{limit:101},{offset:-1}])await assert.rejects(inspect(ctx,payload));
  await assert.rejects(inspect({agentId:'alice',sessionKey:'agent:bob:other'}));await assert.rejects(inspect({sessionKey:'agent:alice:catalog'}));

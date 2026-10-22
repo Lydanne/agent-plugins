@@ -1,3 +1,4 @@
+import {taskTime,bindTiming,updateTimings} from './dist/worker-timing.mjs';
 import {readInspectionResponse} from './dist/inspection-transport.mjs';
 import {canOpenWorkerProject,openWorkerTask,subscribeWorkerNavigation} from './dist/ui-navigation.mjs';
 const el=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
@@ -19,8 +20,9 @@ export function mountWorkerPage(container,context,agentId){
  let disposed=false,generation=0,data=null,error='',loading=false,projectId='',status='',query='',offset=0;
  const root=el('section',undefined,'ar-worker-page');root.setAttribute('aria-label','Agent Worker 任务管理');container.append(root);
  const safe=value=>context.host.redact(String(value??''));
- async function refresh(){
-  const epoch=++generation;loading=true;error='';data=null;render();
+ async function refresh(background=false){
+  if(disposed||context.signal.aborted||!context.host.connection.canRead||background&&loading)return;
+  const epoch=++generation;loading=true;const previous=data,previousError=error;error='';if(!background){data=null;render();}
   try{
    const result=await readInspectionResponse((action,payload)=>{
     context.signal.throwIfAborted();if(disposed||epoch!==generation)throw Error('Worker 任务页面已切换');
@@ -28,11 +30,11 @@ export function mountWorkerPage(container,context,agentId){
    },'agentTasks',{...(projectId?{projectId}:{}),...(status?{status}:{}),query,offset,limit:20});
    if(disposed||epoch!==generation)return;data=result;
   }catch(failure){if(disposed||epoch!==generation)return;error=safe(failure.message);}
-  loading=false;render();
+  loading=false;if(!background||previousError!==error||JSON.stringify(previous)!==JSON.stringify(data))render();
  }
  function render(){
   root.replaceChildren();root.setAttribute('aria-busy',String(loading));
-  const header=el('header',undefined,'ar-overview-heading ar-section-heading'),copy=el('div');copy.append(el('h2','Worker 任务'),el('p','查看此 Agent 跨会话的委派任务；执行与历史由 agent-worker 维护。','ar-description'));const refreshButton=button('刷新任务',refresh);refreshButton.disabled=loading;header.append(copy,refreshButton);root.append(header);
+  const header=el('header',undefined,'ar-overview-heading ar-section-heading'),copy=el('div');copy.append(el('h2','Worker 任务'),el('p','查看此 Agent 跨会话的委派任务；执行与历史由 agent-worker 维护。','ar-description'));const refreshButton=button('刷新任务',()=>refresh());refreshButton.disabled=loading;header.append(copy,refreshButton);root.append(header);
   renderWorkerSummary(root,{value:data,error},loading,null,safe);
   const form=el('form',undefined,'ar-worker-filters');
   const select=(label,options,value,change)=>{const wrap=el('label'),input=el('select');input.setAttribute('aria-label',label);wrap.append(el('span',label),input);for(const [key,text] of options){const option=el('option',text);option.value=key;input.append(option);}input.value=value;input.onchange=()=>{change(input.value);offset=0;refresh();};form.append(wrap);};
@@ -42,12 +44,15 @@ export function mountWorkerPage(container,context,agentId){
   if(!data)return;
   const meta=el('p',safe('匹配 '+data.total+' 个任务 · 统计按项目计算，不随状态和搜索过滤 · 更新于 '+new Date(data.scannedAt).toLocaleString()),'ar-description');meta.setAttribute('role','status');root.append(meta);
   if(!data.tasks.length){root.append(el('p','当前筛选下没有可归属的 Worker 任务。','ar-empty-note'));return;}
-  const wrap=el('div',undefined,'ar-worker-table-wrap'),table=el('table',undefined,'ar-worker-table');table.append(el('caption','Worker 任务列表'));const head=el('thead'),tr=el('tr');for(const label of ['任务 / 主题','项目','状态','来源会话','创建时间','操作'])tr.append(el('th',label));head.append(tr);table.append(head);const body=el('tbody');
+  const wrap=el('div',undefined,'ar-worker-table-wrap'),table=el('table',undefined,'ar-worker-table');table.append(el('caption','Worker 任务列表'));const head=el('thead'),tr=el('tr');for(const label of ['任务 / 主题','项目','状态','来源会话','创建时间','用时','操作'])tr.append(el('th',label));head.append(tr);table.append(head);const body=el('tbody');
   for(const task of data.tasks){const row=el('tr'),name=el('td'),topic=el('strong',safe(task.topic));name.append(topic,el('code',safe(task.jobId.slice(0,8)),'ar-worker-task-id'),el('p',safe(task.taskSummary??'未保存任务摘要'),'ar-description'));name.title=safe(task.jobId);if(task.notificationState==='uncertain')name.append(el('p','投递待核查 · Main 可能已执行','ar-warning'));else if(task.notificationErrorCode)name.append(el('p',safe('投递异常：'+task.notificationErrorCode),'ar-warning'));row.append(name,el('td',safe(task.projectId??'未绑定项目')),el('td',labels[task.status]??'状态待核实'));
    const scope=el('td',safe(task.sessionKey.replace('agent:'+agentId+':','')));scope.title=safe(task.sessionKey);row.append(scope,el('td',new Date(task.createdAt).toLocaleString()));
+   const timing=bindTiming(el('td',undefined,'ar-worker-elapsed'),now=>taskTime(task,now));timing.title='从任务受理到结束，包含排队、执行及等待；不包含结果交付。';row.append(timing);
    const action=el('td'),open=button('查看详情',()=>{try{openWorkerTask({agentId,...task});}catch(failure){error=safe(failure.message);render();}});open.disabled=!canOpenWorkerProject();if(open.disabled)open.title='Agent Worker 页面尚未加载，请检查插件 UI 是否启用';action.append(open);row.append(action);body.append(row);
   }table.append(body);wrap.append(table);root.append(wrap);
   const pager=el('div',undefined,'ar-worker-pager'),previous=button('上一页',()=>{offset=Math.max(0,offset-20);refresh();}),next=button('下一页',()=>{offset+=20;refresh();});previous.disabled=offset===0;next.disabled=!data.hasMore;pager.append(previous,el('span','第 '+(Math.floor(offset/20)+1)+' 页'),next);root.append(pager);
  }
- const stop=subscribeWorkerNavigation(()=>{if(!disposed)render();});refresh();return {dispose(){disposed=true;generation++;stop();root.remove();}};
+ const clockTimer=setInterval(()=>{if(!disposed&&!context.signal.aborted&&context.host.connection.canRead)updateTimings(root);},1000);
+ const refreshTimer=setInterval(()=>{if(!root.contains(document.activeElement)||!document.activeElement.matches('input,select'))refresh(true);},5000);
+ const stop=subscribeWorkerNavigation(()=>{if(!disposed)render();});refresh();return {dispose(){disposed=true;generation++;clearInterval(clockTimer);clearInterval(refreshTimer);stop();root.remove();}};
 }

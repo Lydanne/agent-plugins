@@ -20,3 +20,15 @@ test('Worker module distinguishes unavailable from zero and discards responses a
  const view=f.track(f.ui.mountWorkerPage(f.container,ctx,'main'));await settle();assert.match(f.container.textContent,/暂不可读取/);assert.ok(!f.container.textContent.includes('0 个可归属任务'));
  fail=false;click(f.container,'刷新任务');view.dispose();pending.resolve({ok:true,result});await settle();assert.equal(f.container.textContent,'');
 });
+
+test('management clocks tick locally, refresh terminal status, and stop reads after disposal',async t=>{
+ const f=await browserFixture(t,new URL('./worker-page.mjs',import.meta.url).pathname);
+ t.mock.timers.enable({apis:['Date','setInterval'],now:20000});let reads=0;
+ const timed={...task,createdAt:1000,startedAt:2000};
+ const ctx=uiContext(async()=>{reads++;return {ok:true,result:{...result,tasks:[{...timed}]}};});
+ const view=f.track(f.ui.mountWorkerPage(f.container,ctx,'main'));await settle();assert.match(f.container.textContent,/总用时 19 秒/);const cell=f.container.querySelector('.ar-worker-elapsed');
+ t.mock.timers.tick(1000);assert.equal(f.container.querySelector('.ar-worker-elapsed'),cell);assert.match(cell.textContent,/总用时 20 秒/);assert.equal(reads,1);
+ timed.status='completed';timed.finishedAt=22000;t.mock.timers.tick(4000);await settle();assert.equal(reads,2);assert.match(f.container.textContent,/总用时 21 秒/);
+ t.mock.timers.tick(5000);await settle();assert.match(f.container.textContent,/总用时 21 秒/);
+ view.dispose();const before=reads;t.mock.timers.tick(10000);await settle();assert.equal(reads,before);
+});

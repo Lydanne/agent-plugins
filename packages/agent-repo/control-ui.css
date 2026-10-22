@@ -570,3 +570,5 @@
 .ar-management .ar-management-nav button{font-size:14px;padding:14px 4px}
 @container agent-management (max-width:760px){.ar-management .ar-task-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.ar-management{padding:20px 16px 32px}.ar-management .ar-task-card-actions{flex-wrap:wrap}.ar-management .ar-panel button.ar-scheduled-task{padding:18px}}
+
+.ar-worker-elapsed{font-variant-numeric:tabular-nums;min-width:130px}
