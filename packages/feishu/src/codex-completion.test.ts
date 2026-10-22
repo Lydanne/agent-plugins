@@ -149,6 +149,19 @@ it('checks source validity again after dequeue',async()=>{
  let release!:()=>void;const first=runFeishuWorkingTurn({key:JSON.stringify(['a',event.provenance.sessionKey]),senderId:'sender',prepare:async()=>{},run:()=>new Promise<void>(r=>release=r),cancel:async()=>{}});
  await new Promise(r=>setImmediate(r));const pending=deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});mocks.valid=false;release();await first;expect((await pending).suppressed).toBe(true);expect(mocks.run).not.toHaveBeenCalled();
 });
+it('supplemental media recall aborts Main during result processing and blocks delivery',async()=>{
+ const sample={...event,provenance:{...event.provenance,attachmentSources:[{...event.provenance,taskId:'supplement',sourceMessageIds:['video-message']}]}};
+ mocks.run.mockImplementation(async({adapter})=>{
+  const plan=adapter.resolveTurn();
+  for(const recall of mocks.recalls)recall({accountId:'other',chatId:'chat',messageId:'video-message'});
+  expect(plan.replyOptions.abortSignal.aborted).toBe(false);
+  for(const recall of mocks.recalls)recall({accountId:'a',chatId:'chat',messageId:'video-message'});
+  expect(plan.replyOptions.abortSignal.aborted).toBe(true);
+  await plan.delivery.deliver({text:'obsolete'},{kind:'final'});
+ });
+ expect((await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:vi.fn()})).suppressed).toBe(true);
+ expect(mocks.send).not.toHaveBeenCalled();expect(mocks.recalls.size).toBe(0);
+});
 it('recall during model processing blocks the send and releases the subscription',async()=>{
  mocks.run.mockImplementation(async({adapter})=>{for(const recall of mocks.recalls)recall({accountId:'a',chatId:'chat',messageId:'request'});await adapter.resolveTurn().delivery.deliver({text:'obsolete'},{kind:'final'});});
  expect((await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()})).suppressed).toBe(true);expect(mocks.send).not.toHaveBeenCalled();expect(mocks.recalls.size).toBe(0);

@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 // Feishu plugin module implements bot content behavior.
 import type { ClawdbotConfig } from "../runtime-api.js";
 import { buildFeishuConversationId } from "./conversation-id.js";
@@ -300,6 +301,7 @@ export async function resolveFeishuMediaList(params: {
     const seenAttachments = new Set<string>();
     for (const attachment of attachments) {
       const identity = `${attachment.kind}:${attachment.key}`;
+      const resourceId=createHash("sha256").update(identity).digest("hex");
       if (seenAttachments.has(identity)) {
         continue;
       }
@@ -317,6 +319,7 @@ export async function resolveFeishuMediaList(params: {
           ...(fileName ? { originalFilename: fileName } : {}),
         });
         out.push({
+          resourceId,
           path: saved.path,
           contentType: saved.contentType,
           kind: mediaKind,
@@ -325,7 +328,7 @@ export async function resolveFeishuMediaList(params: {
           `feishu: downloaded embedded ${attachment.kind} ${attachment.key}, saved to ${saved.path}`,
         );
       } catch (err) {
-        out.push({ kind: mediaKind });
+        out.push({ resourceId, kind: mediaKind });
         log?.(
           `feishu: failed to download embedded ${attachment.kind} ${attachment.key}: ${String(err)}`,
         );
@@ -339,6 +342,7 @@ export async function resolveFeishuMediaList(params: {
     return [{ kind: resolveFeishuMediaKind(messageType) }];
   }
 
+  const resourceId=createHash("sha256").update(`${toMessageResourceType(messageType)}:${mediaKeys.fileKey || mediaKeys.imageKey}`).digest("hex");
   try {
     const fileKey = mediaKeys.fileKey || mediaKeys.imageKey;
     if (!fileKey) {
@@ -354,13 +358,14 @@ export async function resolveFeishuMediaList(params: {
       originalFilename: mediaKeys.fileName,
     });
     out.push({
+      resourceId,
       path: saved.path,
       contentType: saved.contentType,
       kind: resolveFeishuMediaKind(messageType),
     });
     log?.(`feishu: downloaded ${messageType} media, saved to ${saved.path}`);
   } catch (err) {
-    out.push({ kind: resolveFeishuMediaKind(messageType) });
+    out.push({ resourceId, kind: resolveFeishuMediaKind(messageType) });
     log?.(`feishu: failed to download ${messageType} media: ${String(err)}`);
   }
   return out;

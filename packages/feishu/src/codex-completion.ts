@@ -75,7 +75,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
  const controller = new AbortController();
  const signal = callbacks.signal ? AbortSignal.any([controller.signal, callbacks.signal]) : controller.signal;
  const recalled = (e: {accountId: string; chatId: string; messageId: string}) => {
-  if (e.accountId === p.accountId && e.chatId === p.chatId && (p.sourceMessageIds.includes(e.messageId)||questionAnswerSourceIds(p,stateDir).includes(e.messageId))) controller.abort();
+  if (e.accountId === p.accountId && e.chatId === p.chatId && (p.sourceMessageIds.includes(e.messageId)||p.attachmentSources?.some(source=>source.sourceMessageIds.includes(e.messageId))||questionAnswerSourceIds(p,stateDir).includes(e.messageId))) controller.abort();
  };
  sourceTaskBridge.recalls.add(recalled);
  let sent = false, suppressed = false, interrupted = false;

@@ -9,10 +9,34 @@ export function snapshotSourceAttachments(items,sourceMessageIds=[]) {
   if(typeof item.messageId!=='string'||typeof item.kind!=='string'||item.kind.length>32||
    !['available','unavailable'].includes(item.availability)||
    (item.path!==undefined&&(typeof item.path!=='string'||!isAbsolute(item.path)))||
+   (item.resourceId!==undefined&&(typeof item.resourceId!=='string'||!item.resourceId||item.resourceId.length>256))||
    (item.contentType!==undefined&&(typeof item.contentType!=='string'||item.contentType.length>256)))throw Error('Invalid trusted attachment manifest');
-  return {messageId:item.messageId,kind:item.kind,availability:item.availability,
+  return {messageId:item.messageId,kind:item.kind,availability:item.availability,...(item.resourceId?{resourceId:item.resourceId}:{}),
    ...(item.path?{path:item.path}:{}),...(item.contentType?{contentType:item.contentType}:{})};
  });
+}
+
+/** Transport paths, MIME guesses and download availability are not identity. */
+export function attachmentIdentity(items=[]) {
+ return items.map((item,index)=>[item.messageId,item.resourceId??`legacy:${item.kind}:${index}`]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
+export function attachmentSupplement(original,source) {
+ if(!original||!source||['accountId','chatId','sessionKey','senderId'].some(key=>!original[key]||source[key]!==original[key]))throw Error('Attachment supplement source does not match the original task');
+ if(typeof source.taskId!=='string'||!Number.isInteger(source.revision)||source.revision<0||!Array.isArray(source.sourceMessageIds)||!source.sourceMessageIds.length||!source.sourceMessageIds.every(id=>typeof id==='string'&&id))throw Error('Invalid attachment supplement source');
+ const attachments=snapshotSourceAttachments(source.attachments,source.sourceMessageIds);
+ const {taskId,revision,accountId,chatId,sessionKey,senderId}=source;
+ return {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds:[...source.sourceMessageIds],attachments};
+}
+
+export function jobSourceAttachments(provenance) {
+ const found=new Map();
+ for(const source of [provenance,...(provenance?.attachmentSources??[])]) {
+  if(!source)continue;
+  const attachments=inspectSourceAttachments(source.attachments,source.sourceMessageIds);
+  attachments.forEach((item,index)=>found.set(JSON.stringify([item.messageId,item.resourceId??`legacy:${item.kind}:${index}`]),item));
+ }
+ return [...found.values()];
 }
 
 /** A queued/resumed job must recheck the local file, not trust an old download. */

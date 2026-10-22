@@ -1,3 +1,4 @@
+import {attachmentIdentity,attachmentSupplement} from './source-attachments.mjs';
 import {projectFields,modelFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
 import {validateContextAnswers} from './context-request.mjs';
 import {workerEnvironment} from './plugin-environment.mjs';
@@ -11,7 +12,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 export function readJson(path){return JSON.parse(readFileSync(path,'utf8'));}
 export function writeJson(path,value){const tmp=path+'.'+randomUUID();writeFileSync(tmp,JSON.stringify(value),{mode:0o600});renameSync(tmp,path);}
-export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:provenance.attachments}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
+export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:attachmentIdentity(provenance.attachments)}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
 export function normalizeTags(tags=[]) {
  if(!Array.isArray(tags)||tags.length>50)throw Error('tags must be an array of at most 50 strings');
  const unique=new Map();
@@ -81,7 +82,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const questions=job.questions.map(q=>q.questionId===questionId?{...q,answer,...metadata,answeredAt:Date.now()}:q);
     request.resumeParams={...request.params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
     writeJson(requestFile,request);
-    const resumed={...job,questions,status:'queued',resumePending:true,heartbeatAt:Date.now(),progress:metadata.resumeReason==='user_wait_timeout'?'用户等待超时，跳过缺失信息并继续原任务':'Main 已回复，等待继续执行',notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined};
+    const attachmentSource=metadata.attachmentSource;
+    const attachmentSources=attachmentSource?[...(job.provenance?.attachmentSources??[]),{...attachmentSource,questionId}]:undefined;
+    const resumed={...job,...(attachmentSources?{provenance:{...job.provenance,attachmentSources}}:{}),questions,status:'queued',resumePending:true,heartbeatAt:Date.now(),progress:metadata.resumeReason==='user_wait_timeout'?'用户等待超时，跳过缺失信息并继续原任务':'Main 已回复，等待继续执行',notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined};
     delete resumed.contextRequest;delete resumed.finishedAt;delete resumed.result;
     appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:metadata.resumeReason==='user_wait_timeout'?'worker.user_wait_timeout':'main.context_reply',time:Date.now(),questionId,answer})+'\n',{mode:0o600});
     writeJson(join(root,jobId+'.json'),resumed);
@@ -153,7 +156,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   tick,
   start(){if(timer)return;tick();timer=setInterval(()=>{try{tick();}catch(error){logger?.error?.('Codex scheduler: '+error.message);}},500);timer.unref();},
   stop(){clearInterval(timer);timer=undefined;},
-  cancelSources(event) {return cancelMatching((p,job)=>p?.accountId===event.accountId && p?.chatId===event.chatId && (p.sourceMessageIds?.includes(event.messageId)||job.questions?.some(q=>q.answerSource==='user_text'&&q.answerMessageId===event.messageId)));},
+  cancelSources(event) {return cancelMatching((p,job)=>p?.accountId===event.accountId && p?.chatId===event.chatId && (p.sourceMessageIds?.includes(event.messageId)||p.attachmentSources?.some(source=>source.sourceMessageIds?.includes(event.messageId))||job.questions?.some(q=>q.answerSource==='user_text'&&q.answerMessageId===event.messageId)));},
   cancelTask(taskId,revision) {return cancelMatching(p=>p?.taskId===taskId && p?.revision===revision);},
   list(scope,options={}){return this.search(scope,options).jobs;},
   search(scope,{limit=10,query='',projectId,repository}={}){
@@ -201,7 +204,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(!authorize(job.provenance))throw Error('Original task authorization is no longer current');
     if(['cancelled','timed_out','failed'].includes(job.status))throw Error('Task cannot accept a reply');
     const previous=(job.questions??[]).find(q=>q.questionId===questionId);
-    if(!waitingForUser&&previous?.answer!==undefined){if(previous.answer!==answer)throw Error('Question already answered differently');return view(job);}
+    if(!waitingForUser&&previous?.answer!==undefined){
+     const incoming=answerMetadata.attachmentSource?attachmentSupplement(job.provenance,answerMetadata.attachmentSource):undefined;
+     if(previous.answer!==answer||(incoming&&JSON.stringify(attachmentIdentity(previous.attachmentSource?.attachments))!==JSON.stringify(attachmentIdentity(incoming.attachments))))throw Error('Question already answered differently');
+     return view(job);
+    }
     if(!waiting.has(job.status)||job.contextRequest?.questionId!==questionId)throw Error('No matching pending question');
     if(job.contextRequest.expiresAt<=Date.now()||existsSync(join(root,jobId+'.cancel')))throw Error('Question expired or task cancelled');
     const requestFile=join(root,jobId+'.request.json'),request=readJson(requestFile);
@@ -215,6 +222,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     }
     if(files().filter(queued).length>=limits().maxQueuedJobs)throw Error('Waiting queue is full; question remains pending');
     const metadata={answerSource:job.status==='awaiting_main'?'main_context':'user_text',...answerMetadata};
+    if(metadata.attachmentSource){
+     metadata.attachmentSource=attachmentSupplement(job.provenance,metadata.attachmentSource);
+     if((job.provenance?.attachmentSources?.length??0)>=64)throw Error('Attachment supplement limit reached');
+     if(!authorize({...job.provenance,attachmentSources:[...(job.provenance?.attachmentSources??[]),metadata.attachmentSource]}))throw Error('Attachment supplement authorization is no longer current');
+    }
     if(metadata.answerValues)metadata.answerValues=validateContextAnswers(job.contextRequest,metadata.answerValues);
     resumeLocked(job,request,answer,metadata);scheduleLocked();return view(get(jobId,scope));
    }finally{release();}

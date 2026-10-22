@@ -7,15 +7,17 @@ import { DatabaseSync } from "node:sqlite";
 import { getFeishuRuntime } from "./runtime.js";
 import type {FeishuChatType} from "./types.js";
 
-export type TaskAttachment = {messageId:string;kind:string;path?:string;contentType?:string;availability:"available"|"unavailable"};
+export type TaskAttachment = {messageId:string;kind:string;resourceId?:string;path?:string;contentType?:string;availability:"available"|"unavailable"};
 export type TaskSource = { messageId: string; text: string; kind?: "request" | "reference"; attachments?:Omit<TaskAttachment,"messageId">[] };
 export type RecallIdentity = { accountId: string; chatId: string; messageId: string };
+export type TaskAttachmentSource = Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"sessionKey"|"senderId"|"sourceMessageIds"> & {attachments?:TaskAttachment[];questionId?:string};
 export type TaskLease = {
   taskId: string; revision: number; accountId: string; chatId: string;
   sessionKey: string; senderId: string; sourceMessageIds: string[]; requestMessageIds?: string[]; rootId?: string; replyInThread?: boolean;
   chatType?: FeishuChatType;
   people?: TaskPeople;
   attachments?: TaskAttachment[];
+  attachmentSources?: TaskAttachmentSource[];
   signal: AbortSignal;
   /** Scheduler-created turns cannot grant new recurring authorization. */
   scheduledRequest?: boolean;
@@ -153,14 +155,20 @@ export class SourceTask {
 }
 
 /** Completion events remain reference results, never new business authorization. */
-export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds">, stateDir?: string): boolean {
+export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds"|"attachmentSources">, stateDir?: string): boolean {
  const db = database(stateDir);
  try {
-  const row = db.prepare("SELECT metadata FROM tasks WHERE id=?").get(p.taskId) as {metadata: string} | undefined;
-  if (!row) return false;
-  const current = JSON.parse(row.metadata);
-  if (current.revision !== p.revision || current.status === "cancelled" || current.accountId !== p.accountId || current.chatId !== p.chatId || current.sessionKey !== p.sessionKey || current.senderId !== p.senderId) return false;
-  if (current.sourceMessageIds.length !== p.sourceMessageIds.length || current.sourceMessageIds.some((id: string) => !p.sourceMessageIds.includes(id))) return false;
-  return p.sourceMessageIds.every(messageId => !db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(p.accountId, p.chatId, messageId));
+  const valid=(source:TaskAttachmentSource)=>{
+   if(typeof source.taskId!=="string"||!Array.isArray(source.sourceMessageIds))return false;
+   const row = db.prepare("SELECT metadata FROM tasks WHERE id=?").get(source.taskId) as {metadata: string} | undefined;
+   if (!row) return false;
+   const current = JSON.parse(row.metadata);
+   if (current.revision !== source.revision || current.status === "cancelled" || current.accountId !== source.accountId || current.chatId !== source.chatId || current.sessionKey !== source.sessionKey || current.senderId !== source.senderId) return false;
+   if (current.sourceMessageIds.length !== source.sourceMessageIds.length || current.sourceMessageIds.some((id: string) => !source.sourceMessageIds.includes(id))) return false;
+   return source.sourceMessageIds.every(messageId => !db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(source.accountId, source.chatId, messageId));
+  };
+  if(!valid(p))return false;
+  if(p.attachmentSources!==undefined&&(!Array.isArray(p.attachmentSources)||p.attachmentSources.length>64))return false;
+  return (p.attachmentSources??[]).every(source=>source&&source.accountId===p.accountId&&source.chatId===p.chatId&&source.sessionKey===p.sessionKey&&source.senderId===p.senderId&&valid(source));
  } finally {db.close();}
 }

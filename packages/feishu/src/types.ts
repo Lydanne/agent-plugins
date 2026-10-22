@@ -105,6 +105,8 @@ export interface FeishuProbeResult extends BaseProbeResult {
 }
 
 export type FeishuMediaInfo = {
+  /** Stable message-resource identity, independent of the download path. */
+  resourceId?: string;
   path?: string;
   contentType?: string;
   kind: Exclude<import("openclaw/plugin-sdk/media-runtime").MediaKind, "unknown">;

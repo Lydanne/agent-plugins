@@ -1,4 +1,4 @@
-import {attachmentPolicy} from './source-attachments.mjs';
+import {attachmentPolicy,attachmentSupplement} from './source-attachments.mjs';
 import {registerScheduledWorkerStatus} from './scheduled-status.mjs';
 import {installWorkerDiagnostics} from './diagnostic-source.mjs';
 import {bindingKey,compatibleLegacyBinding,projectFields,modelFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
@@ -181,11 +181,11 @@ async function queryInternal(params,context={}) {
   const sourceBound=hasSourceProvenance(original.provenance);
   if(sourceBound && (!completionBridge.authorizeReply || !completionBridge.authorizeReply(original.provenance)))throw Error('Original task authorization is no longer current');
   const continuationLease=bindSourceTask(context);
-  if(continuationLease)taskProvenance(continuationLease);
+  const continuationSource=continuationLease?taskProvenance(continuationLease):undefined;
   const requester={senderId:context.requesterSenderId,accountId:context.agentAccountId},authorize=p=>!hasSourceProvenance(p)||completionBridge.authorizeReply?.(p)===true;
   const submitted=params.action==='reply'&&sourceBound?globalThis[Symbol.for('ada.worker-question.v1')]?.submission?.({jobId:original.jobId,questionId:params.questionId,provenance:original.provenance}):undefined;
   if(params.answerBasis!==undefined&&(typeof params.answerBasis!=='string'||params.answerBasis.length>1000))throw Error('Invalid answer basis');
-  const resumed=params.action==='await_user'?await jobs.awaitUser(params.jobId,scope,params.questionId,requester,authorize,params.knownValues):await jobs.reply(params.jobId,scope,params.questionId,params.answer,requester,authorize,false,undefined,{answerSource:continuationLease?'user_text':'main_context',...submitted,...(params.answerBasis?{answerBasis:params.answerBasis}:{})});
+  const resumed=params.action==='await_user'?await jobs.awaitUser(params.jobId,scope,params.questionId,requester,authorize,params.knownValues):await jobs.reply(params.jobId,scope,params.questionId,params.answer,requester,authorize,false,undefined,{answerSource:continuationLease?'user_text':'main_context',...submitted,...(continuationSource?.attachments?.length?{attachmentSource:attachmentSupplement(original.provenance,continuationSource)}:{}),...(params.answerBasis?{answerBasis:params.answerBasis}:{})});
   // Directory refresh is metadata maintenance, never a prerequisite for accepting an answer.
   if(params.action==='reply'&&context.agentId&&original.project)void Promise.resolve().then(()=>getAgentRepoService(context,{required:false})?.prepareWorkerSkill?.()).catch(()=>console.error('Main Worker skill refresh failed; the accepted reply and previous skill remain available'));
   const newlyAnswered=params.action==='reply'&&['awaiting_main','awaiting_user'].includes(original.status);

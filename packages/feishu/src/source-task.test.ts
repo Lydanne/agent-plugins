@@ -6,6 +6,13 @@ const state = vi.hoisted(() => ({dir: "", unavailable:false}));
 vi.mock("./runtime.js", () => ({getFeishuRuntime: () => {if(state.unavailable)throw Error("Feishu runtime not initialized");return {state:{resolveStateDir:()=>state.dir}};}}));
 import {SourceTask, recallTaskSource, sourceTaskBridge, isCompletionSourceCurrent} from "./source-task.js";
 const scope={accountId:"a", chatId:"c", sessionKey:"s", senderId:"u"};
+it('supplemental attachment recall suppresses completed results as well as future replies',()=>{
+ const original=new SourceTask(scope,[{messageId:'original',text:'inspect'}]);opened.push(original);const p=original.begin();original.activate();original.close();
+ const extra=new SourceTask(scope,[{messageId:'supplement',text:'video',attachments:[{kind:'video',resourceId:'video',path:'/tmp/video.mp4',availability:'available'}]}]);opened.push(extra);const q=extra.begin();extra.activate();extra.close();
+ const bound={...p,attachmentSources:[q]};expect(isCompletionSourceCurrent(bound,state.dir)).toBe(true);
+ expect(isCompletionSourceCurrent({...bound,attachmentSources:[{...q,senderId:'other'}]},state.dir)).toBe(false);
+ recallTaskSource({...scope,messageId:'supplement'});expect(isCompletionSourceCurrent(p,state.dir)).toBe(true);expect(isCompletionSourceCurrent(bound,state.dir)).toBe(false);
+});
 it("binds attachments to their source message, includes late sources, and removes recalled media",()=>{
  const t=new SourceTask(scope,[{messageId:'picture',text:'check',attachments:[{kind:'image',path:'/tmp/image.png',availability:'available'}]},{messageId:'retained',text:'keep'}]);opened.push(t);
  const lease=t.begin();t.activate();expect(lease.attachments?.[0].messageId).toBe('picture');

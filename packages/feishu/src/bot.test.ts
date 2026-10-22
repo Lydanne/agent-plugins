@@ -2949,7 +2949,7 @@ describe("handleFeishuMessage command authorization", () => {
       };
     }>(mockTranscribeFirstAudio, 0, 0);
     expect(transcribeRequest.ctx?.media).toEqual([
-      { path: "/tmp/inbound-voice.ogg", contentType: "audio/ogg", kind: "audio" },
+      { path: "/tmp/inbound-voice.ogg", contentType: "audio/ogg", kind: "audio", resourceId: expect.stringMatching(/^[a-f0-9]{64}$/) },
     ]);
     expect(transcribeRequest.ctx?.ChatType).toBe("direct");
     expect(transcribeRequest.cfg?.channels?.feishu?.dmPolicy).toBe("open");
@@ -3014,7 +3014,7 @@ describe("handleFeishuMessage command authorization", () => {
       type?: string;
     }>(mockDownloadMessageResourceFeishu, 0, 0);
     expect(downloadRequest.messageId).toBe(messageId);
-    expect(handedOff).toEqual([{messageId,kind:'video',path:'/tmp/inbound-clip.mp4',contentType:'video/mp4',availability:'available'}]);
+    expect(handedOff).toEqual([{messageId,resourceId:expect.stringMatching(/^[a-f0-9]{64}$/),kind:'video',path:'/tmp/inbound-clip.mp4',contentType:'video/mp4',availability:'available'}]);
     expect(downloadRequest.fileKey).toBe(fileKey);
     expect(downloadRequest.type).toBe("file");
     expect(downloadRequest).toMatchObject({
@@ -3040,7 +3040,7 @@ describe("handleFeishuMessage command authorization", () => {
     });
     await dispatchMessage({cfg:createFeishuTestConfig({dmPolicy:'open'}),event:createFeishuTestEvent({messageId:'inspect-quote',chatId:'oc_dm',senderOpenId:'ou-sender',text:'inspect this video',message:{parent_id:'quote-video'}})});
     expect(mockGetMessageFeishu).toHaveBeenCalledWith(expect.objectContaining({messageId:'quote-video',includeResourceContent:true}));
-    expect(handedOff).toEqual([{messageId:'quote-video',kind:'video',path:'/tmp/inbound-clip.mp4',contentType:'video/mp4',availability:'available'}]);
+    expect(handedOff).toEqual([{messageId:'quote-video',resourceId:expect.stringMatching(/^[a-f0-9]{64}$/),kind:'video',path:'/tmp/inbound-clip.mp4',contentType:'video/mp4',availability:'available'}]);
   });
 
   it("forwards the message payload filename to the resource-saving owner", async () => {

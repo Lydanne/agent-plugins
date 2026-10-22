@@ -1,4 +1,4 @@
-import {inspectSourceAttachments} from './source-attachments.mjs';
+import {jobSourceAttachments} from './source-attachments.mjs';
 import {randomUUID} from 'node:crypto';
 import {captureReports} from './completion.mjs';
 import {finalizeJobReport} from './task-report.mjs';
@@ -24,7 +24,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   checkCancellation();controller.signal.throwIfAborted();
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});persist();
-  const attachments=inspectSourceAttachments(job.provenance?.attachments,job.provenance?.sourceMessageIds);
+  const attachments=jobSourceAttachments(job.provenance);
   const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onProgress:progress=>{job={...job,...progress};persist();}},runtime);
   checkCancellation();controller.signal.throwIfAborted();
   job.result=response;

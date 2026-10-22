@@ -8,7 +8,7 @@ import plugin,{query} from './index.mjs';
 import {readJson,writeJson,requestKeyFor} from './jobs.mjs';
 import {registerAgentRepoService} from './dist/agent-repo-api.mjs';
 import {completionBridge} from './completion.mjs';
-import {hasSourceProvenance} from './source-tasks.mjs';
+import {hasSourceProvenance,sourceTaskBridge} from './source-tasks.mjs';
 
 for(const behavior of ['reject','hang'])for(const localMetadata of [false,true])test(`Main reply persists when skill refreshes ${behavior} (local metadata=${localMetadata})`,async t=>{
  const state=await mkdtemp(join(tmpdir(),'worker-reply-refresh-')),root=join(state,'jobs'),scope='agent:main:review',id=randomUUID();
@@ -83,4 +83,31 @@ test('real reply entry retries failed presentation without replaying the busines
   assert.deepEqual(readJson(join(root,id+'.json')),saved);assert.deepEqual(readJson(join(root,id+'.request.json')),request);
   await assert.rejects(query({...reply,answer:'different'},context));assert.equal(calls,2);
  }finally{completionBridge.authorizeReply=previousAuthorize;completionBridge.contextState=previousPresentation;await rm(state,{recursive:true,force:true});}
+});
+
+test('real reply entry binds current trusted media to the original job',async()=>{
+ const state=await mkdtemp(join(tmpdir(),'worker-reply-media-')),root=join(state,'jobs'),scope='agent:main:media',id=randomUUID(),leaseKey=JSON.stringify(['a',scope]);
+ const previousAuthorize=completionBridge.authorizeReply,previousPresentation=completionBridge.contextState,previousLease=sourceTaskBridge.leases.get(leaseKey);
+ try{
+  await mkdir(join(root,'active'),{recursive:true});
+  plugin.register({pluginConfig:{state,cwd:state,skillsEnabled:false},registerService(){},registerTool(){}});
+  const provenance={taskId:'original',revision:0,senderId:'alice',accountId:'a',chatId:'chat',sessionKey:scope,sourceMessageIds:['message'],requestMessageIds:['message']};
+  completionBridge.authorizeReply=()=>true;
+  completionBridge.contextState=async()=>({interactive:false});
+  const params={action:'run',topic:'test',task:'read',context:'fixture',constraints:'read only'},question={questionId:randomUUID(),question:'视频？',reason:'缺少',progress:'准备',expiresAt:Date.now()+60000},requestKey=requestKeyFor(params,scope,provenance);
+  writeJson(join(root,id+'.json'),{jobId:id,scope:createHash('sha256').update(scope).digest('hex'),requestKey,provenance,topic:'test',schedulerVersion:1,status:'awaiting_main',createdAt:Date.now(),contextRequest:question,questions:[question]});
+  writeJson(join(root,id+'.request.json'),{params,scope});
+  const attachment={messageId:'new-media',resourceId:'video-resource',kind:'video',availability:'available',path:join(state,'video.mp4')};
+  sourceTaskBridge.leases.set(leaseKey,{...provenance,taskId:'supplement',sourceMessageIds:['new-media'],requestMessageIds:['new-media'],attachments:[attachment],signal:new AbortController().signal});
+  const result=JSON.parse((await query({action:'reply',jobId:id,questionId:question.questionId,answer:'视频已补充'},{agentId:'main',sessionKey:scope,requesterSenderId:'alice',agentAccountId:'a'})).content[0].text);
+  assert.equal(result.accepted,true);
+  const saved=readJson(join(root,id+'.json'));
+  assert.equal(saved.requestKey,requestKey);assert.equal(saved.provenance.taskId,'original');
+  assert.deepEqual(saved.provenance.sourceMessageIds,['message']);
+  assert.deepEqual(saved.provenance.attachmentSources,[{taskId:'supplement',revision:0,accountId:'a',chatId:'chat',sessionKey:scope,senderId:'alice',sourceMessageIds:['new-media'],attachments:[attachment],questionId:question.questionId}]);
+ }finally{
+  completionBridge.authorizeReply=previousAuthorize;completionBridge.contextState=previousPresentation;
+  if(previousLease)sourceTaskBridge.leases.set(leaseKey,previousLease);else sourceTaskBridge.leases.delete(leaseKey);
+  await rm(state,{recursive:true,force:true});
+ }
 });
