@@ -7,13 +7,15 @@ import { DatabaseSync } from "node:sqlite";
 import { getFeishuRuntime } from "./runtime.js";
 import type {FeishuChatType} from "./types.js";
 
-export type TaskSource = { messageId: string; text: string; kind?: "request" | "reference" };
+export type TaskAttachment = {messageId:string;kind:string;path?:string;contentType?:string;availability:"available"|"unavailable"};
+export type TaskSource = { messageId: string; text: string; kind?: "request" | "reference"; attachments?:Omit<TaskAttachment,"messageId">[] };
 export type RecallIdentity = { accountId: string; chatId: string; messageId: string };
 export type TaskLease = {
   taskId: string; revision: number; accountId: string; chatId: string;
   sessionKey: string; senderId: string; sourceMessageIds: string[]; requestMessageIds?: string[]; rootId?: string; replyInThread?: boolean;
   chatType?: FeishuChatType;
   people?: TaskPeople;
+  attachments?: TaskAttachment[];
   signal: AbortSignal;
   /** Scheduler-created turns cannot grant new recurring authorization. */
   scheduledRequest?: boolean;
@@ -94,6 +96,7 @@ export class SourceTask {
   }
   remaining() { return [...this.sources.values()].filter(source => !this.withdrawn.has(source.messageId)); }
   remainingRequests() { return this.remaining().filter(source => source.kind !== "reference"); }
+  attachments(): TaskAttachment[] {return this.remaining().flatMap(source=>(source.attachments??[]).map(item=>({...item,messageId:source.messageId})));}
   private persist() {
     const db = database();
     try { db.prepare("INSERT OR REPLACE INTO tasks VALUES (?,?,?)").run(this.id, JSON.stringify({
@@ -103,13 +106,14 @@ export class SourceTask {
   }
   add(source: TaskSource) {
     this.sources.set(source.messageId, source);
-    if (this.lease) { this.lease.sourceMessageIds = this.remaining().map(s => s.messageId); this.lease.requestMessageIds = this.remainingRequests().map(s => s.messageId); }
+    if (this.lease) { this.lease.sourceMessageIds = this.remaining().map(s => s.messageId); this.lease.requestMessageIds = this.remainingRequests().map(s => s.messageId); this.lease.attachments=this.attachments(); }
     if (isTaskSourceRecalled({ ...this.scope, messageId: source.messageId })) this.recall({ ...this.scope, messageId: source.messageId });
     this.persist();
   }
   recall(event: RecallIdentity) {
     if (event.accountId !== this.scope.accountId || event.chatId !== this.scope.chatId || !this.sources.has(event.messageId) || this.withdrawn.has(event.messageId)) return;
     this.withdrawn.add(event.messageId);
+    if(this.lease)this.lease.attachments=this.attachments();
     this.revision++;
     this.status = this.remainingRequests().length ? "adjusting" : "cancelled";
     this.controller?.abort();
@@ -120,6 +124,7 @@ export class SourceTask {
     this.controller = new AbortController();
     if (this.stopped.signal.aborted) this.controller.abort();
     this.lease = { ...this.scope, taskId: this.id, revision: this.revision,
+      ...(this.attachments().length?{attachments:this.attachments()}:{}),
       sourceMessageIds: this.remaining().map(source => source.messageId), requestMessageIds: this.remainingRequests().map(s => s.messageId), signal: this.controller.signal };
     this.status = this.stopped.signal.aborted ? "cancelled" : "queued";
     this.persist();

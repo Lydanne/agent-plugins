@@ -1,5 +1,7 @@
 # agent-worker
 
+飞书来源任务自动携带附件：渠道将当前消息及有效直接引用中的已下载媒体绑定到 source lease，`run` 保存独立清单，后台通过 `business_task.attachments` 读取；不增加模型可指定路径的工具参数。附件包含来源消息、类型、同机绝对路径和可用状态，Worker 在每次启动/恢复时重新检查文件。下载失败或缓存清理后保留缺失状态，不将文件可读误当成内容已分析。此协议支持共用本地文件系统的 Main/Worker，不提供远程文件传输或缓存永久保留；撤回与取消沿用来源版本校验。
+
 可通过 OpenClaw UI 配置的本地 Codex 执行插件，插件 ID、包名和源码目录为 `agent-worker`，工具名为 `agent_worker`。OpenClaw 主会话负责角色、任务和授权，Worker 负责执行、核验与完整客观报告。历史 CodexQuery/codex_query 名称仅用于兼容说明，当前模型调用使用 agent_worker。
 
 ## 快速开始：安装与配置

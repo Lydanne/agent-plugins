@@ -6,6 +6,14 @@ const state = vi.hoisted(() => ({dir: "", unavailable:false}));
 vi.mock("./runtime.js", () => ({getFeishuRuntime: () => {if(state.unavailable)throw Error("Feishu runtime not initialized");return {state:{resolveStateDir:()=>state.dir}};}}));
 import {SourceTask, recallTaskSource, sourceTaskBridge, isCompletionSourceCurrent} from "./source-task.js";
 const scope={accountId:"a", chatId:"c", sessionKey:"s", senderId:"u"};
+it("binds attachments to their source message, includes late sources, and removes recalled media",()=>{
+ const t=new SourceTask(scope,[{messageId:'picture',text:'check',attachments:[{kind:'image',path:'/tmp/image.png',availability:'available'}]},{messageId:'retained',text:'keep'}]);opened.push(t);
+ const lease=t.begin();t.activate();expect(lease.attachments?.[0].messageId).toBe('picture');
+ t.add({messageId:'video',text:'also inspect',attachments:[{kind:'video',availability:'unavailable'}]});
+ expect(lease.attachments?.map(item=>item.messageId)).toEqual(['picture','video']);
+ recallTaskSource({...scope,messageId:'picture'});expect(lease.signal.aborted).toBe(true);
+ t.endRevision();const next=t.begin();expect(next.attachments).toEqual([{messageId:'video',kind:'video',availability:'unavailable'}]);
+});
 let opened: SourceTask[];
 const task=(sources=[{messageId:"one",text:"first"},{messageId:"two",text:"second"}])=>{
   const result=new SourceTask(scope,sources);opened.push(result);return result;

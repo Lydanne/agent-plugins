@@ -75,6 +75,8 @@ export function isFeishuGroupChatType(chatType: FeishuChatType | undefined): boo
 }
 
 export type FeishuMessageInfo = {
+  /** Resource JSON only when explicitly requested by a trusted attachment consumer. */
+  resourceContent?: string;
   messageId: string;
   chatId: string;
   /** Native mentions resolved to OpenIDs, independent of rendered message text. */

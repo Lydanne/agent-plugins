@@ -2090,10 +2090,21 @@ export async function handleFeishuMessage(params: {
         ...effectiveCfg,
         messages: { ...effectiveCfg.messages, queue: { ...effectiveCfg.messages?.queue, mode: "steer" as const } },
       } : effectiveCfg;
+      const taskMedia=new Map<string,FeishuMediaInfo[]>([[ctx.messageId,mediaList]]);
+      // Only the direct, already-authorized quote is fetched. Group history and
+      // quote ancestors do not grant bulk attachment access.
+      const directQuote=quoteChainMessages.find(message=>message.messageId===ctx.parentId);
+      if(!steering && ctx.senderType!=="bot" && !isControlTurn && directQuote && ["image","file","audio","video","media","post"].includes(directQuote.contentType)) {
+        try {
+          const resource=await getMessageFeishu({cfg,messageId:directQuote.messageId,accountId:account.accountId,includeResourceContent:true});
+          if(resource?.chatId===ctx.chatId && resource.resourceContent!==undefined)taskMedia.set(directQuote.messageId,await resolveFeishuMediaList({cfg,messageId:directQuote.messageId,messageType:resource.contentType,content:resource.resourceContent,maxBytes:mediaMaxBytes,log,accountId:account.accountId}));
+          else taskMedia.set(directQuote.messageId,[{kind:"document"}]);
+        }catch{taskMedia.set(directQuote.messageId,[{kind:"document"}]);}
+      }
       const makeSourceTask = () => new SourceTask({accountId: account.accountId, chatId: ctx.chatId, chatType:ctx.chatType, sessionKey: route.sessionKey, senderId: ctx.senderOpenId, rootId:ctx.rootId, replyInThread, people:taskPeopleByAgent.get(route.agentId)}, [
         ...(params.sourceMessages ?? [{messageId: ctx.messageId, text: ctx.content, kind: "request" as const}]),
         ...quoteChainMessages.map(message => ({messageId: message.messageId, text: message.content, kind: "reference" as const})),
-      ]);
+      ].map(source=>({...source,...(taskMedia.has(source.messageId)?{attachments:taskMedia.get(source.messageId)!.map(media=>({kind:media.kind,...(media.path?{path:media.path}:{}),...(media.contentType?{contentType:media.contentType}:{}),availability:media.path?"available" as const:"unavailable" as const}))}:{})})));
       let sourceTask = !steering && ctx.senderType !== "bot" && !isControlTurn ? makeSourceTask() : undefined;
       let attemptedRevision: number | undefined;
       const originalPayload = { ...ctxPayload };

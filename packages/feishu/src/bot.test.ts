@@ -2993,6 +2993,11 @@ describe("handleFeishuMessage command authorization", () => {
     },
   ])("$name", async ({ messageId, messageType, fileKey, imageKey, fileName }) => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
+    let handedOff: unknown;
+    mockDispatchReplyFromConfig.mockImplementationOnce(async()=>{
+      handedOff=[...sourceTaskBridge.leases.values()].find(lease=>lease.sourceMessageIds.includes(messageId))?.attachments;
+      return {queuedFinal:false,counts:{final:1}};
+    });
     await dispatchMessage({
       cfg: createFeishuTestConfig({ dmPolicy: "open" }),
       event: createFeishuTestEvent({
@@ -3009,6 +3014,7 @@ describe("handleFeishuMessage command authorization", () => {
       type?: string;
     }>(mockDownloadMessageResourceFeishu, 0, 0);
     expect(downloadRequest.messageId).toBe(messageId);
+    expect(handedOff).toEqual([{messageId,kind:'video',path:'/tmp/inbound-clip.mp4',contentType:'video/mp4',availability:'available'}]);
     expect(downloadRequest.fileKey).toBe(fileKey);
     expect(downloadRequest.type).toBe("file");
     expect(downloadRequest).toMatchObject({
@@ -3021,6 +3027,20 @@ describe("handleFeishuMessage command authorization", () => {
         MediaTypes: ["video/mp4"],
       }),
     );
+  });
+
+  it("binds direct quoted media to the quote message rather than the current request",async()=>{
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+    const quote={messageId:'quote-video',chatId:'oc_dm',senderId:'ou-sender',senderType:'user',content:'[media message]',contentType:'media',resourceContent:JSON.stringify({file_key:'quote-key',file_name:'clip.mp4'})};
+    mockGetMessageFeishu.mockResolvedValue(quote);
+    let handedOff:unknown;
+    mockDispatchReplyFromConfig.mockImplementationOnce(async()=>{
+      handedOff=[...sourceTaskBridge.leases.values()].find(lease=>lease.sourceMessageIds.includes('inspect-quote'))?.attachments;
+      return {queuedFinal:false,counts:{final:1}};
+    });
+    await dispatchMessage({cfg:createFeishuTestConfig({dmPolicy:'open'}),event:createFeishuTestEvent({messageId:'inspect-quote',chatId:'oc_dm',senderOpenId:'ou-sender',text:'inspect this video',message:{parent_id:'quote-video'}})});
+    expect(mockGetMessageFeishu).toHaveBeenCalledWith(expect.objectContaining({messageId:'quote-video',includeResourceContent:true}));
+    expect(handedOff).toEqual([{messageId:'quote-video',kind:'video',path:'/tmp/inbound-clip.mp4',contentType:'video/mp4',availability:'available'}]);
   });
 
   it("forwards the message payload filename to the resource-saving owner", async () => {

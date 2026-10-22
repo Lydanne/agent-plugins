@@ -1,5 +1,6 @@
 // Versioned in-process contract shared with the Feishu channel. Tool parameters
 // never supply provenance or choose the task to cancel.
+import {snapshotSourceAttachments} from './source-attachments.mjs';
 const key = Symbol.for('ada.source-tasks.v1');
 export const sourceTaskBridge = globalThis[key] ??= {leases: new Map(), recalls: new Set()};
 // Agent/session metadata is also stored on local operator jobs. Only channel
@@ -19,7 +20,8 @@ export function taskProvenance(lease) {
  lease.signal.throwIfAborted();
  if(sourceTaskBridge.leases.get(JSON.stringify([lease.accountId,lease.sessionKey]))!==lease) throw Error("Source task is no longer the active run");
  const {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds,requestMessageIds,rootId,replyInThread}=lease;
- return {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds:[...sourceMessageIds],requestMessageIds:[...(requestMessageIds??[])],...(['p2p','private','group','topic_group'].includes(lease.chatType)?{chatType:lease.chatType}:{}),...(rootId?{rootId}:{}),...(replyInThread!==undefined?{replyInThread}:{}),...(lease.people?{people:structuredClone(lease.people)}:{})};
+ const attachments=snapshotSourceAttachments(lease.attachments,sourceMessageIds);
+ return {taskId,revision,accountId,chatId,sessionKey,senderId,...(attachments.length?{attachments}:{}),sourceMessageIds:[...sourceMessageIds],requestMessageIds:[...(requestMessageIds??[])],...(['p2p','private','group','topic_group'].includes(lease.chatType)?{chatType:lease.chatType}:{}),...(rootId?{rootId}:{}),...(replyInThread!==undefined?{replyInThread}:{}),...(lease.people?{people:structuredClone(lease.people)}:{})};
 }
 export function rememberAsyncJob(lease, job) {
  if (!lease || !job.jobId || !job.notification ||

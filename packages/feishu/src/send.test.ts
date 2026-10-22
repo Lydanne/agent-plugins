@@ -124,6 +124,14 @@ beforeEach(() => {
 });
 
 describe("getMessageFeishu", () => {
+  it("exposes raw resource JSON only to an explicitly opted-in consumer",async()=>{
+    const raw=JSON.stringify({file_key:'video-key',file_name:'clip.mp4'});
+    mockClientGet.mockResolvedValue({code:0,data:{items:[{message_id:'media',chat_id:'chat',msg_type:'media',body:{content:raw}}]}});
+    const ordinary=await getMessageFeishu({cfg:{} as ClawdbotConfig,messageId:'media'});
+    expect(ordinary?.resourceContent).toBeUndefined();
+    const resource=await getMessageFeishu({cfg:{} as ClawdbotConfig,messageId:'media',includeResourceContent:true});
+    expect(resource?.resourceContent).toBe(raw);expect(resource?.contentType).toBe('media');
+  });
   function expectTextReceipt(
     result: Awaited<ReturnType<typeof sendMessageFeishu>>,
     messageId: string,

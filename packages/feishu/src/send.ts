@@ -312,6 +312,7 @@ export async function getMessageFeishu(params: {
   cfg: ClawdbotConfig;
   messageId: string;
   accountId?: string;
+  includeResourceContent?: boolean;
 }): Promise<FeishuMessageInfo | null> {
   const { cfg, messageId, accountId } = params;
   const account = resolveFeishuRuntimeAccount({ cfg, accountId });
@@ -353,7 +354,7 @@ export async function getMessageFeishu(params: {
         content: parseMergeForwardContent(responseItems),
       };
     }
-    return parsedItem;
+    return params.includeResourceContent ? {...parsedItem,resourceContent:item.body?.content??""} : parsedItem;
   } catch {
     return null;
   }
