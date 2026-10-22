@@ -343,6 +343,23 @@ it('rejects a standalone host fallback rather than accepting it as a completed r
  expect(mocks.send).not.toHaveBeenCalled();expect(received).not.toHaveBeenCalled();
 });
 
+it.each([
+ {text:"⚠️ OpenClaw couldn't finish this reply. For details, open Settings → Logs."},
+ {text:'Main failed before reply',isError:true},
+ {text:'The runtime is replacing a plugin',isStatusNotice:true},
+])('keeps failed Main output out of cards, receipts and the retry outbox: %j',async payload=>{
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original-card'});
+ mocks.run.mockImplementation(async({adapter})=>{
+  try {await adapter.resolveTurn().delivery.deliver(payload,{kind:'final'});}catch{}
+ });
+ const beforeSend=vi.fn(),onReceipt=vi.fn();
+ await expect(deliverCodexCompletion(event,{beforeSend,onReceipt})).rejects.toThrow('no-visible-reply fallback');
+ expect(beforeSend).not.toHaveBeenCalled();expect(onReceipt).not.toHaveBeenCalled();
+ expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();
+ expect(readPreparedCompletion(cardStateDir,event,'current')).toBeUndefined();
+ expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBeUndefined();
+});
+
 it('does not finalize a task or send a mention for commentary or block payloads',async()=>{
  mocks.run.mockImplementation(async({adapter})=>{
   const deliver=adapter.resolveTurn().delivery.deliver;

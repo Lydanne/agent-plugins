@@ -108,7 +108,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
     // This shares the exact FIFO used by human turns. No steer or interrupt mode.
     const completionCfg = {...cfg, messages: {...cfg.messages, queue: {...cfg.messages?.queue, mode: "followup" as const}}};
     let deliveryError: unknown;
-    const deliverResult = async (payload: {text?: string; isReasoning?: boolean; isCommentary?: boolean; mediaUrl?: string; mediaUrls?: string[]}, info: {kind: string}) => {
+    const deliverResult = async (payload: {text?: string; isReasoning?: boolean; isCommentary?: boolean; isError?: boolean; isStatusNotice?: boolean; mediaUrl?: string; mediaUrls?: string[]}, info: {kind: string}) => {
      // Host dispatch may swallow a delivery failure and subsequently deliver a fallback.
      // Neither that fallback nor a partial/status reply is an accepted task report.
      if (deliveryError) throw deliveryError;
@@ -118,7 +118,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      const replyText = payload.text ?? "";
      const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
      if (!replyText && (!hasMedia || questionTurn)) return;
-     if (replyText.startsWith("⚠️ OpenClaw couldn't produce or deliver a reply.")) throw Error("Codex completion received the host's no-visible-reply fallback");
+     if (payload.isError || payload.isStatusNotice || /^⚠️\s*OpenClaw couldn't (?:produce or deliver|finish) (?:a|this) reply\./.test(replyText.trimStart())) throw Error("Codex completion received the host's no-visible-reply fallback");
      if (!isCompletionSourceAndAnswersCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
      if(questionTurn){
       const question=readQuestionCard(stateDir,event.contextRequest!.questionId);
