@@ -1,3 +1,4 @@
+import {mountScheduleManager} from './schedule-manager.mjs';
 import {mountLogConsole} from './log-console.mjs';
 import {mountSkillMaintenance} from './skill-maintenance-page.mjs';
 import {mountWorkerPage,renderWorkerSummary} from './worker-page.mjs';
@@ -17,7 +18,9 @@ export function mountProjects(container,initial){
  const root=element('section',undefined,'ar-panel');root.setAttribute('aria-label','Agent Repo 项目、技能与子代理');container.append(root);
  const safe=value=>context.host.redact(String(value??'')),target=()=>currentUiTarget(context);
  const panelId='ar-skills-'+(++panelSequence);
- let logDialog=null,logConsole=null,peopleDialog=null;
+ let logDialog=null,logConsole=null,peopleDialog=null,scheduleManager=null;
+ function closeScheduleManager(){scheduleManager?.dispose();scheduleManager=null;}
+ function openScheduleManager(){closeScheduleManager();scheduleManager=mountScheduleManager(container,{invoke,canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{scheduleManager=null;},onChanged:()=>refresh()});}
  let maintenanceView=null;
  function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
@@ -34,7 +37,7 @@ export function mountProjects(container,initial){
   else {skillArea.append(maintenanceView.element);maintenanceView.setSources(sources,projectId+':'+repository);}
   subagentArea=element('div');subagentArea.append(subagents(projectId?(detail?.subagentSources??[]).filter(source=>source.source!=='agent'):[list.agentSubagents].filter(Boolean)));subagentArea.hidden=maintenanceView.view==='cli';skillArea.append(subagentArea);
  }
- function reset(){closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
+ function reset(){closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
  async function invoke(action,payload){const current=context,selected=projectInspectionTarget(context);return readInspectionResponse(async(name,data)=>{current.signal.throwIfAborted();if(current!==context)throw Error('Agent 已切换');return current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data});},action,payload);}
  async function refresh({scanList=true}={}){
   if(disposed||!context.presented||context.signal.aborted||!context.host.connection.canRead||!target().agentId)return;
@@ -87,6 +90,7 @@ export function mountProjects(container,initial){
   if(!Array.isArray(list.scheduledTasks))return null;
   const tasks=scheduledTasks(),section=element('section',undefined,'ar-sync-history'),heading=element('div',undefined,'ar-sync-heading');
   heading.append(element('h3','定时任务'),element('span',tasks.length+' 个任务','ar-meta'));section.append(heading);
+  heading.append(button('管理群任务',openScheduleManager));
   if(list.scheduledRequestsAvailable===false)section.append(element('p','OpenClaw 联动任务服务暂不可读取，以下列表可能不完整。','ar-warning'));
   if(!tasks.length)section.append(element('p','暂无定时任务','ar-muted'));
   for(const task of tasks){
@@ -147,7 +151,7 @@ export function mountProjects(container,initial){
  }
  function taskSettings(task){
   const section=element('section',undefined,'ar-task-settings'),data=element('dl',undefined,'ar-task-config');
-  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['原群',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));section.append(data,element('p','此处只读展示；原生调度成功或 Main 接纳不代表业务完成。','ar-muted'));return section;
+  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['原群',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));section.append(data,element('p',task.type==='scheduled-request'?'在任务列表点击“管理群任务”可修改计划；原生调度成功或 Main 接纳不代表业务完成。':'此处只读展示；系统同步计划由部署配置管理。','ar-muted'));return section;
  }
  function renderSyncDialog(){
   if(!syncDialog||!syncTaskId)return;
@@ -256,14 +260,14 @@ export function mountProjects(container,initial){
  }
  const stopNavigation=subscribeWorkerNavigation(()=>{if(!disposed)render();}),stopHost=context.host.subscribe(()=>{if(disposed)return;const next=target(),read=context.host.connection.canRead,write=context.host.connection.canWrite,changed=next.agentId!==observedTarget.agentId||next.sessionKey!==observedTarget.sessionKey||read!==observedRead||write!==observedWrite;observedTarget=next;observedRead=read;observedWrite=write;if(changed){reset();render();refresh();}});
  render();refresh();
- return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
+ return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
 }
 const managementModules=[
  {id:'overview',label:'概览'},
  {id:'projects',label:'项目与技能',description:'查看项目登记、仓库状态、技能和子代理定义。'},
  {id:'worker',label:'Worker 任务',description:'跨会话查看此 Agent 的任务状态、来源和执行详情。'},
  {id:'entities',label:'实体资料库',description:'统一检索人员、组织、服务与资产，查看 AI 和程序同步的来源。'},
- {id:'tasks',label:'定时任务',description:'查看仓库同步和 OpenClaw 联动群任务的计划、状态和运行记录。'},
+ {id:'tasks',label:'定时任务',description:'管理 OpenClaw 联动群任务，查看仓库同步计划和运行记录。'},
  {id:'logs',label:'日志',description:'统一查看插件与 Worker 日志，按需开启实时调试。'},
 ];
 function mountOverview(container,context,agentId,choose){

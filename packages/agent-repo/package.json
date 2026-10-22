@@ -63,7 +63,8 @@
     "log-console.mjs",
     "diagnostic-source.mjs",
     "THIRD_PARTY_NOTICES.md",
-    "scheduled-requests.mjs"
+    "scheduled-requests.mjs",
+    "schedule-manager.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

@@ -1,28 +1,27 @@
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 
 // Only installed channel code may supply trusted provenance or dispatch a run.
 export const scheduledRequestBridge=globalThis[Symbol.for('ada.scheduled-requests.v1')]??={};
 const tickScript='return {};';
+const revision=r=>createHash('sha256').update(JSON.stringify([r.id,r.name,r.schedule,r.status,r.managementRevision??0])).digest('hex');
 const text=(v,max)=>typeof v==='string'&&v.trim()&&v.length<=max;
 export function createScheduledRequests({stateDir,getCron,bridge=scheduledRequestBridge,now=Date.now}) {
  mkdirSync(stateDir,{recursive:true,mode:0o700});
  const file=join(stateDir,'scheduled-requests.sqlite'),db=new DatabaseSync(file);chmodSync(file,0o600);
  db.exec(`PRAGMA busy_timeout=3000;
  CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, body TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS runs(job TEXT, slot INTEGER, status TEXT, detail TEXT, PRIMARY KEY(job,slot));`);
+ CREATE TABLE IF NOT EXISTS runs(job TEXT, slot INTEGER, status TEXT, detail TEXT, PRIMARY KEY(job,slot));
+ CREATE TABLE IF NOT EXISTS operations(agent TEXT, id TEXT, input TEXT, status TEXT, result TEXT, created INTEGER, PRIMARY KEY(agent,id));`);
  const all=()=>db.prepare('SELECT body FROM requests').all().map(r=>JSON.parse(r.body));
  const save=r=>db.prepare('INSERT OR REPLACE INTO requests VALUES (?,?)').run(r.id,JSON.stringify(r));
  const owned=(r,p)=>['agentId','accountId','chatId','sessionKey','senderId','sessionId'].every(k=>r.source[k]===p[k]);
  const snapshot=context=>{const source=bridge.capture?.(context);if(!source)throw Error('A current human Feishu source is required');return structuredClone(source);};
  const cron=()=>{const c=getCron();if(!c)throw Error('Native scheduler is unavailable');return c;};
- const publicRecord=r=>({id:r.id,jobId:r.jobId,name:r.name,task:r.task,projectId:r.projectId,schedule:r.schedule,status:r.status,reason:r.reason,lastRun:r.lastRun,runs:db.prepare('SELECT slot,status FROM runs WHERE job=? ORDER BY slot DESC LIMIT 10').all(r.jobId??'')});
- async function manage(params,context){
-  const source=snapshot(context);
-  if(params.action==='list')return {tasks:all().filter(r=>owned(r,source)).map(publicRecord)};
-  if(params.action==='create'){
+ const publicRecord=r=>({id:r.id,jobId:r.jobId,name:r.name,task:r.task,constraints:r.constraints,projectId:r.projectId,schedule:r.schedule,status:r.status,reason:r.reason,lastRun:r.lastRun,runs:db.prepare('SELECT slot,status FROM runs WHERE job=? ORDER BY slot DESC LIMIT 10').all(r.jobId??'')});
+ async function createRequest(params,source,paused=false){
    const previous=all().find(r=>owned(r,source)&&r.requestId===params.requestId);
    if(!text(params.requestId,160)||!text(params.name,160)||!text(params.task,4000)||!text(params.constraints,4000)||!text(params.projectId,64))throw Error('requestId, name, projectId, task and constraints are required');
    let schedule;
@@ -37,20 +36,24 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
     const job=await cron().add({name:'Ada: '+r.name,description:'agent-repo scheduled request '+r.id,agentId:source.agentId,enabled:false,schedule,sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script:tickScript,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});
     if(!job?.id)throw Error('Scheduler did not return a job ID');r.jobId=job.id;r.schedule=job.schedule??schedule;r.status='paused';save(r);
     if(!bridge.current?.(source))throw Error('Source authorization changed during creation');
-    r.status='enabled';save(r);await cron().update(job.id,{enabled:true});return publicRecord(r);
+    if(!paused){r.status='enabled';save(r);await cron().update(job.id,{enabled:true});}return publicRecord(r);
    }catch(error){r.status='needs_review';save(r);throw Error('Schedule creation is incomplete; inspect the saved request before retrying',{cause:error});}
+ }
+ async function manage(params,context){
+  const source=snapshot(context);
+  if(params.action==='list')return {tasks:all().filter(r=>owned(r,source)).map(publicRecord)};
+  if(params.action==='create'){
+   return createRequest(params,source);
   }
   const r=all().find(r=>r.id===params.id&&owned(r,source));if(!r)throw Error('Schedule not found in this requester and conversation');
   if(params.action!=='pause'&&params.action!=='remove')throw Error('Unsupported schedule action');
-  // Persist revocation before an awaited scheduler call; late events cannot start new work.
-  r.status=params.action==='pause'?'paused':'removed';save(r);
-  if(r.jobId){if(params.action==='remove')await cron().remove(r.jobId);else await cron().update(r.jobId,{enabled:false});}
-  return publicRecord(r);
+  await administer(source.agentId,{action:params.action,id:r.id,expectedRevision:revision(r),requestId:randomUUID(),confirmed:true});
+  return publicRecord(getOwned(source.agentId,r.id));
  }
  async function fire(event,signal){
   if(event.action!=='finished'||event.status!=='ok'||!Number.isSafeInteger(event.runAtMs))return;
   const r=all().find(r=>r.jobId===event.jobId);if(!r||r.status!=='enabled')return;
-  if(event.agentId!==r.source.agentId)return;
+  if(event.agentId!==r.source.agentId||event.runAtMs<(r.acceptAfter??0))return;
   if(r.lastRun?.jobIds?.length&&(!bridge.jobsActive||bridge.jobsActive(r.lastRun.jobIds,r.source)))return;
   const jobs=await cron().list({includeDisabled:true});const job=jobs.find(j=>j.id===r.jobId);
   // A user-edited native job cannot silently change the authorized plan or executor.
@@ -62,15 +65,87 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   // Atomic claim survives duplicates, concurrent callbacks and restart. Unknown turns are never replayed.
   if(!db.prepare('INSERT OR IGNORE INTO runs VALUES (?,?,?,?)').run(r.jobId,event.runAtMs,'dispatching','').changes)return;
   if(db.prepare("SELECT 1 FROM runs WHERE job=? AND slot<>? AND status IN ('dispatching','unknown')").get(r.jobId,event.runAtMs)){db.prepare('UPDATE runs SET status=? WHERE job=? AND slot=?').run('blocked',r.jobId,event.runAtMs);return;}
-  const run={...r,runAtMs:event.runAtMs,runKey:r.id+':'+event.runAtMs};
-  const assertCurrent=()=>{if(signal?.aborted||all().find(x=>x.id===r.id)?.status!=='enabled'||!bridge.current?.(r.source))throw Error('Scheduled request authorization is no longer current');};
+  const run={...r,trigger:r.manualPending?'manual':'scheduled',runAtMs:event.runAtMs,runKey:r.id+':'+event.runAtMs};
+  const assertCurrent=()=>{if(signal?.aborted||all().find(x=>x.id===r.id)?.status!=='enabled'||(all().find(x=>x.id===r.id)?.managementRevision??0)!==(r.managementRevision??0)||!bridge.current?.(r.source))throw Error('Scheduled request authorization is no longer current');};
   try{
    assertCurrent();const receipt=await bridge.deliver(run,{signal,assertCurrent});
    if(!receipt?.accepted)throw Error('No Main admission receipt');
-   db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('submitted',JSON.stringify(receipt),r.jobId,event.runAtMs);
-   const latest=all().find(x=>x.id===r.id);latest.lastRun={at:event.runAtMs,status:'submitted',jobIds:receipt.jobIds??[]};
+   db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('submitted',JSON.stringify({...receipt,trigger:run.trigger}),r.jobId,event.runAtMs);
+   const latest=all().find(x=>x.id===r.id);delete latest.manualPending;latest.lastRun={at:event.runAtMs,status:'submitted',jobIds:receipt.jobIds??[]};
    if(r.schedule.kind==='at'&&latest.status==='enabled')latest.status='completed';save(latest);
-  }catch(error){db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('unknown',JSON.stringify({stage:error?.scheduledStage??'dispatch',name:error?.name??'Error',message:String(error?.message??error).slice(0,1000)}),r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
+  }catch(error){db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('unknown',JSON.stringify({stage:error?.scheduledStage??'dispatch',name:error?.name??'Error',message:String(error?.message??error).slice(0,1000)}),r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);delete latest.manualPending;latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
+ }
+ const locks=new Set();
+ const getOwned=(agentId,id)=>{const r=all().find(r=>r.id===id&&r.source.agentId===agentId);if(!r)throw Error('任务不存在或不属于当前 Agent');return r;};
+ const busy=r=>!!r.manualPending||!!db.prepare("SELECT 1 FROM runs WHERE job=? AND status IN ('dispatching','unknown')").get(r.jobId??'')||!!(r.lastRun?.jobIds?.length&&(!bridge.jobsActive||bridge.jobsActive(r.lastRun.jobIds,r.source)));
+ async function catalog(agentId){
+  let canRun=false;try{canRun=typeof cron().enqueueRun==='function';}catch{}
+  return {agentId,available:true,canRun,tasks:all().filter(r=>r.source.agentId===agentId).map(r=>({...publicRecord(r),revision:revision(r),busy:busy(r),sourceValid:!!bridge.current?.(r.source),chatId:r.source.chatId,requester:r.source.people?.requester?.name??r.source.senderId,originId:r.originId??r.id,manualPending:!!r.manualPending})),operations:db.prepare('SELECT id,input,status,result,created FROM operations WHERE agent=? ORDER BY created DESC LIMIT 30').all(agentId).map(o=>({requestId:o.id,action:JSON.parse(o.input).action,status:o.status,createdAt:o.created,result:JSON.parse(o.result||'{}')}))};
+ }
+ async function administer(agentId,params){
+  if(!text(agentId,100)||!params||Object.keys(params).some(k=>!['action','id','sourceId','expectedRevision','requestId','confirmed','name','at','expr','timeZone'].includes(k))||params.confirmed!==true||!text(params.requestId,160))throw Error('管理参数无效，必须确认操作');
+  if(!['create','update','pause','resume','remove','run'].includes(params.action))throw Error('不支持的管理操作');
+  if(params.action!=='create'&&params.sourceId!==undefined||params.action==='create'&&params.id!==undefined)throw Error('任务来源参数无效');
+  if(!['create','update'].includes(params.action)&&['name','at','expr','timeZone'].some(k=>params[k]!==undefined))throw Error('操作包含无效编辑参数');
+  const encoded=JSON.stringify(params),prior=db.prepare('SELECT * FROM operations WHERE agent=? AND id=?').get(agentId,params.requestId);
+  if(prior){if(prior.input!==encoded)throw Error('requestId 已用于其他操作');return {...JSON.parse(prior.result||'{}'),status:prior.status};}
+  const id=params.action==='create'?params.sourceId:params.id,r=getOwned(agentId,id),key=agentId+':'+id;
+  if(locks.has(key))throw Error('任务正在变更，请稍后刷新');
+  if(params.expectedRevision!==revision(r))throw Error('任务已改变，请刷新后重试');
+  if(r.status==='removed'&&params.action!=='create')throw Error('任务已删除，历史记录仍保留');
+  if(!['pause','remove'].includes(params.action)&&busy(r))throw Error('已有运行中或结果待核验的任务，请先核验，不能重复执行');
+  if(!['pause','remove'].includes(params.action)&&!bridge.current?.(r.source))throw Error('原群请求已失效，不能恢复或新建');
+  if(['resume','run','update'].includes(params.action)&&!['enabled','paused'].includes(r.status))throw Error('任务状态需要核验，不能直接恢复或修改');
+  if(params.action==='create'&&!['enabled','paused','completed','removed'].includes(r.status))throw Error('来源计划需要先核验');
+  if(params.action==='run'&&(r.status!=='enabled'||typeof cron().enqueueRun!=='function'))throw Error('仅支持立即执行已启用任务；需要宿主原生入队接口');
+  let schedule;
+  if(['create','update'].includes(params.action)){
+   if(!text(params.name,160))throw Error('请输入任务名称');
+   if(params.at!==undefined){if(params.expr!==undefined||!text(params.at,100)||!/(Z|[+-]\d{2}:\d{2})$/.test(params.at)||!Number.isFinite(Date.parse(params.at))||Date.parse(params.at)<=now())throw Error('一次性时间必须带时区且在未来');schedule={kind:'at',at:new Date(params.at).toISOString()};}
+   else{if(!text(params.expr,120)||params.expr.trim().split(/\s+/).length!==5)throw Error('请输入五字段 cron');const tz=params.timeZone??'Asia/Shanghai';new Intl.DateTimeFormat('en',{timeZone:tz});schedule={kind:'cron',expr:params.expr,tz,staggerMs:0};}
+  }
+  if(params.action==='resume'&&r.schedule.kind==='at'&&Date.parse(r.schedule.at)<=now())throw Error('一次性时间已过期，请先修改时间');
+  locks.add(key);
+  db.prepare('INSERT INTO operations VALUES (?,?,?,?,?,?)').run(agentId,params.requestId,encoded,'pending','{}',now());
+  try{
+   let result;
+   if(params.action==='create'){
+    result=await createRequest({action:'create',requestId:'panel:'+params.requestId,name:params.name,task:r.task,constraints:r.constraints,projectId:r.projectId,...(schedule.kind==='at'?{at:schedule.at}:{expr:schedule.expr,timeZone:schedule.tz})},structuredClone(r.source),true);
+    const created=getOwned(agentId,result.id);created.originId=r.originId??r.id;created.managementRevision=1;save(created);
+   }else if(params.action==='run'){
+    const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
+    if(!job?.enabled||job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload.script!==tickScript||job.delivery?.mode!=='none'||JSON.stringify(job.schedule)!==JSON.stringify(r.schedule))throw Error('原生计划不一致，请核验');
+    r.manualPending={requestId:params.requestId,at:now()};save(r);
+    result=await cron().enqueueRun(r.jobId,'force');
+    if(!result?.ok||result.enqueued!==true)throw Error('原生调度未确认入队，请核验后再操作');
+   }else{
+    // Revoke admission before awaiting a native mutation. A failed write remains
+    // needs_review and never resumes business dispatch automatically.
+    const enabled=params.action==='resume'||params.action==='update'&&r.status==='enabled';
+    r.managementRevision=(r.managementRevision??0)+1;r.status=params.action==='remove'?'removed':'paused';r.acceptAfter=now();save(r);
+    if(params.action==='remove'){
+     const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
+     if(job&&(job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id))throw Error('原生计划归属不一致');
+     result=job?await cron().remove(r.jobId):{removed:false};
+    }
+    else{
+     const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
+     if(!job||job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload.script!==tickScript||job.delivery?.mode!=='none')throw Error('原生计划不一致，请核验');
+     if(params.action==='resume'&&JSON.stringify(job.schedule)!==JSON.stringify(r.schedule))throw Error('原生计划已改变，请先编辑核验');
+     if(schedule){r.name=params.name;r.schedule=schedule;}
+     r.status=enabled?'enabled':'paused';save(r);
+     result=await cron().update(r.jobId,{enabled,...(schedule?{name:'Ada: '+r.name,schedule:r.schedule}:{})});
+     if(enabled&&result?.schedule&&JSON.stringify(result.schedule)!==JSON.stringify(r.schedule))throw Error('原生计划返回不一致');
+     if(!bridge.current?.(r.source)&&enabled)throw Error('原群请求已失效');
+    }
+   }
+   const receipt={id:params.action==='create'?result.id:r.id,action:params.action,...(params.action==='run'?{runId:result.runId,enqueued:true}:{})};
+   db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run('succeeded',JSON.stringify(receipt),agentId,params.requestId);return {...receipt,status:'succeeded'};
+  }catch(error){
+   if(params.action!=='create'&&!['pause','remove'].includes(params.action)){const latest=getOwned(agentId,r.id);latest.status='needs_review';save(latest);}
+   db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run('unknown',JSON.stringify({id:r.id,action:params.action,reason:'操作结果未确认，请刷新并核验；不要重复提交。'}),agentId,params.requestId);
+   throw Error('操作结果未确认，请刷新并核验；不要重复提交。',{cause:error});
+  }finally{locks.delete(key);}
  }
  async function inspect(agentId){
   if(typeof agentId!=='string'||!agentId)return [];
@@ -83,7 +158,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
     const receipts=(detail.deliveryReceipts??[]).filter(x=>x.chatId===r.source.chatId&&typeof x.messageId==='string');
     const status=receipts.length?'delivered':row.status;
     const reason=row.status==='unknown'?'交接结果不确定，请核对后处理'+(detail.stage?'；阶段：'+detail.stage:''):row.status==='verified_not_executed'?'已核对未执行，原记录保留':row.status==='blocked'?'前次交接结果未确认，已阻止重复执行':null;
-    const logs=[{time:new Date(row.slot).toISOString(),stage:'OpenClaw 原生调度',status:'completed',reason:'时钟触发成功，不代表业务完成'},{time:new Date(row.slot).toISOString(),stage:'Main 交接',status:row.status,reason:reason??'Main 已接纳；业务结果另行核验'}];
+    const logs=[{time:new Date(row.slot).toISOString(),stage:'OpenClaw 原生调度',status:'completed',reason:(detail.trigger==='manual'?'管理员手动执行，计划时间不变；':'')+'时钟触发成功，不代表业务完成'},{time:new Date(row.slot).toISOString(),stage:'Main 交接',status:row.status,reason:reason??'Main 已接纳；业务结果另行核验'}];
     for(const id of detail.jobIds??[])logs.push({stage:'Worker 任务',status:'worker_submitted',reason:'任务 ID：'+id+'；此处不推断完成状态'});
     for(const receipt of receipts)logs.push({stage:'原群回复',status:'delivered',reason:'飞书消息回执：'+receipt.messageId});
     return {taskId,runId:taskId+':'+row.slot,date:new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(row.slot),startedAt:new Date(row.slot).toISOString(),status,reason,logs};
@@ -96,13 +171,13 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   });
  }
  async function recover(signal){for(const job of await cron().list({includeDisabled:true})){if(job.state?.lastRunStatus==='ok'&&Number.isSafeInteger(job.state.lastRunAtMs))await fire({action:'finished',status:'ok',jobId:job.id,agentId:job.agentId,runAtMs:job.state.lastRunAtMs},signal);}}
- return {manage,fire,recover,inspect,close:()=>db.close()};
+ return {manage,fire,recover,inspect,catalog,administer,close:()=>db.close()};
 }
 
 export function registerScheduledRequests(api,config){
  if(!api.registerService||!api.on)return;
- let manager,controller;const pending=new Set();const inspect=agentId=>manager?.inspect(agentId)??Promise.resolve([]);
- api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});scheduledRequestBridge.inspect=inspect;},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;if(scheduledRequestBridge.inspect===inspect)delete scheduledRequestBridge.inspect;}});
+ let manager,controller;const pending=new Set();const inspect=agentId=>manager?.inspect(agentId)??Promise.resolve([]);const catalog=agentId=>{if(!manager)throw Error('定时任务服务不可用');return manager.catalog(agentId);};const administer=(agentId,params)=>{if(!manager)throw Error('定时任务服务不可用');const work=manager.administer(agentId,params).finally(()=>pending.delete(work));pending.add(work);return work;};
+ api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});Object.assign(scheduledRequestBridge,{inspect,catalog,administer});},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;for(const [key,value] of Object.entries({inspect,catalog,administer}))if(scheduledRequestBridge[key]===value)delete scheduledRequestBridge[key];}});
  api.on('cron_reconciled',()=>{if(!manager)return;const work=manager.recover(controller.signal).catch(()=>api.logger.warn('Scheduled request recovery needs inspection')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.on('cron_changed',event=>{if(!manager)return;const work=manager.fire(event,controller.signal).catch(()=>api.logger.warn('Scheduled request failed; inspect its saved status before retrying')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.registerTool(context=>!config.agents[context.agentId]?null:{name:'agent_schedule',label:'Ada scheduled requests',description:'Create a scheduled request in the current Feishu conversation, preserving its requester. Explicit recurring authorization required. list/pause/remove are requester-scoped. A submitted tick is not business completion. Reuse requestId after uncertain creation; never create a replacement blindly.',parameters:{type:'object',additionalProperties:false,required:['action'],properties:{action:{type:'string',enum:['create','list','pause','remove']},id:{type:'string'},requestId:{type:'string'},name:{type:'string'},task:{type:'string'},constraints:{type:'string'},projectId:{type:'string'},at:{type:'string'},expr:{type:'string'},timeZone:{type:'string'}}},async execute(_id,params){if(!manager)throw Error('Scheduled request service is unavailable');if(params.action==='create'){const {readProjects}=await import('./repositories.mjs');const projects=await readProjects(config.agents[context.agentId].repo);if(!projects[params.projectId])throw Error('Registered project required');}return {content:[{type:'text',text:JSON.stringify(await manager.manage(params,context))}]};}},{optional:true});
