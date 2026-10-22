@@ -23,7 +23,7 @@ export function mountProjects(container,initial){
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
  function openPeople(){closePeople();peopleDialog=mountPeopleDialog(container,{invoke,isGroup:()=>/^agent:[^:]+:feishu:group:oc_/.test(target().sessionKey??''),canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{peopleDialog=null;}});}
  let historyGeneration=0,syncDialog=null,syncTaskId=null,syncRunId=null,syncTab='records',syncRenderedView=null;const syncRecords=new Map(),syncViewScroll=new Map();
- const syncLabels={completed:'成功',failed:'失败',running:'未结束',unavailable:'不可读取',started:'开始'};
+ const syncLabels={completed:'成功',failed:'失败',running:'未结束',unavailable:'不可读取',started:'开始',worker_submitted:'已提交 Worker',submitted:'Main 已接纳',dispatching:'交接中',unknown:'结果待核验',blocked:'已阻止',verified_not_executed:'已核对未执行',delivered:'消息已送达'};
  const shortTime=value=>value?new Date(value).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'未记录';
  const duration=record=>{const ms=Date.parse(record.finishedAt)-Date.parse(record.startedAt),seconds=Math.round(ms/1000);return Number.isFinite(ms)&&ms>=0?(ms<1000?'不足 1 秒':seconds<60?seconds+' 秒':Math.floor(seconds/60)+' 分 '+seconds%60+' 秒'):'—';};
  let observedTarget=target(),observedRead=context.host.connection.canRead,observedWrite=context.host.connection.canWrite,skillArea=null,subagentArea=null;
@@ -74,25 +74,27 @@ export function mountProjects(container,initial){
  function scheduledTasks(){return list?.scheduledTasks??[];}
  function selectedTask(){return scheduledTasks().find(task=>task.taskId===syncTaskId);}
  function selectedRun(){return selectedTask()?.records.find(record=>record.runId===syncRunId);}
- function taskState(task){return task.enabled?'已启用':task.schedule?'已暂停':'未配置';}
+ function taskState(task){if(task.type==='scheduled-request'){if(!task.nativeAvailable)return '调度状态不可读取';if(task.nativeMissing&&task.status!=='removed')return '原生计划缺失';if(task.status==='enabled'&&!task.enabled)return '原生计划已暂停';return ({enabled:'已启用',paused:'已暂停',removed:'已移除',completed:'已结束',blocked:'来源失效',needs_review:'待检查',creating:'创建中'})[task.status]??'待检查';}return task.enabled?'已启用':task.schedule?'已暂停':'未配置';}
+ function scheduleText(task){const s=task.schedule;if(!s)return '未配置执行计划';if(task.type!=='scheduled-request')return '每天 '+s.time+' · '+s.timeZone;return s.kind==='at'?date(s.at):'Cron '+s.expr+' · '+(s.tz??'Asia/Shanghai');}
  function planText(task){
   const next=task.nextPlanned;
   if(next?.state==='due')return '已到计划时间，暂无记录';
-  if(next?.state==='scheduled')return next.date+' '+next.time;
+  if(next?.state==='scheduled')return next.at?new Date(next.at).toLocaleString('zh-CN',{timeZone:next.timeZone??'Asia/Shanghai',hour12:false})+' · '+(next.timeZone??'Asia/Shanghai'):next.date+' '+next.time;
   return next?.state==='disabled'?'已暂停':next?.state==='unconfigured'?'未配置计划':'暂不可确定';
  }
  function taskBadge(task){return element('span',taskState(task),'ar-sync-badge '+(task.enabled?'enabled':'paused'));}
  function syncHistory(){
   if(!Array.isArray(list.scheduledTasks))return null;
   const tasks=scheduledTasks(),section=element('section',undefined,'ar-sync-history'),heading=element('div',undefined,'ar-sync-heading');
-  heading.append(element('h3',context.props.managementSection==='tasks'?'同步计划':'定时任务'),element('span',tasks.length+' 个任务','ar-meta'));section.append(heading);
+  heading.append(element('h3','定时任务'),element('span',tasks.length+' 个任务','ar-meta'));section.append(heading);
+  if(list.scheduledRequestsAvailable===false)section.append(element('p','OpenClaw 联动任务服务暂不可读取，以下列表可能不完整。','ar-warning'));
   if(!tasks.length)section.append(element('p','暂无定时任务','ar-muted'));
   for(const task of tasks){
    const row=button('',()=>openSyncDialog(task.taskId));row.className='ar-scheduled-task';row.dataset.taskId=task.taskId;row.setAttribute('aria-label','查看'+task.name);row.setAttribute('aria-haspopup','dialog');
    const top=element('span',undefined,'ar-task-row-top');top.append(element('strong',safe(task.name)),taskBadge(task));row.append(top);
-   row.append(element('span',safe('系统任务 · '+(task.schedule?'每天 '+task.schedule.time+' · '+task.schedule.timeZone:'未配置执行计划')),'ar-task-row-meta'));
+   row.append(element('span',safe((task.type==='scheduled-request'?'OpenClaw 联动 · ':'系统任务 · ')+scheduleText(task)),'ar-task-row-meta'));
    row.append(element('span',safe(task.scope.label),'ar-task-row-meta'));
-   const bottom=element('span',undefined,'ar-task-row-bottom');bottom.append(element('span',safe('下次计划：'+(task.nextPlanned?.state==='scheduled'?task.nextPlanned.date.slice(5).replace('-','/')+' '+task.nextPlanned.time:planText(task)))));
+   const bottom=element('span',undefined,'ar-task-row-bottom');bottom.append(element('span',safe('下次计划：'+planText(task))));
    const last=element('span','上次：');last.append(task.lastRun?syncBadge(task.lastRun.status):element('span','尚未执行','ar-muted'));bottom.append(last);row.append(bottom);section.append(row);
   }
   return section;
@@ -140,12 +142,12 @@ export function mountProjects(container,initial){
     row.append(info,syncBadge(record.status),element('span',safe(duration(record)),'ar-sync-elapsed'),element('span','›','ar-sync-arrow'));rows.append(row);
    }
   }
-  if(task.hasMore)section.append(element('p','仅展示最近 30 次记录，更早记录保留在仓库 Git 目录中。','ar-muted'));
+  if(task.hasMore)section.append(element('p','仅展示最近 30 次记录，更早记录保留在对应任务的私有状态中。','ar-muted'));
   return section;
  }
  function taskSettings(task){
   const section=element('section',undefined,'ar-task-settings'),data=element('dl',undefined,'ar-task-config');
-  for(const [key,value] of [['任务类型','仓库同步'],['任务来源','系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',task.schedule?'每天 '+task.schedule.time:'未配置'],['时区',task.schedule?.timeZone??'未配置'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}section.append(data,element('p','系统任务由管理员配置管理，这里只读展示。','ar-muted'));return section;
+  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['原群',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));section.append(data,element('p','此处只读展示；原生调度成功或 Main 接纳不代表业务完成。','ar-muted'));return section;
  }
  function renderSyncDialog(){
   if(!syncDialog||!syncTaskId)return;
@@ -161,8 +163,8 @@ export function mountProjects(container,initial){
   const close=button('关闭',()=>closeSyncDialog());close.className='ar-sync-close';header.append(title,close);dialog.append(header);
   const body=element('div',undefined,'ar-sync-dialog-body');dialog.append(body);
   if(!record){
-   const overview=element('div',undefined,'ar-sync-overview');overview.append(taskBadge(task),element('span',safe('系统任务 · Agent '+target().agentId),'ar-meta'));body.append(overview);
-   const meta=element('dl',undefined,'ar-sync-metadata');for(const [key,value] of [['执行计划',task.schedule?'每天 '+task.schedule.time+' · '+task.schedule.timeZone:'未配置'],['执行范围',task.scope.label],['下次计划',planText(task)]]){const cell=element('div');cell.append(element('dt',key),element('dd',safe(value)));meta.append(cell);}body.append(meta);
+   const overview=element('div',undefined,'ar-sync-overview');overview.append(taskBadge(task),element('span',safe((task.type==='scheduled-request'?'OpenClaw 联动':'系统任务')+' · Agent '+target().agentId),'ar-meta'));body.append(overview);
+   const meta=element('dl',undefined,'ar-sync-metadata');for(const [key,value] of [['执行计划',scheduleText(task)],['执行范围',task.scope.label],['下次计划',planText(task)]]){const cell=element('div');cell.append(element('dt',key),element('dd',safe(value)));meta.append(cell);}body.append(meta);
    const tabs=element('div',undefined,'ar-task-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','定时任务详情');
    for(const [id,label] of [['records','执行记录'],['settings','任务设置']]){const tab=button(label,()=>{syncTab=id;renderSyncDialog();syncDialog?.querySelector('#'+panelId+'-'+id)?.focus({preventScroll:true});});tab.id=panelId+'-'+id;tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(syncTab===id));tab.setAttribute('aria-controls',panelId+'-task-content');tab.tabIndex=syncTab===id?0:-1;tab.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();syncTab=event.key==='Home'?'records':event.key==='End'?'settings':syncTab==='records'?'settings':'records';renderSyncDialog();syncDialog?.querySelector('#'+panelId+'-'+syncTab)?.focus();};tabs.append(tab);}body.append(tabs);
    const content=syncTab==='records'?runRows(task):taskSettings(task);content.id=panelId+'-task-content';content.setAttribute('role','tabpanel');content.setAttribute('aria-labelledby',panelId+'-'+syncTab);body.append(content);
@@ -218,7 +220,7 @@ export function mountProjects(container,initial){
   const tabScroll=root.querySelector('.ar-project-tabs')?.scrollLeft??0;
   const scroll=root.querySelector('.ar-scroll')?.scrollTop??0,expanded=new Set([...root.querySelectorAll('details[open]')].map(node=>node.dataset.skillPath));
   const focusedTab=root.contains(document.activeElement)?document.activeElement?.dataset.tabKey:undefined;
-  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();if(context.props.managementSection==='logs')return;const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);if(context.props.managementSection){header.classList.add('ar-section-heading');const copy=element('div');copy.append(element('h2',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'日志':'项目与技能'),element('p',context.props.managementSection==='tasks'?'查看仓库同步等系统任务的计划、状态与运行记录。':'查看共享及项目技能，管理关联 CLI 与子代理。','ar-description'));header.append(copy,actions);}else header.append(element('strong','项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
+  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();if(context.props.managementSection==='logs')return;const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);if(context.props.managementSection){header.classList.add('ar-section-heading');const copy=element('div');copy.append(element('h2',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'日志':'项目与技能'),element('p',context.props.managementSection==='tasks'?'查看仓库同步和 OpenClaw 联动群任务的计划、状态与运行记录。':'查看共享及项目技能，管理关联 CLI 与子代理。','ar-description'));header.append(copy,actions);}else header.append(element('strong','项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!selected.agentId){root.append(element('p','请先选择一个 Agent。'));return;}
   if(!context.props.managementSection)root.append(element('p',safe('当前 Agent · '+selected.agentId),'ar-meta'));
@@ -261,7 +263,7 @@ const managementModules=[
  {id:'projects',label:'项目与技能',description:'查看项目登记、仓库状态、技能和子代理定义。'},
  {id:'worker',label:'Worker 任务',description:'跨会话查看此 Agent 的任务状态、来源和执行详情。'},
  {id:'entities',label:'实体资料库',description:'统一检索人员、组织、服务与资产，查看 AI 和程序同步的来源。'},
- {id:'tasks',label:'定时任务',description:'查看仓库同步等系统任务的计划、状态和运行记录。'},
+ {id:'tasks',label:'定时任务',description:'查看仓库同步和 OpenClaw 联动群任务的计划、状态和运行记录。'},
  {id:'logs',label:'日志',description:'统一查看插件与 Worker 日志，按需开启实时调试。'},
 ];
 function mountOverview(container,context,agentId,choose){
@@ -293,7 +295,7 @@ function mountOverview(container,context,agentId,choose){
   for(const [label,count,note,module] of [
    ['登记项目',value(results.catalog,catalog?.projects?.length),'已登记在项目清单中的仓库','projects'],
    ['实体资料',value(results.entities,results.entities?.value?.total),'人员、组织、服务与资产统一管理','entities'],
-   ['同步计划',value(results.catalog,catalog?.scheduledTasks?.length),'仓库同步系统任务','tasks'],
+   ['定时任务',value(results.catalog,catalog?.scheduledTasks?.length),'同步与 OpenClaw 联动任务','tasks'],
    ['异常记录',value(results.logs,logs?.records?.length),'最近保留的仓库异常，最多 100 条','logs'],
   ]){
    const card=button('',()=>choose(module));card.className='ar-metric';card.setAttribute('aria-label','打开'+managementModules.find(item=>item.id===module).label);
@@ -319,7 +321,7 @@ function mountOverview(container,context,agentId,choose){
   const source=catalog?.agentSkills;
   info('角色技能',source?.state==='unavailable'?'不可扫描':source?source.skills.length+' 项 · 不含项目技能':'—');
   const tasks=catalog?.scheduledTasks;
-  info('同步计划',tasks?(tasks.length?tasks.filter(task=>task.enabled).length+' 项启用 / '+tasks.length+' 项总计':'尚未配置定时计划'):'—');
+  info('定时任务',tasks?(tasks.length?tasks.filter(task=>task.enabled).length+' 项启用 / '+tasks.length+' 项总计':'尚未配置定时计划'):'—');
   resources.append(element('p','这里只读取状态；刷新不会拉取仓库、执行任务或同步飞书人员。','ar-description'));columns.append(attention,resources);root.append(columns);
   const shortcuts=element('section',undefined,'ar-overview-shortcuts');shortcuts.append(element('h3','管理模块'));
   const rows=element('div',undefined,'ar-management-cards');

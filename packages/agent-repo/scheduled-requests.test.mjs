@@ -40,3 +40,11 @@ test('service holds the native hook until admission completes, and revokes it on
  await new Promise(resolve=>setImmediate(resolve));assert.equal(finished,false);release();await promise;await service.stop();
  assert.equal(hooks.cron_changed({action:'finished'}),undefined);
 });
+test('management inspection combines native timing and scoped admission receipts without exposing task payloads',async t=>{
+ const f=fixture(t);await f.manager.manage(f.input,{});await f.manager.manage({...f.input,requestId:'foreign'}, {agentId:'other'});
+ f.jobs[0].state={nextRunAtMs:3000,lastRunStatus:'ok'};await f.manager.fire(f.event());
+ const tasks=await f.manager.inspect('main');assert.equal(tasks.length,1);assert.equal(tasks[0].type,'scheduled-request');assert.equal(tasks[0].nextPlanned.at,new Date(3000).toISOString());assert.equal(tasks[0].lastRun.status,'submitted');assert.ok(!JSON.stringify(tasks).includes('read-only target'));assert.equal(tasks[0].records[0].logs.at(-1).status,'worker_submitted');
+ assert.deepEqual(await f.manager.inspect('unbound'),[]);
+ f.bridge.deliver=async()=>({accepted:true,jobIds:[],deliveryReceipts:[{messageId:'receipt',chatId:'group'}]});await f.manager.fire(f.event(2500));assert.equal((await f.manager.inspect('main'))[0].lastRun.status,'delivered');
+ f.cron.list=async()=>{throw Error('offline');};const offline=(await f.manager.inspect('main'))[0];assert.equal(offline.nativeAvailable,false);assert.equal(offline.records.length,2);assert.equal(offline.nextPlanned.state,'unavailable');
+});

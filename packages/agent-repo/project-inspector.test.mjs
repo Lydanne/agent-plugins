@@ -98,3 +98,8 @@ test('log clearing requires trusted Agent, operator write and explicit confirmat
  assert.equal((await f.inspector.repositoryLogs(f.ctx)).records.length,1);
  const cleared=await f.inspector.clearRepositoryLogs(ctx);assert.equal(cleared.cleared,1);assert.deepEqual(cleared.records,[]);
 });
+test('linked task inspection uses trusted Agent and refuses foreign task records',async t=>{
+ const {scheduledRequestBridge}=await import('./scheduled-requests.mjs');const previous=scheduledRequestBridge.inspect;t.after(()=>{if(previous)scheduledRequestBridge.inspect=previous;else delete scheduledRequestBridge.inspect;});
+ const f=await fixture(t),seen=[];const record={taskId:'scheduled-request:owned',runId:'scheduled-request:owned:1',status:'submitted',logs:[]};scheduledRequestBridge.inspect=async agentId=>{seen.push(agentId);return [{taskId:record.taskId,records:[record]}];};
+ assert.equal((await f.inspector.list(f.ctx)).scheduledTasks.at(-1).taskId,record.taskId);assert.deepEqual(await f.inspector.taskRecord({...f.ctx,payload:{taskId:record.taskId,runId:record.runId}}),record);assert.ok(seen.every(id=>id==='main'));await assert.rejects(f.inspector.taskRecord({...f.ctx,payload:{taskId:'scheduled-request:foreign',runId:'scheduled-request:foreign:1'}}));
+});

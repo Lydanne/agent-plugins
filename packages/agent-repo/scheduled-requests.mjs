@@ -72,14 +72,37 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
    if(r.schedule.kind==='at'&&latest.status==='enabled')latest.status='completed';save(latest);
   }catch(error){db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('unknown',JSON.stringify({stage:error?.scheduledStage??'dispatch',name:error?.name??'Error',message:String(error?.message??error).slice(0,1000)}),r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
  }
+ async function inspect(agentId){
+  if(typeof agentId!=='string'||!agentId)return [];
+  let jobs=[],nativeAvailable=true;try{jobs=await cron().list({includeDisabled:true});}catch{nativeAvailable=false;}
+  return all().filter(r=>r.source.agentId===agentId).map(r=>{
+   const taskId='scheduled-request:'+r.id,job=jobs.find(j=>j.id===r.jobId&&j.agentId===agentId),tz=r.schedule.tz??'Asia/Shanghai';
+   const rows=db.prepare('SELECT slot,status,detail FROM runs WHERE job=? ORDER BY slot DESC LIMIT 31').all(r.jobId);
+   const records=rows.slice(0,30).map(row=>{
+    let detail={};try{detail=JSON.parse(row.detail||'{}');}catch{}
+    const receipts=(detail.deliveryReceipts??[]).filter(x=>x.chatId===r.source.chatId&&typeof x.messageId==='string');
+    const status=receipts.length?'delivered':row.status;
+    const reason=row.status==='unknown'?'交接结果不确定，请核对后处理'+(detail.stage?'；阶段：'+detail.stage:''):row.status==='verified_not_executed'?'已核对未执行，原记录保留':row.status==='blocked'?'前次交接结果未确认，已阻止重复执行':null;
+    const logs=[{time:new Date(row.slot).toISOString(),stage:'OpenClaw 原生调度',status:'completed',reason:'时钟触发成功，不代表业务完成'},{time:new Date(row.slot).toISOString(),stage:'Main 交接',status:row.status,reason:reason??'Main 已接纳；业务结果另行核验'}];
+    for(const id of detail.jobIds??[])logs.push({stage:'Worker 任务',status:'worker_submitted',reason:'任务 ID：'+id+'；此处不推断完成状态'});
+    for(const receipt of receipts)logs.push({stage:'原群回复',status:'delivered',reason:'飞书消息回执：'+receipt.messageId});
+    return {taskId,runId:taskId+':'+row.slot,date:new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(row.slot),startedAt:new Date(row.slot).toISOString(),status,reason,logs};
+   });
+   const next=job?.state?.nextRunAtMs??job?.nextRunAtMs;
+   return {taskId,name:r.name,type:'scheduled-request',source:'openclaw',readOnly:true,enabled:r.status==='enabled'&&job?.enabled===true,status:r.status,reason:r.reason,
+    schedule:r.schedule,scope:{kind:'group',label:'项目 '+r.projectId+' · 群 '+r.source.chatId,projectIds:[r.projectId]},requester:r.source.people?.requester?.name??r.source.senderId,
+    jobId:r.jobId,chatId:r.source.chatId,nativeAvailable,nativeMissing:nativeAvailable&&!job,nativeLastStatus:job?.state?.lastRunStatus??null,
+    nextPlanned:!nativeAvailable?{state:'unavailable'}:next&&job.enabled&&r.status==='enabled'?{state:'scheduled',at:new Date(next).toISOString(),timeZone:tz}:{state:'disabled'},lastRun:records[0]??null,records,hasMore:rows.length>30};
+  });
+ }
  async function recover(signal){for(const job of await cron().list({includeDisabled:true})){if(job.state?.lastRunStatus==='ok'&&Number.isSafeInteger(job.state.lastRunAtMs))await fire({action:'finished',status:'ok',jobId:job.id,agentId:job.agentId,runAtMs:job.state.lastRunAtMs},signal);}}
- return {manage,fire,recover,close:()=>db.close()};
+ return {manage,fire,recover,inspect,close:()=>db.close()};
 }
 
 export function registerScheduledRequests(api,config){
  if(!api.registerService||!api.on)return;
- let manager,controller;const pending=new Set();
- api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;}});
+ let manager,controller;const pending=new Set();const inspect=agentId=>manager?.inspect(agentId)??Promise.resolve([]);
+ api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});scheduledRequestBridge.inspect=inspect;},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;if(scheduledRequestBridge.inspect===inspect)delete scheduledRequestBridge.inspect;}});
  api.on('cron_reconciled',()=>{if(!manager)return;const work=manager.recover(controller.signal).catch(()=>api.logger.warn('Scheduled request recovery needs inspection')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.on('cron_changed',event=>{if(!manager)return;const work=manager.fire(event,controller.signal).catch(()=>api.logger.warn('Scheduled request failed; inspect its saved status before retrying')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.registerTool(context=>!config.agents[context.agentId]?null:{name:'agent_schedule',label:'Ada scheduled requests',description:'Create a scheduled request in the current Feishu conversation, preserving its requester. Explicit recurring authorization required. list/pause/remove are requester-scoped. A submitted tick is not business completion. Reuse requestId after uncertain creation; never create a replacement blindly.',parameters:{type:'object',additionalProperties:false,required:['action'],properties:{action:{type:'string',enum:['create','list','pause','remove']},id:{type:'string'},requestId:{type:'string'},name:{type:'string'},task:{type:'string'},constraints:{type:'string'},projectId:{type:'string'},at:{type:'string'},expr:{type:'string'},timeZone:{type:'string'}}},async execute(_id,params){if(!manager)throw Error('Scheduled request service is unavailable');if(params.action==='create'){const {readProjects}=await import('./repositories.mjs');const projects=await readProjects(config.agents[context.agentId].repo);if(!projects[params.projectId])throw Error('Registered project required');}return {content:[{type:'text',text:JSON.stringify(await manager.manage(params,context))}]};}},{optional:true});

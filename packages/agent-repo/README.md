@@ -425,3 +425,9 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 私有状态位于宿主 stateDir 下 `agent-repo-scheduled-requests/scheduled-requests.sqlite`（0600）；不存进角色仓库或 Git。需要配套 agent-repo、feishu、agent-worker 版本，以及宿主公开 `getCron()` / `cron_changed` / `cron_reconciled`、script payload 和 channel inbound 能力。缺失时不降级为 shell、伪造来源或同步 Worker。当前适配开发针对本机 OpenClaw 2026.10.5 合同；SDK 编译基线仍为仓库锁定版本，不能仅凭类型检查推断所有旧宿主兼容。
 
 验收分层：隔离测试覆盖来源、会话/用户隔离、重复触发、撤回、重置、暂停、未知结果和真实 Worker 来源函数；真实模型与飞书发送需要部署后另行授权验收。
+
+### 联动定时任务目录
+
+管理中心“定时任务”合并展示当前 Agent 的每日仓库同步和 `agent_schedule` 创建的 OpenClaw 联动群任务。后者读取私有来源记录及原生调度服务，展示原请求人、原群、项目、Cron/一次性计划、下次时间、原生任务 ID 和最近30次交接记录。缺失或不可读取的原生计划明确标记，不隐藏已有历史。
+
+原生时钟成功、Main 接纳、Worker 提交及原群消息回执分开显示；只有真实回执显示“消息已送达”，旧 Worker 记录仅展示任务 ID，不推断业务完成。来源及运行记录按受信 Agent 范围过滤，管理目录不改变普通模型工具的当前请求人/会话隔离，也不导入其他 Agent 的原生任务。此页只读，不提供重跑或修改入口；刷新不创建或触发任务。

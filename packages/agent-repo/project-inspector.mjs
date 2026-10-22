@@ -1,3 +1,4 @@
+import {scheduledRequestBridge} from './scheduled-requests.mjs';
 import {createSkillMaintenance} from './skill-maintenance.mjs';
 import {maintenanceCatalog,runMaintenance,maintenanceContext,MaintenanceError} from './dist/maintenance-api.mjs';
 import {createEntityStore} from './entities.mjs';
@@ -115,7 +116,7 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    const agentSubagents=await subagentInventory(before.root,before.root,'agent');resolveSubagentCatalog([agentSubagents]);
    const history=await readSyncHistory(before.root,agentId),scannedAt=now();
    await checkRegistration(binding,before);
-   return {scheduledTasks:repositorySyncTasks(binding,agentId,history,projects,scannedAt),syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
+   return {scheduledRequestsAvailable:typeof scheduledRequestBridge.inspect==='function',scheduledTasks:[...repositorySyncTasks(binding,agentId,history,projects,scannedAt),...(await scheduledRequestBridge.inspect?.(agentId)??[])],syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
   },
   async repositoryLogs(ctx){
    const {agentId,binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('日志不接受其他范围参数');
@@ -129,6 +130,11 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
   },
   async taskRecord(ctx){
    const {agentId,binding}=await context(ctx),params=ctx.payload??{},taskId=repositorySyncTaskId(agentId);
+   if(typeof params.taskId==='string'&&params.taskId.startsWith('scheduled-request:')){
+    if(Object.keys(params).some(key=>!['taskId','runId'].includes(key)))throw Error('定时记录范围无效');
+    const task=(await scheduledRequestBridge.inspect?.(agentId)??[]).find(task=>task.taskId===params.taskId);
+    const record=task?.records.find(record=>record.runId===params.runId);if(!record)throw Error('定时记录范围无效');return record;
+   }
    if(Object.keys(params).some(key=>!['taskId','runId'].includes(key))||params.taskId!==taskId||typeof params.runId!=='string'||!params.runId.startsWith(taskId+':'))throw Error('同步记录范围无效');
    const record=await readSyncHistory(binding.repo,agentId,params.runId.slice(taskId.length+1));
    if(record.runId!==params.runId)throw Error('同步记录来源无效');
