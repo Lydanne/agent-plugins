@@ -514,3 +514,41 @@
 .ar-console-find>label{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px}.ar-console-find>label input{width:15px;height:15px;min-height:0;margin:0;accent-color:var(--console-accent)}
 
 .ar-schedule-form {display:grid;gap:12px;margin-top:16px}.ar-schedule-form label {display:grid;gap:6px}.ar-schedule-form input,.ar-schedule-form select {padding:8px;max-width:100%;background:var(--bg);color:inherit;border:1px solid var(--border);border-radius:6px}.ar-schedule-task {white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;font:inherit}.ar-schedule-actions,.ar-schedule-choices {display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.ar-schedule-choices [aria-current] {font-weight:700;text-decoration:underline}.ar-schedule-form [hidden] {display:none}
+
+/* Schedule management keeps navigation visible while editing long plans. */
+.ar-sync-dialog.ar-schedule-manager{width:min(1060px,calc(100vw - 32px))}
+.ar-schedule-manager .ar-sync-dialog-body{padding:0}
+.ar-schedule-manager .ar-sync-dialog-header p{font-size:12px;margin-top:6px}
+.ar-schedule-layout{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:460px}
+.ar-schedule-sidebar{padding:20px 16px;background:#88808a08;border-right:1px solid #8883}
+.ar-schedule-detail{padding:24px;min-width:0}
+.ar-schedule-manager .ar-schedule-detail>h3{font-size:18px;line-height:1.5}
+.ar-schedule-sidebar>input{width:100%;padding:9px 12px;border:1px solid #8884;border-radius:7px;background:transparent;color:inherit;font:inherit}
+.ar-schedule-sidebar .ar-schedule-actions{margin:0 0 14px}
+.ar-schedule-choices{display:grid;gap:6px}
+.ar-schedule-manager .ar-schedule-choices button{display:grid;gap:7px;text-align:left;padding:12px;border:1px solid transparent;white-space:normal;overflow-wrap:anywhere}
+.ar-schedule-choices button span,.ar-schedule-choices button small{font-size:12px;font-weight:400;color:var(--muted,#716e67)}
+.ar-schedule-manager .ar-schedule-choices [aria-current]{text-decoration:none;background:#6d8ea115;border-color:#6d8ea1}
+.ar-schedule-manager [hidden]{display:none!important}
+.ar-schedule-form{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:22px}
+.ar-schedule-form>p,.ar-schedule-form>details,.ar-schedule-form>button,.ar-schedule-form>label:first-of-type{grid-column:1/-1}
+.ar-schedule-form input,.ar-schedule-form select{width:100%;min-width:0;font:inherit;padding:10px;background:transparent;border-color:#8884}
+.ar-schedule-form details{padding:12px 0;border-block:1px solid #8882}
+.ar-schedule-form summary{cursor:pointer}
+.ar-schedule-manager .ar-schedule-primary{background:#496d63;color:#fff;border-color:#496d63;padding:9px 16px;justify-self:start}
+.ar-schedule-manager .ar-schedule-danger{color:#ac4545}
+.ar-schedule-manager button:disabled{opacity:.45;cursor:not-allowed}
+.ar-schedule-manager :is(input,select):focus-visible{outline:2px solid #5685ad;outline-offset:2px}
+.ar-schedule-manager .ar-schedule-preview{padding:10px 12px;background:#6d8ea110;border-radius:6px;font-size:13px;margin:12px 0}
+.ar-schedule-audit{margin-top:28px;padding-top:18px;border-top:1px solid #8883;font-size:12px}
+.ar-schedule-manager .ar-sync-dialog-body>p,.ar-schedule-manager .ar-sync-dialog-body>h3{margin:18px 24px}
+.ar-schedule-manager .ar-sync-dialog-body>button{margin:8px 0 24px 24px}
+@media(max-width:700px){.ar-schedule-layout{grid-template-columns:1fr}.ar-schedule-sidebar{border-right:0;border-bottom:1px solid #8883}.ar-schedule-choices{max-height:180px;overflow:auto}.ar-schedule-detail{padding:20px}.ar-schedule-form{grid-template-columns:1fr}.ar-schedule-manager .ar-sync-dialog-header{padding:18px}}
+.ar-schedule-manager .ar-sync-dialog-body{max-height:calc(100dvh - 250px)}
+.ar-schedule-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 24px;border-top:1px solid #8883}
+.ar-schedule-footer span{font-size:12px}
+.ar-schedule-form{gap:12px}
+.ar-schedule-form>p{margin:0}
+.ar-schedule-form>p.ar-muted{font-size:12px;line-height:1.6}
+@media(min-width:701px){.ar-schedule-sidebar{position:sticky;top:0;align-self:start;min-height:460px}}
+@media(max-width:700px){.ar-schedule-footer{padding:12px 18px}.ar-schedule-footer span{max-width:60%}.ar-schedule-manager .ar-sync-dialog-body{max-height:calc(100dvh - 220px)}}
