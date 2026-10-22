@@ -61,6 +61,10 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
  return {capture,current,deliver};
 }
 export function registerScheduledRequestAdapter(api:OpenClawPluginApi){
- const adapter=createScheduledRequestAdapter(api.runtime);
+ const implementation=createScheduledRequestAdapter(api.runtime);
+ // Cross-plugin bridge calls arrive in agent-repo's instance scope. Enter the
+ // channel owner's public lifecycle scope before using its named runtime store.
+ const lifecycle=api.lifecycle as typeof api.lifecycle & {runInBackgroundContext?:<T>(run:()=>T)=>T};
+ const adapter={...implementation,deliver:(request:Request,callbacks:Callbacks)=>lifecycle?.runInBackgroundContext?lifecycle.runInBackgroundContext(()=>implementation.deliver(request,callbacks)):implementation.deliver(request,callbacks)};
  api.registerService({id:'feishu-scheduled-requests',start:()=>{Object.assign(scheduledRequestBridge,adapter);},stop:()=>{for(const key of ['capture','current','deliver'] as const)if(scheduledRequestBridge[key]===adapter[key])delete scheduledRequestBridge[key];}});
 }
