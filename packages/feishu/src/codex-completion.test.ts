@@ -345,6 +345,8 @@ it('rejects a standalone host fallback rather than accepting it as a completed r
 
 it.each([
  {text:"⚠️ OpenClaw couldn't finish this reply. For details, open Settings → Logs."},
+ {text:"⚠️ OpenClaw couldn't finish this request. Check the conversation before trying again."},
+ {text:"  ⚠️ OpenClaw couldn't finish this request. Check the conversation before trying again.",mediaUrls:["/tmp/test-image.png"]},
  {text:'Main failed before reply',isError:true},
  {text:'The runtime is replacing a plugin',isStatusNotice:true},
 ])('keeps failed Main output out of cards, receipts and the retry outbox: %j',async payload=>{

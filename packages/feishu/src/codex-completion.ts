@@ -118,7 +118,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      const replyText = payload.text ?? "";
      const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
      if (!replyText && (!hasMedia || questionTurn)) return;
-     if (payload.isError || payload.isStatusNotice || /^⚠️\s*OpenClaw couldn't (?:produce or deliver|finish) (?:a|this) reply\./.test(replyText.trimStart())) throw Error("Codex completion received the host's no-visible-reply fallback");
+     if (payload.isError || payload.isStatusNotice || /^⚠️\s*OpenClaw couldn't (?:produce or deliver|finish) (?:a|this) (?:reply|request)\./.test(replyText.trimStart())) throw Error("Codex completion received the host's no-visible-reply fallback");
      if (!isCompletionSourceAndAnswersCurrent(p, stateDir) || !sessionCurrent() || signal.aborted) {suppressed = true; return;}
      if(questionTurn){
       const question=readQuestionCard(stateDir,event.contextRequest!.questionId);
