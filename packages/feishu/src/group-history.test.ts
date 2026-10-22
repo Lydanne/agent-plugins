@@ -9,7 +9,7 @@ function setup(cfg: OpenClawPluginApi["config"] = config) {
   registerFeishuGroupHistoryTool({ config: cfg, registerTool } as unknown as OpenClawPluginApi);
   return (context = {}) => registerTool.mock.calls[0][0]({ config: cfg, sessionKey: "agent:main:feishu:group:oc_fixture", agentAccountId: "default", ...context });
 }
-beforeEach(() => { vi.clearAllMocks(); mocks.client.mockReturnValue({ im: { message: { list: mocks.list } } }); mocks.list.mockResolvedValue({ code: 0, data: { items: [{ message_id: "fixture-message", body: { content: "reference only" } }], has_more: true } }); });
+beforeEach(() => { vi.clearAllMocks(); mocks.client.mockReturnValue({ im: { message: { list: mocks.list } } }); mocks.list.mockResolvedValue({ code: 0, data: { items: [{ message_id: "fixture-message", body: { content: "reference only" } }], has_more: true, page_token: "next-page" } }); });
 it("reads only the trusted current group using the configured bot client", async () => {
   const tool = setup()(); const result = await tool.execute("call", { limit: 7 });
   expect(tool.name).toBe("feishu_group_history");
@@ -53,4 +53,39 @@ it("does not fall back from a disabled current account to a different bot", asyn
  expect((await tool.execute("call", {})).isError).toBe(true);expect(mocks.list).not.toHaveBeenCalled();
  const other = setup(cfg)({ agentAccountId: "other", deliveryContext: { accountId: "other" } });
  expect((await other.execute("call", {})).details.ok).toBe(true);expect(mocks.client.mock.calls[0][0].accountId).toBe("other");
+});
+
+it("reads more than 50 messages across a fixed daily window and forwards only scoped continuation", async () => {
+  const tool = setup()(), bounds = { start_time: 1792512000, end_time: 1792598400 };
+  const messages = Array.from({length: 61}, (_, i) => ({message_id: `m${i}`, create_time: String((bounds.start_time + i) * 1000)}));
+  mocks.list.mockResolvedValueOnce({code: 0, data: {items: messages.slice(0,50), has_more: true, page_token: 'upstream-page-2'}});
+  const first = (await tool.execute('first', bounds)).details;
+  expect(first.messages).toHaveLength(50);expect(first.window_complete).toBe(false);
+  expect(first.next_page_token).not.toBe('upstream-page-2');
+  mocks.list.mockResolvedValueOnce({code: 0, data: {items: messages.slice(50), has_more: false}});
+  const last = (await setup()().execute('second', {...bounds, page_token: first.next_page_token})).details;
+  expect(mocks.list.mock.calls[1][0].params).toMatchObject({start_time: String(bounds.start_time),end_time: String(bounds.end_time),page_token:'upstream-page-2'});
+  expect([...first.messages,...last.messages]).toHaveLength(61);expect(last.window_complete).toBe(true);expect(last.next_page_token).toBeUndefined();
+});
+it("rejects cursor tampering and changes of group, account, session, page size or window before network access", async () => {
+  const tool=setup()(), bounds={start_time:100,end_time:200};
+  mocks.list.mockResolvedValueOnce({code:0,data:{items:[],has_more:true,page_token:'next'}});
+  const token=(await tool.execute('first',bounds)).details.next_page_token;
+  mocks.list.mockClear();
+  for(const params of [{...bounds,page_token:token+'x'},{...bounds,page_token:token,limit:5},{start_time:101,end_time:200,page_token:token},{page_token:token}])expect((await tool.execute('bad',params)).isError).toBe(true);
+  const cfg={channels:{feishu:{...config.channels.feishu,groupAllowFrom:['oc_fixture','oc_other']}}};
+  for(const context of [{sessionKey:'agent:main:feishu:group:oc_other'},{sessionKey:'agent:main:feishu:group:oc_fixture:topic:om_other'},{agentId:'other'}])expect((await setup(cfg)(context).execute('bad',{...bounds,page_token:token})).isError).toBe(true);
+  const multi={channels:{feishu:{...config.channels.feishu,accounts:{other:{appId:'other',appSecret:'other-secret'}}}}};
+  expect((await setup(multi)({agentAccountId:'other',deliveryContext:{accountId:'other'}}).execute('bad',{...bounds,page_token:token})).isError).toBe(true);
+  expect(mocks.list).not.toHaveBeenCalled();
+});
+it("validates paired second timestamps, handles exclusive midnight, and never treats broken pagination as complete", async () => {
+  const tool=setup()();
+  for(const p of [{start_time:100},{end_time:200},{start_time:200,end_time:100},{start_time:-1,end_time:1},{start_time:1.5,end_time:10},{page_token:''}])expect((await tool.execute('bad',p)).isError).toBe(true);
+  expect(mocks.list).not.toHaveBeenCalled();
+  mocks.list.mockResolvedValueOnce({code:0,data:{items:[{message_id:'before',create_time:'99999'},{message_id:'inside',create_time:'100000'},{message_id:'end',create_time:'200000'}],has_more:false}});
+  expect((await tool.execute('bounds',{start_time:100,end_time:200})).details.messages.map((x: {message_id: string})=>x.message_id)).toEqual(['inside']);
+  mocks.list.mockResolvedValueOnce({code:0,data:{items:[],has_more:true}});expect((await tool.execute('missing',{})).isError).toBe(true);
+  mocks.list.mockResolvedValueOnce({code:0,data:{items:[],has_more:true,page_token:'same'}});const first=(await tool.execute('empty',{start_time:100,end_time:200})).details;expect(first.has_more).toBe(true);expect(first.window_complete).toBe(false);
+  mocks.list.mockResolvedValueOnce({code:0,data:{items:[],has_more:true,page_token:'same'}});expect((await tool.execute('stuck',{start_time:100,end_time:200,page_token:first.next_page_token})).isError).toBe(true);
 });

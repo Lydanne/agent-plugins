@@ -139,7 +139,7 @@ Kev 使用 directed / not_directed / uncertain 三选一，明确标签且对应
 
 ## 与 Agent Repo / Worker 组合
 
-Main 使用 `feishu_group_history` 按需读取当前群，将必要事实交给 Worker；Worker 本身不注册群历史工具。Agent Repo 模式由 agent-repo 管理角色与项目同步，保持旧 `workspaceSync.enabled=false`，不要同时启用两套同步入口。工作卡、异步完成、结构化提问及报告的协议见后续章节。
+Main 使用 `feishu_group_history` 按需读取当前群。支持 `start_time`/`end_time`（Unix 秒、左闭右开）及 `page_token`；每页最多50条，保持范围及 limit 不变，用返回的 `next_page_token` 翻页直到 `has_more=false`，按消息ID去重。游标绑定当前账号、群会话及查询范围，宿主重启后需从首页重读。完成分页仅证明机器人可见历史已读完，不保证已撤回消息或附件可用。Main 将必要事实交给 Worker；Worker 本身不注册群历史工具。Agent Repo 模式由 agent-repo 管理角色与项目同步，保持旧 `workspaceSync.enabled=false`，不要同时启用两套同步入口。工作卡、异步完成、结构化提问及报告的协议见后续章节。
 
 报告交付建议先在测试群确认成员能打开文档再用于业务。`documentDelivery` 当前默认启用，但最小接入示例显式关闭，待权限准备后再开启。`[完整报告]` / `[诊断报告]` 标签和链接保持稳定，“上传中”只在占位文档内部显示；上传失败保留总结并报告真实错误，不重新执行业务。
 
