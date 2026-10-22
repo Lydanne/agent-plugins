@@ -2,7 +2,9 @@ import type {OpenClawPluginApi,OpenClawPluginToolContext} from 'openclaw/plugin-
 import {SourceTask,sourceTaskBridge,isCompletionSourceCurrent,type TaskLease} from './source-task.js';
 import {runFeishuWorkingTurn} from './working-turn-queue.js';
 import {resolveFeishuRuntimeAccount} from './accounts.js';
-import {sendMessageFeishu} from './send.js';
+import {sendCardFeishu} from './send.js';
+import {workingResultCard} from './working-card.js';
+import {assertFeishuCardWithinEnvelope,withinCardTableLimit} from './presentation-card.js';
 import type {ClawdbotConfig} from '../runtime-api.js';
 
 type Source=Omit<TaskLease,'signal'> & {agentId:string;sessionId:string};
@@ -27,7 +29,7 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
   if(!current(p))throw Error('Schedule source is no longer current');return p;
  };
  const deliver=async(request:Request,callbacks:Callbacks)=>{
-  const p=request.source;let accepted=false;let jobIds:string[]=[];let stage="queue";
+  const p=request.source;let accepted=false;let jobIds:string[]=[];let stage="queue";const deliveryReceipts:{messageId:string;chatId:string}[]=[];
   try{
   await runFeishuWorkingTurn({key:JSON.stringify([p.accountId,p.sessionKey]),senderId:p.senderId,signal:callbacks.signal,prepare:async()=>{},cancel:async()=>{throw Error('Scheduled Main turn cancelled');},run:async()=>{
    stage="source_validation";callbacks.assertCurrent();if(!current(p))throw Error('Schedule source or session is no longer current');
@@ -42,7 +44,7 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
    const lease=source.begin();lease.scheduledRequest=true;
    const signal=callbacks.signal?AbortSignal.any([callbacks.signal,lease.signal]):lease.signal;
    const assertCurrent=()=>{callbacks.assertCurrent();signal.throwIfAborted();if(!current(p))throw Error('Schedule authorization changed');};
-   const body='这是用户先前授权的定时任务触发，不是新的真人消息。仅执行本次保存的任务与范围；业务执行仍交给 agent_worker，使用指定 projectId。相对时间以本次触发时刻计算。不得创建新的定时任务。\n'+JSON.stringify({scheduleId:request.id,occurrence:request.runKey,triggeredAt:new Date(request.runAtMs).toISOString(),timeZone:request.schedule?.tz??'Asia/Shanghai',projectId:request.projectId,task:request.task,constraints:request.constraints})+'\n'+source.instruction();
+   const body='这是用户先前授权的定时任务触发，不是新的真人消息。仅执行本次保存的任务与范围；群消息整理、每日清单及已有进展汇总由 Main 直接读取原群历史并核对已有任务状态与报告后完成，不委派 Worker 做整理；只有新增业务查询、日志排查或修复才按角色职责交给 agent_worker，使用指定 projectId。最终内容由渠道发为飞书卡片：概览后用 Markdown 表格呈现问题、提问者、状态、证据及下一步，并注明覆盖缺口。不输出卡片 JSON、不另发消息。正文控制在4000字以内、最多5个表格。相对时间以本次触发时刻计算。不得创建新的定时任务。\n'+JSON.stringify({scheduleId:request.id,occurrence:request.runKey,triggeredAt:new Date(request.runAtMs).toISOString(),timeZone:request.schedule?.tz??'Asia/Shanghai',projectId:request.projectId,task:request.task,constraints:request.constraints})+'\n'+source.instruction();
    stage="context_creation";const ctxPayload=core.channel.reply.finalizeInboundContext({Body:body,BodyForAgent:body,RawBody:body,CommandBody:'',SessionKey:p.sessionKey,AccountId:p.accountId,From:'feishu:'+p.senderId,To:'chat:'+p.chatId,ChatType:'group',Provider:'feishu',Surface:'feishu',SenderId:p.senderId,OriginatingChannel:'feishu',OriginatingTo:'chat:'+p.chatId,MessageSid:messageId,CommandAuthorized:false});
    let deliveryError:unknown;
    try{
@@ -50,12 +52,12 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
     stage="main_dispatch";await core.channel.inbound.run({channel:'feishu',accountId:p.accountId,raw:request,adapter:{ingest:()=>({id:messageId,rawText:body,textForAgent:body,textForCommands:'',raw:request}),resolveTurn:()=>({cfg,channel:'feishu',accountId:p.accountId,route:{agentId:p.agentId,sessionKey:p.sessionKey},ctxPayload,
      replyOptions:{abortSignal:signal,disableBlockStreaming:true,onAgentRunStart:()=>{assertCurrent();accepted=true;},turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}},
      delivery:{deliver:async(payload,info)=>{if(info.kind!=='final'||payload.isReasoning||payload.isCommentary||!payload.text)return;
-      try{assertCurrent();await sendMessageFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,text:payload.text,replyToMessageId:p.rootId??p.requestMessageIds?.at(-1),replyInThread:p.replyInThread??false});}catch(error){deliveryError=error;throw error;}
+      try{assertCurrent();const card=workingResultCard(payload.text,account.config);assertFeishuCardWithinEnvelope(card);if(!withinCardTableLimit(payload.text))throw Error('Scheduled result exceeds the card table limit');const receipt=await sendCardFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,card,replyToMessageId:p.rootId??p.requestMessageIds?.at(-1),replyInThread:p.replyInThread??false});deliveryReceipts.push({messageId:receipt.messageId,chatId:p.chatId});}catch(error){deliveryError=error;throw error;}
      },onError:error=>{deliveryError=error;throw error;}}})}});
     if(deliveryError)throw deliveryError;jobIds=[...(lease.asyncJobIds??[])];if(jobIds.length)accepted=true;
    }finally{source.close();}
   }});
-  return {accepted,jobIds};
+  return {accepted,jobIds,...(deliveryReceipts.length?{deliveryReceipts}:{})};
   }catch(error){throw Object.assign(new Error(error instanceof Error?error.message:String(error),{cause:error}),{scheduledStage:stage});}
  };
  return {capture,current,deliver};
