@@ -19,8 +19,9 @@ export function mountProjects(container,initial){
  const safe=value=>context.host.redact(String(value??'')),target=()=>currentUiTarget(context);
  const panelId='ar-skills-'+(++panelSequence);
  let logDialog=null,logConsole=null,peopleDialog=null,scheduleManager=null;
+ function groupName(task){const key='agent:'+target().agentId+':feishu:group:'+task.chatId;const row=(context.host.sessions.rows??[]).find(row=>row.key===key);return [row?.label,row?.displayName].find(name=>typeof name==='string'&&name.trim()&&!name.includes(task.chatId))?.trim()??'群名称未获取';}
  function closeScheduleManager(){scheduleManager?.dispose();scheduleManager=null;}
- function openScheduleManager(initialTaskId){closeScheduleManager();scheduleManager=mountScheduleManager(container,{initialTaskId,invoke,canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{scheduleManager=null;},onChanged:()=>refresh()});}
+ function openScheduleManager(initialTaskId){closeScheduleManager();scheduleManager=mountScheduleManager(container,{initialTaskId,groupName,invoke,canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{scheduleManager=null;},onChanged:()=>refresh()});}
  let maintenanceView=null;
  function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
@@ -97,7 +98,7 @@ export function mountProjects(container,initial){
    const row=button('',()=>openSyncDialog(task.taskId));row.className='ar-scheduled-task';row.dataset.taskId=task.taskId;row.setAttribute('aria-label','查看'+task.name);row.setAttribute('aria-haspopup','dialog');
    const top=element('span',undefined,'ar-task-row-top');top.append(element('strong',safe(task.name)),taskBadge(task));row.append(top);
    row.append(element('span',safe((task.type==='scheduled-request'?'OpenClaw 联动 · ':'系统任务 · ')+scheduleText(task)),'ar-task-row-meta'));
-   row.append(element('span',safe(task.scope.label),'ar-task-row-meta'));
+   if(task.type==='scheduled-request'){row.append(element('span',safe('来源群：'+groupName(task)),'ar-task-row-meta'),element('span',safe('原请求人：'+(task.requester??'未记录')),'ar-task-row-meta'));}else row.append(element('span',safe(task.scope.label),'ar-task-row-meta'));
    const bottom=element('span',undefined,'ar-task-row-bottom');bottom.append(element('span',safe('下次计划：'+planText(task))));
    const last=element('span','上次：');last.append(task.lastRun?syncBadge(task.lastRun.status):element('span','尚未执行','ar-muted'));bottom.append(last);row.append(bottom);if(full){const card=element('article',undefined,'ar-task-card'),actions=element('div',undefined,'ar-task-card-actions'),edit=button('编辑计划',()=>openScheduleManager(task.taskId.replace(/^scheduled-request:/,'')));edit.setAttribute('aria-label','编辑'+task.name);edit.setAttribute('aria-haspopup','dialog');actions.append(element('span','点击任务查看执行记录','ar-muted'),edit);card.append(row,actions);grid.append(card);}else grid.append(row);
   }
@@ -151,7 +152,7 @@ export function mountProjects(container,initial){
  }
  function taskSettings(task){
   const section=element('section',undefined,'ar-task-settings'),data=element('dl',undefined,'ar-task-config');
-  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['原群',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));if(task.type==='repository-sync'&&task.jobId)data.append(element('dt','OpenClaw 任务 ID'),element('dd',safe(task.jobId)));section.append(data,element('p',task.type==='scheduled-request'?'在任务列表点击“管理定时任务”可修改计划；原生调度成功或 Main 接纳不代表业务完成。':task.readOnly?'此处只读展示；系统同步计划由部署配置管理。':'在任务列表点击“管理定时任务”管理原生同步计划；当天已尝试的同步不会重跑。','ar-muted'));return section;
+  for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['原请求人',task.requester],['来源群',groupName(task)],['群 ID',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));if(task.type==='repository-sync'&&task.jobId)data.append(element('dt','OpenClaw 任务 ID'),element('dd',safe(task.jobId)));section.append(data,element('p',task.type==='scheduled-request'?'在任务列表点击“管理定时任务”可修改计划；原生调度成功或 Main 接纳不代表业务完成。':task.readOnly?'此处只读展示；系统同步计划由部署配置管理。':'在任务列表点击“管理定时任务”管理原生同步计划；当天已尝试的同步不会重跑。','ar-muted'));return section;
  }
  function renderSyncDialog(){
   if(!syncDialog||!syncTaskId)return;
