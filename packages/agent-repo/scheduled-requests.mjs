@@ -70,7 +70,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
    db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('submitted',JSON.stringify(receipt),r.jobId,event.runAtMs);
    const latest=all().find(x=>x.id===r.id);latest.lastRun={at:event.runAtMs,status:'submitted',jobIds:receipt.jobIds??[]};
    if(r.schedule.kind==='at'&&latest.status==='enabled')latest.status='completed';save(latest);
-  }catch(error){db.prepare('UPDATE runs SET status=? WHERE job=? AND slot=?').run('unknown',r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
+  }catch(error){db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('unknown',JSON.stringify({stage:error?.scheduledStage??'dispatch',name:error?.name??'Error',message:String(error?.message??error).slice(0,1000)}),r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
  }
  async function recover(signal){for(const job of await cron().list({includeDisabled:true})){if(job.state?.lastRunStatus==='ok'&&Number.isSafeInteger(job.state.lastRunAtMs))await fire({action:'finished',status:'ok',jobId:job.id,agentId:job.agentId,runAtMs:job.state.lastRunAtMs},signal);}}
  return {manage,fire,recover,close:()=>db.close()};

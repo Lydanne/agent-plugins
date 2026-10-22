@@ -27,14 +27,15 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
   if(!current(p))throw Error('Schedule source is no longer current');return p;
  };
  const deliver=async(request:Request,callbacks:Callbacks)=>{
-  const p=request.source;let accepted=false;let jobIds:string[]=[];
+  const p=request.source;let accepted=false;let jobIds:string[]=[];let stage="queue";
+  try{
   await runFeishuWorkingTurn({key:JSON.stringify([p.accountId,p.sessionKey]),senderId:p.senderId,signal:callbacks.signal,prepare:async()=>{},cancel:async()=>{throw Error('Scheduled Main turn cancelled');},run:async()=>{
-   callbacks.assertCurrent();if(!current(p))throw Error('Schedule source or session is no longer current');
-   const base=core.config.current() as ClawdbotConfig;const account=resolveFeishuRuntimeAccount({cfg:base,accountId:p.accountId});
+   stage="source_validation";callbacks.assertCurrent();if(!current(p))throw Error('Schedule source or session is no longer current');
+   stage="account_resolution";const base=core.config.current() as ClawdbotConfig;const account=resolveFeishuRuntimeAccount({cfg:base,accountId:p.accountId});
    if(!account.enabled||!account.configured)throw Error('Feishu account is unavailable');
    const cfg={...base,messages:{...base.messages,queue:{...base.messages?.queue,mode:'followup' as const}}};
    const messageId='scheduled:'+request.runKey;
-   const source=new SourceTask({accountId:p.accountId,chatId:p.chatId,sessionKey:p.sessionKey,senderId:p.senderId,chatType:p.chatType,rootId:p.rootId,replyInThread:p.replyInThread,people:p.people},[
+   stage="source_creation";const source=new SourceTask({accountId:p.accountId,chatId:p.chatId,sessionKey:p.sessionKey,senderId:p.senderId,chatType:p.chatType,rootId:p.rootId,replyInThread:p.replyInThread,people:p.people},[
     ...p.sourceMessageIds.map(id=>({messageId:id,text:'',kind:p.requestMessageIds?.includes(id)?'request' as const:'reference' as const})),
     {messageId,text:'Scheduled occurrence',kind:'reference'},
    ]);
@@ -42,11 +43,11 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
    const signal=callbacks.signal?AbortSignal.any([callbacks.signal,lease.signal]):lease.signal;
    const assertCurrent=()=>{callbacks.assertCurrent();signal.throwIfAborted();if(!current(p))throw Error('Schedule authorization changed');};
    const body='这是用户先前授权的定时任务触发，不是新的真人消息。仅执行本次保存的任务与范围；业务执行仍交给 agent_worker，使用指定 projectId。相对时间以本次触发时刻计算。不得创建新的定时任务。\n'+JSON.stringify({scheduleId:request.id,occurrence:request.runKey,triggeredAt:new Date(request.runAtMs).toISOString(),timeZone:request.schedule?.tz??'Asia/Shanghai',projectId:request.projectId,task:request.task,constraints:request.constraints})+'\n'+source.instruction();
-   const ctxPayload=core.channel.reply.finalizeInboundContext({Body:body,BodyForAgent:body,RawBody:body,CommandBody:'',SessionKey:p.sessionKey,AccountId:p.accountId,From:'feishu:'+p.senderId,To:'chat:'+p.chatId,ChatType:'group',Provider:'feishu',Surface:'feishu',SenderId:p.senderId,OriginatingChannel:'feishu',OriginatingTo:'chat:'+p.chatId,MessageSid:messageId,CommandAuthorized:false});
+   stage="context_creation";const ctxPayload=core.channel.reply.finalizeInboundContext({Body:body,BodyForAgent:body,RawBody:body,CommandBody:'',SessionKey:p.sessionKey,AccountId:p.accountId,From:'feishu:'+p.senderId,To:'chat:'+p.chatId,ChatType:'group',Provider:'feishu',Surface:'feishu',SenderId:p.senderId,OriginatingChannel:'feishu',OriginatingTo:'chat:'+p.chatId,MessageSid:messageId,CommandAuthorized:false});
    let deliveryError:unknown;
    try{
     assertCurrent();source.activate();
-    await core.channel.inbound.run({channel:'feishu',accountId:p.accountId,raw:request,adapter:{ingest:()=>({id:messageId,rawText:body,textForAgent:body,textForCommands:'',raw:request}),resolveTurn:()=>({cfg,channel:'feishu',accountId:p.accountId,route:{agentId:p.agentId,sessionKey:p.sessionKey},ctxPayload,
+    stage="main_dispatch";await core.channel.inbound.run({channel:'feishu',accountId:p.accountId,raw:request,adapter:{ingest:()=>({id:messageId,rawText:body,textForAgent:body,textForCommands:'',raw:request}),resolveTurn:()=>({cfg,channel:'feishu',accountId:p.accountId,route:{agentId:p.agentId,sessionKey:p.sessionKey},ctxPayload,
      replyOptions:{abortSignal:signal,disableBlockStreaming:true,onAgentRunStart:()=>{assertCurrent();accepted=true;},turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}},
      delivery:{deliver:async(payload,info)=>{if(info.kind!=='final'||payload.isReasoning||payload.isCommentary||!payload.text)return;
       try{assertCurrent();await sendMessageFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,text:payload.text,replyToMessageId:p.rootId??p.requestMessageIds?.at(-1),replyInThread:p.replyInThread??false});}catch(error){deliveryError=error;throw error;}
@@ -55,6 +56,7 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
    }finally{source.close();}
   }});
   return {accepted,jobIds};
+  }catch(error){throw Object.assign(new Error(error instanceof Error?error.message:String(error),{cause:error}),{scheduledStage:stage});}
  };
  return {capture,current,deliver};
 }
