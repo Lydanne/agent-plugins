@@ -34,3 +34,11 @@ test('late Worker bridge startup invokes presentation recovery after exposing th
  registerQuestionBridge({registerService:s=>{service=s;}},{},{recoverContextCards:async()=>{assert.equal(typeof bridge.read,'function');recoveries++;}});
  try{await service.start();assert.equal(recoveries,1);}finally{service.stop();}
 });
+
+test('user answers and cancellation remain available during the bounded Main timeout grace',async()=>{
+ const p={taskId:'task',revision:0,senderId:'alice',accountId:'a',chatId:'chat',sessionKey:'main'},q={questionId:'q',expiresAt:Date.now()+10000,timeoutRequestedAt:Date.now()};
+ let service,cancels=0;const job={provenance:p,status:'awaiting_main',questions:[q],contextRequest:q,jobId:'job'};
+ registerQuestionBridge({registerService:s=>{service=s;}},{status:()=>job,cancel:()=>{cancels++;return {status:'cancelled'};}},{authorizeReply:()=>true});
+ const bridge=globalThis[Symbol.for('ada.worker-question.v1')];await service.start();
+ try{assert.equal(bridge.read({jobId:'job',questionId:'q',provenance:p}).status,'awaiting_user');assert.equal(bridge.cancel({jobId:'job',questionId:'q',provenance:p}).status,'cancelled');assert.equal(cancels,1);}finally{service.stop();}
+});

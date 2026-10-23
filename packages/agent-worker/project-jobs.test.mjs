@@ -1,3 +1,4 @@
+import {hostRequestId} from './collaboration.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
@@ -12,7 +13,7 @@ async function fixture(t){
  const base=fileURLToPath(new URL('../../.tmp/project-jobs-tests/',import.meta.url));await mkdir(base,{recursive:true});const temp=await mkdtemp(join(base,'case-')),root=join(temp,'jobs');await mkdir(root);t.after(()=>rm(temp,{recursive:true,force:true}));
  const worker=join(root,'fake.mjs');await writeFile(worker,`import{readFileSync,writeFileSync,renameSync}from'node:fs';const[root,id]=process.argv.slice(2);let input='';for await(const chunk of process.stdin)input+=chunk;await new Promise(resolve=>setTimeout(resolve,300));const path=root+'/'+id+'.json',job=JSON.parse(readFileSync(path));job.status='completed';job.finishedAt=Date.now();job.result={content:[{type:'text',text:JSON.stringify({result:'fixture complete',project:JSON.parse(input).runtime.projectContext})}]};writeFileSync(path+'.tmp',JSON.stringify(job));renameSync(path+'.tmp',path);`);
  const calls=[];const runtime=params=>{if(calls.unavailable)throw Error('Project provider unavailable');calls.push(params);const id=params.projectId??params.repository?.split('/')[1]??'a';return {node:process.execPath,cwd:root+'/projects/'+id,projectContext:{agentId:'main',root,projectId:id,repository:params.repository??'projects/'+id,cwd:root+'/projects/'+id},executionScope:createHash('sha256').update(id+':'+(params.repository??'projects/'+id)).digest('hex')};};
- const jobs=createJobs({root,node:process.execPath,worker,getRuntime:runtime,getLimits:()=>({maxConcurrentJobs:3,maxQueuedJobs:20})});t.after(()=>jobs.stop());
+ const jobs=createJobs({root,node:process.execPath,worker,getRuntime:runtime,getRequestId:hostRequestId,getLimits:()=>({maxConcurrentJobs:3,maxQueuedJobs:20})});t.after(()=>jobs.stop());
  return {root,jobs,calls};
 }
 const params={topic:'same',task:'fixture',context:'fixture',constraints:'read only',waitSeconds:0};
@@ -65,4 +66,22 @@ test('context reply stays bound to accepted project when project provider is una
  assert.equal(request.resumeParams.projectId,'a');assert.equal(request.resumeParams.repository,'projects/a');
  assert.deepEqual(request.resumeParams.mainReplies,[{questionId:question.questionId,question:question.question,answer:'Test environment'}]);
  assert.equal(JSON.parse(done.result.content[0].text).project.projectId,'a');
+});
+
+test('host request IDs bind canonical project selection without duplicating omitted/explicit retries',async t=>{
+ const f=await fixture(t),p={taskId:'source',revision:0,accountId:'a',senderId:'alice',sessionKey:scope,agentId:'main'};
+ const first=await f.jobs.run(params,scope,p);assert.match(first.requestId,/^host:/);
+ const explicit=await f.jobs.run({...params,projectId:'a'},scope,p);assert.equal(explicit.jobId,first.jobId);
+ const repo=await f.jobs.run({...params,repository:'projects/a'},scope,p);assert.equal(repo.jobId,first.jobId);
+ const omitted=await f.jobs.run(params,scope,p);assert.equal(omitted.jobId,first.jobId);
+ await assert.rejects(f.jobs.run({...params,projectId:'a',task:'different'},scope,p),{code:'REQUEST_ID_CONFLICT'});
+ await f.jobs.wait(first.jobId,scope,3);
+ const other=await f.jobs.run({...params,projectId:'b'},scope,p);const later=await f.jobs.run({...params,projectId:'a'},scope,{...p,revision:1});
+ assert.notEqual(other.requestId,first.requestId);assert.notEqual(later.requestId,first.requestId);
+ await Promise.all([f.jobs.wait(other.jobId,scope,3),f.jobs.wait(later.jobId,scope,3)]);
+});
+test('a host ID first accepted with explicit project cannot be repeated by omitting the selector',async t=>{
+ const f=await fixture(t),p={taskId:'source',revision:0,accountId:'a',senderId:'alice',sessionKey:scope,agentId:'main'};
+ const first=await f.jobs.run({...params,projectId:'a'},scope,p);const repeated=await f.jobs.run(params,scope,p);
+ assert.equal(repeated.jobId,first.jobId);await f.jobs.wait(first.jobId,scope,3);
 });

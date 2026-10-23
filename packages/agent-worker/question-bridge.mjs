@@ -4,17 +4,20 @@ export function registerQuestionBridge(api,jobs,completionBridge){
  const verify=({jobId,questionId,provenance})=>{
   const job=jobs.status(jobId,provenance.sessionKey);
   if(['taskId','revision','senderId','accountId','chatId','sessionKey'].some(key=>job.provenance?.[key]!==provenance[key])||!completionBridge.authorizeReply?.(job.provenance))throw Error('Task source is no longer current');
-  const question=(job.questions??[]).find(q=>q.questionId===questionId);
+  const supplement=jobs.supplement?.(jobId,provenance.sessionKey,questionId);
+  const question=supplement?.question??(job.questions??[]).find(q=>q.questionId===questionId);
   if(!question||question.expiresAt<=Date.now())throw Error('Question expired');
-  return {job,question};
+  return {job,question,supplement};
  };
- const read=params=>{const {job,question}=verify(params);return {status:job.status,question,latestQuestionId:job.questions?.at(-1)?.questionId};};
+ const read=params=>{const {job,question,supplement}=verify(params);return {status:supplement?(supplement.status==='waiting'?'awaiting_user':supplement.status):job.status==='awaiting_main'&&job.contextRequest?.timeoutRequestedAt?'awaiting_user':job.status,question:supplement?.answer?{...question,answer:supplement.answer}:question,latestQuestionId:supplement?question.questionId:job.questions?.at(-1)?.questionId};};
  const cancel=params=>{
   const {job,question}=verify(params);
-  if(job.status!=='awaiting_user'||question.answer!==undefined||job.contextRequest?.questionId!==params.questionId)throw Error('Question is no longer awaiting user');
+  if(!(job.status==='awaiting_user'||job.status==='awaiting_main'&&job.contextRequest?.timeoutRequestedAt)||question.answer!==undefined||job.contextRequest?.questionId!==params.questionId)throw Error('Question is no longer awaiting user');
   return jobs.cancel(job.jobId,params.provenance.sessionKey,{senderId:params.provenance.senderId,accountId:params.provenance.accountId});
  };
- api.registerService({id:'agent-worker-questions',start:async()=>{bridge.read=read;bridge.cancel=cancel;await completionBridge.recoverContextCards?.();},stop:()=>{if(bridge.read===read)bridge.read=undefined;if(bridge.cancel===cancel)bridge.cancel=undefined;}});
+ const reopen=async params=>{verify(params);return jobs.openSupplement(params.jobId,params.provenance.sessionKey,params.questionId,p=>completionBridge.authorizeReply?.(p)===true);};
+ const supplement=async params=>{verify(params);return jobs.submitSupplement(params.jobId,params.provenance.sessionKey,params.questionId,params.answer,params,p=>completionBridge.authorizeReply?.(p)===true);};
+ api.registerService({id:'agent-worker-questions',start:async()=>{bridge.read=read;bridge.cancel=cancel;bridge.reopen=reopen;bridge.supplement=supplement;await completionBridge.recoverContextCards?.();},stop:()=>{if(bridge.reopen===reopen)bridge.reopen=undefined;if(bridge.supplement===supplement)bridge.supplement=undefined;if(bridge.read===read)bridge.read=undefined;if(bridge.cancel===cancel)bridge.cancel=undefined;}});
 }
 
 export async function contextPresentation(handler,event){

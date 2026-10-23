@@ -1,4 +1,4 @@
-import {workerQuestionBridge,WORKER_QUESTION_SUBMIT,WORKER_QUESTION_CANCEL} from './worker-question.js';
+import {workerQuestionBridge,WORKER_QUESTION_SUBMIT,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN} from './worker-question.js';
 // Feishu plugin module implements card action behavior.
 import {
   asDateTimestampMs,
@@ -369,7 +369,7 @@ export async function handleFeishuCardAction(params: {
         `feishu[${account.accountId}]: handling structured card action ${envelope.a} from ${event.operator.open_id}`,
       );
 
-      if(envelope.a===WORKER_QUESTION_SUBMIT||envelope.a===WORKER_QUESTION_CANCEL){
+      if(envelope.a===WORKER_QUESTION_SUBMIT||envelope.a===WORKER_QUESTION_CANCEL||envelope.a===WORKER_QUESTION_REOPEN){
         if(!workerQuestionBridge.action)throw Error('Worker question adapter is unavailable');
         await workerQuestionBridge.action({cfg,event,accountId:account.accountId});
         completeFeishuCardAction(event.token,account.accountId);return;

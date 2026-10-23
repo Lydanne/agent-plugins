@@ -6,11 +6,12 @@ import {createFeishuCardInteractionEnvelope} from './card-interaction.js';
 import type {TaskLease} from './source-task.js';
 export const WORKER_QUESTION_SUBMIT='worker.question.submit';
 export const WORKER_QUESTION_CANCEL='worker.question.cancel';
-export type Question = ContextRequest & {questionId:string;expiresAt:number;knownValues?:Record<string,unknown>;answer?:string;answerSource?:string};
+export const WORKER_QUESTION_REOPEN='worker.question.reopen';
+export type Question = ContextRequest & {questionId:string;expiresAt:number;knownValues?:Record<string,unknown>;answer?:string;answerSource?:string;answeredAt?:number;resumeReason?:string;timeoutRequestedAt?:number};
 export type QuestionProvenance = Omit<TaskLease,'signal'> & {sessionId?:string;requestMessageIds:string[]};
 export type QuestionTextReply = {cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;chatId:string;senderId:string;messageId:string;parentId:string;text:string};
-export type QuestionCard = {jobId:string;provenance:QuestionProvenance;question:Question;messageId:string;status:'waiting'|'submitted'|'accepted'|'cancelled';answers?:Record<string,unknown>;note?:string;answerSource?:'user_card'|'user_text'|'main_context';answerMessageId?:string;validationNote?:string;submittedAt?:number;workingMessageId?:string;workingAttempted?:boolean;rendered?:boolean;creationState?:'retryable'|'uncertain';dispatchAttempts?:number;urgentAttemptedAt?:number;urgentOutcome?:'uncertain'|'sent'|'failed'};
-type QuestionBridge={submission?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{answerText?:string;answerValues?:Record<string,unknown>;answerSource:'user_card'|'user_text';answerMessageId?:string;userSubmittedAt?:number}|undefined;cancel?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string};read?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string;question:Question;latestQuestionId?:string};submit?:(card:QuestionCard)=>Promise<void>;textReply?:(params:QuestionTextReply)=>Promise<boolean>;action?:(params:{cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;event:import('./card-action.js').FeishuCardActionEvent})=>Promise<void>;authorize?:(p:QuestionProvenance)=>boolean};
+export type QuestionCard = {jobId:string;provenance:QuestionProvenance;question:Question;messageId:string;status:'waiting'|'submitted'|'accepted'|'cancelled';answers?:Record<string,unknown>;note?:string;answerSource?:'user_card'|'user_text'|'main_context'|'user_wait_timeout';answerMessageId?:string;validationNote?:string;submittedAt?:number;workingMessageId?:string;workingAttempted?:boolean;rendered?:boolean;creationState?:'retryable'|'uncertain';supplementOf?:string;reopenAllowed?:boolean;reopenedQuestionId?:string;dispatchAttempts?:number;urgentAttemptedAt?:number;urgentOutcome?:'uncertain'|'sent'|'failed'};
+type QuestionBridge={reopen?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>Promise<{question:Question;supplementId:string}>;supplement?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance;answer:string;answerSource:string;answerValues?:Record<string,unknown>;answerMessageId?:string})=>Promise<unknown>;submission?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{answerText?:string;answerValues?:Record<string,unknown>;answerSource:'user_card'|'user_text';answerMessageId?:string;userSubmittedAt?:number}|undefined;cancel?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string};read?:(params:{jobId:string;questionId:string;provenance:QuestionProvenance})=>{status:string;question:Question;latestQuestionId?:string};submit?:(card:QuestionCard)=>Promise<void>;textReply?:(params:QuestionTextReply)=>Promise<boolean>;action?:(params:{cfg:import('../runtime-api.js').ClawdbotConfig;accountId:string;event:import('./card-action.js').FeishuCardActionEvent})=>Promise<void>;authorize?:(p:QuestionProvenance)=>boolean};
 const symbol=Symbol.for('ada.worker-question.v1');
 const globalState=globalThis as typeof globalThis & {[symbol]?:QuestionBridge};
 export const workerQuestionBridge=globalState[symbol]??={};
@@ -70,7 +71,8 @@ function controls(f:ContextField):Record<string,unknown>[] {
 }
 export function questionAction(card:QuestionCard){return createFeishuCardInteractionEnvelope({k:'button',a:WORKER_QUESTION_SUBMIT,m:{questionId:card.question.questionId},c:{u:card.provenance.senderId,h:card.provenance.chatId,s:card.provenance.sessionKey,e:card.question.expiresAt,t:'group'}});}
 export function renderQuestionCard(card:QuestionCard,error?:string):Record<string,unknown>{
- const q=card.question,waiting=card.status==='waiting';
+ const q=card.question,waiting=card.status==='waiting',timedOut=q.resumeReason==='user_wait_timeout';
+ const reopen=card.reopenAllowed&&!card.reopenedQuestionId&&q.expiresAt>Date.now()?{tag:'button',text:text('重新补充'),type:'primary',behaviors:[{type:'callback',value:{...questionAction(card),a:WORKER_QUESTION_REOPEN}}]}:undefined;
  const elements:Record<string,unknown>[]=[markdown(q.question)];
  if(error??card.validationNote)elements.push(markdown('填写提示：'+(error??card.validationNote)));
  if(q.knownValues&&Object.keys(q.knownValues).length)elements.push(markdown('已确定信息\n'+answerSummary(q,q.knownValues)));
@@ -85,19 +87,20 @@ export function renderQuestionCard(card:QuestionCard,error?:string):Record<strin
   if(quick){for(const option of fields[0].options!)elements.push({tag:'button',text:text(option.label),type:'default',behaviors:[{type:'callback',value:{...questionAction(card),m:{questionId:q.questionId,option:option.value}}}]});}
   if(!quick)elements.push({tag:'form',name:'worker_question',elements:form});
   elements.push(markdown('也可以直接回复这张卡片，用文字补充。'));
-  elements.push({tag:'button',name:'worker_cancel',text:text('取消任务'),type:'default',confirm:{title:text('取消原任务？'),text:text('取消后不再继续执行；已发生的外部操作不会回滚。')},behaviors:[{type:'callback',value:{...questionAction(card),a:WORKER_QUESTION_CANCEL}}]});
+  if(!card.supplementOf)elements.push({tag:'button',name:'worker_cancel',text:text('取消任务'),type:'default',confirm:{title:text('取消原任务？'),text:text('取消后不再继续执行；已发生的外部操作不会回滚。')},behaviors:[{type:'callback',value:{...questionAction(card),a:WORKER_QUESTION_CANCEL}}]});
   elements.push({tag:'collapsible_panel',expanded:false,header:{title:text('提问原因与已完成工作')},elements:[markdown(q.reason),markdown(q.progress),...(q.recommendation?[markdown('建议（尚未确认）：'+q.recommendation)]:[])]});
  }else if(card.status==='cancelled'){elements.push(markdown('任务已取消，不再接受本轮补充。'));
  }else{
-  const note=['user_text','main_context'].includes(card.answerSource??'')&&card.note&&card.note.length>2000?Array.from(card.note).slice(0,2000).join('')+'\n（卡片展示摘录，完整文字已保存。）':card.note;
-  elements.push(markdown('已补充\n'+answerSummary(q,card.answers??{})+(note?'\n'+(card.answerSource==='user_text'?'文字补充：':'补充说明：')+note:'')));
-  elements.push(markdown(card.status==='accepted'?'答案已受理，原任务继续处理。':'答案已保存，正在交回 Main。'));
-  if(error&&card.status==='submitted')elements.push({tag:'button',text:text('重试交回 Main'),type:'primary',behaviors:[{type:'callback',value:{...questionAction(card),m:{questionId:q.questionId,retry:true}}}]});
-  elements.push(markdown('提交时间：'+new Date(card.submittedAt??Date.now()).toISOString()+(card.answerSource==='main_context'?' · Main 自动补充':' · 回答者为原提问者')));
+  const note=['user_text','main_context','user_wait_timeout'].includes(card.answerSource??'')&&card.note&&card.note.length>2000?Array.from(card.note).slice(0,2000).join('')+'\n（卡片展示摘录，完整文字已保存。）':card.note;
+  elements.push(markdown((timedOut?'续接说明\n':'已补充\n')+answerSummary(q,card.answers??{})+(note?'\n'+(card.answerSource==='user_text'?'文字补充：':'补充说明：')+note:'')));
+  elements.push(markdown(q.resumeReason==='user_wait_timeout'?'等待已超时，已使用确定信息继续；未知信息对应的步骤跳过。':card.supplementOf?'补充已保存，将在原 Worker 当前轮次结束后接续。':card.status==='accepted'?'答案已受理，原任务继续处理。':'答案已保存，正在交回 Main。'));
+  if(reopen)elements.push(reopen);
+  if(error&&card.status==='submitted')elements.push({tag:'button',text:text(card.supplementOf?'重试补充':'重试交回 Main'),type:'primary',behaviors:[{type:'callback',value:{...questionAction(card),m:{questionId:q.questionId,retry:true}}}]});
+  elements.push(markdown((timedOut?'处理时间：':'提交时间：')+new Date(card.submittedAt??Date.now()).toISOString()+(card.answerSource==='user_wait_timeout'?' · 宿主超时续接':card.answerSource==='main_context'?' · Main 自动补充':' · 回答者为原提问者')));
  }
- const rendered={schema:'2.0',config:{update_multi:true,summary:{content:(waiting?'等待您补充：':'已补充：')+q.question.replace(/<[^>]*>/g,'')}},header:{title:text(waiting?'需要您补充':card.status==='cancelled'?'已取消':'已补充'),template:waiting?'orange':card.status==='cancelled'?'grey':'green'},body:{elements}};
- if(Buffer.byteLength(JSON.stringify(rendered),'utf8')>28000 && card.answerSource==='main_context'){
-  return {schema:'2.0',config:{update_multi:true},header:{title:text('已补充'),template:'green'},body:{elements:[markdown(Array.from(q.question).slice(0,500).join('')),markdown('Main 自动补充\n'+Array.from(card.note??'').slice(0,2000).join('')+'\n（卡片展示摘录，完整内容已保存。）')]}};
+ const rendered={schema:'2.0',config:{update_multi:true,summary:{content:(waiting?'等待您补充：':timedOut?'已超时继续：':'已补充：')+q.question.replace(/<[^>]*>/g,'')}},header:{title:text(waiting?'需要您补充':card.status==='cancelled'?'已取消':timedOut?'已超时继续':'已补充'),template:waiting?'orange':card.status==='cancelled'?'grey':'green'},body:{elements}};
+ if(Buffer.byteLength(JSON.stringify(rendered),'utf8')>28000 && ['main_context','user_wait_timeout'].includes(card.answerSource??'')){
+  return {schema:'2.0',config:{update_multi:true},header:{title:text(timedOut?'已超时继续':'已补充'),template:'green'},body:{elements:[markdown(Array.from(q.question).slice(0,500).join('')),markdown((card.answerSource==='user_wait_timeout'?'宿主超时续接\n':'Main 自动补充\n')+Array.from(card.note??'').slice(0,2000).join('')+'\n（卡片展示摘录，完整内容已保存。）'),...(reopen?[reopen]:[])]}};
  }
  if(Buffer.byteLength(JSON.stringify(rendered),'utf8')>28000)throw Error('Question card exceeds size limit; use a plain-text question');
  return rendered;

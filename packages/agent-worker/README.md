@@ -264,7 +264,7 @@ main 成功同步并刷新工作区后，将 `skills/`、`.agents/skills/` 的 G
 run 由独立 Node worker 执行，默认等待 20 秒、最多 30 秒；status/wait 仅当前可信会话可访问；cancel 还必须匹配宿主可信发送者及账号与任务发起人，缺少发起人的旧飞书任务需管理员核验，wait 不启动任务。外层等待终止不会取消后台任务，cancel 才请求终止；取消不回滚外部已接受的操作。后台仍限制 10 分钟。
 状态、待执行请求和结果保存在 codex-query-sessions/jobs，目录 0700、文件 0600。短调度锁保护受理和 worker 启动，默认最多 3 个并行 job、100 个等待 job。排队请求先持久化再返回 queued/jobId，由插件服务每 500ms 检查空位；同一聊天 + 项目/仓库 + topic + 模型串行，不同模型或 topic 可并行。调度按受理顺序选择可执行任务，跳过仍受会话/资源锁阻塞的请求。来源撤回或取消的排队任务在启动前终止。运行时不依赖主轮次持续 wait。
 
-同一会话、发起人及完整请求摘要匹配时返回已有 job；去重键不包含来源消息 taskId/revision、标签和资源键。跨消息重试保留 requestId，不重新执行，已取消任务也返回原状态。明确重做才换 requestId；新的 run 仍须通过当前来源租约授权。队列满时 queue_full/accepted=false，不创建 job、不承诺通知；已受理请求的幂等查询不受队列容量限制。升级前任务按原 jobId 查询，旧版全局锁存在时不启动新 worker、不删除旧锁。
+同一会话、发起人及完整请求摘要匹配时返回已有 job；未显式传 requestId 且存在可信真人来源时，宿主根据来源 taskId/revision、会话/账号/请求人、topic 和项目选择器生成稳定 ID，因此不同来源版本会区分任务。显式 requestId 的原有去重规则保留，标签和资源键不改变请求身份。跨消息重试保留原 requestId，不重新执行，已取消任务也返回原状态。明确重做才换 requestId；新的 run 仍须通过当前来源租约授权。队列满时 queue_full/accepted=false，不创建 job、不承诺通知；已受理请求的幂等查询不受队列容量限制。升级前任务按原 jobId 查询，旧版全局锁存在时不启动新 worker、不删除旧锁。
 
 worker 可跨 Gateway 重启；只有已派发任务在超过 15 秒无心跳时标记 unknown。unknown 保留并发名额、会话和资源占用，不自动重跑，不因为 PID 消失或 elapsed time 就断言业务未执行。排队等待不因缺少心跳变成 unknown。调度器在 spawn 前保存运行预留；若在这一边界崩溃，保留未知预留，需管理员核对业务记录。短元数据锁仅在所属进程确定已死亡时恢复，缺失/非法 owner 则保留现场。会话映射写入用短锁重新加载并合并，防止同聊天多个 topic 覆盖彼此。最终结果持久保存，通知协议见下文。
 
@@ -430,7 +430,7 @@ Worker 信息不足时最终返回 `{"type":"request","question":"具体问题",
 
 Main 调用同一个工具：`{"action":"reply","jobId":"原任务 ID","questionId":"问题 ID","answer":"补充上下文"}`。插件校验原会话、原请求人和账号、原授权的有效性、问题 ID 与有效期，恢复原 CLI 会话及原 jobId。原 task/context/constraints 和执行配置快照不变，补充信息是参考数据，不扩大授权。执行会话不匹配时拒绝恢复，不创建新会话重新执行。
 
-等待用户输入超过 3 分钟时，宿主重新核验原任务来源与取消状态，并在原 jobId/CLI 会话中续接；缺失信息标为未知，跳过依赖该信息或新增授权的步骤，继续原授权内可完成的工作。超时不是用户回答或许可，不自动选择账号、不重做已执行操作；记录 answerSource=user_wait_timeout 和审计事件。已有 awaiting_user 记录按持久化 waitingForUserAt 计算，重启不重置计时；没有可验证来源或授权服务时保持等待。
+等待用户输入超过 3 分钟时，宿主先重新核验来源，投递 timeoutRequestedAt 给 Main，最多给予 60 秒核对确定信息；Main 已知则 reply，未知则跳过，不能再次等待。Main 未及时处理时宿主自动在原 jobId/CLI 会话中续接；缺失信息标为未知，跳过依赖该信息或新增授权的步骤，继续原授权内可完成的工作。超时不是用户回答或许可，不自动选择账号、不重做已执行操作；记录 answerSource=user_wait_timeout 和审计事件。已有 awaiting_user 记录按持久化 waitingForUserAt 计算，重启不重置计时；没有可验证来源或授权服务时保持等待。
 
 等待时释放执行槽位及业务资源锁，但保留同聊天同 topic 的顺序约束。问题 24 小时有效，每个 job 的普通信息追问（requestKind=context，省略时默认）最多 5 次，插件请求（requestKind=plugin）单独最多 50 次，不占信息追问额度；等待可取消，来源撤回或任务修订会取消，超时形成终态。相同问题相同回答幂等，不同回答拒绝覆盖；失败、取消、超时任务不能恢复。问题与回复持久化，重启后继续调度，侧边栏显示等待状态和 Main/Worker 交互。回复不生成新业务轮次或新 job；单次恢复执行仍受配置的执行时限约束。
 
@@ -438,7 +438,7 @@ Main 调用同一个工具：`{"action":"reply","jobId":"原任务 ID","question
 
 ### 结构化提问和 Main 优先补充
 
-`request` 保留旧的 question/reason/progress 字段，可增加 `fields`（最多 6 项）、`allowFreeText`、建议文本 `recommendation` 和请求种类 `requestKind`（context/plugin）。字段 id 必须是字符串；禁用自由文本时必须提供可回答字段。字段类型为 text、number、single_select、multi_select、date、date_range、datetime；选项最多 20 个，日期类必须有 IANA timezone。只提问必需的缺口，推荐不代表用户选择。Main 已知时直接 reply；能在原授权内查询时先查询；仅确实缺少决策或信息时 await_user。await_user.knownValues 记录已明确字段，由宿主校验并持久化，用户只填写剩余字段。reply.answerBasis 可记录简短来源说明。等待用户期间再次 await_user 可合并新增或更正的 knownValues；未提供的字段保留，非法字段拒绝且不改变状态。内容变化时更新原提问卡片，不重置等待起点；相同内容重试保持幂等。
+`request` 保留旧的 question/reason/progress 字段，可增加 `fields`（最多 6 项）、`allowFreeText`、建议文本 `recommendation`、请求种类 `requestKind`（context/plugin）、等待类型 `waitKind`（optional/required/decision/authorization）及结构化 `pluginCall`。字段 id 必须是字符串；禁用自由文本时必须提供可回答字段。字段类型为 text、number、single_select、multi_select、date、date_range、datetime；选项最多 20 个，日期类必须有 IANA timezone。只提问必需的缺口，推荐不代表用户选择。Main 已知时直接 reply；能在原授权内查询时先查询；仅确实缺少决策或信息时 await_user。await_user.knownValues 记录已明确字段，由宿主校验并持久化，用户只填写剩余字段。reply.answerBasis 可记录简短来源说明。等待用户期间再次 await_user 可合并新增或更正的 knownValues；未提供的字段保留，非法字段拒绝且不改变状态。内容变化时更新原提问卡片，不重置等待起点；相同内容重试保持幂等。
 
 飞书适配器接收原提问者的交互卡片提交后，将答案持久化并交回原 Main FIFO，再通过 reply 续接原 job 和 Worker 会话。只有受信任卡片回执可标记 answerSource=user_card、写入 answerValues；普通 Main 补充标记 main_context，等待用户后的普通回复标记 user_text。Main 与 Worker 原任务授权及约束保持有效，结构化字段进入 mainReplies，不创建新 run。旧问题、过期问题、错误发送者及重复答案遵循现有校验；等待状态不占执行槽位。详细卡片流程见 Feishu README。
 
@@ -502,3 +502,14 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 项目登记版本使用 `blob:<projects.json对象ID>`，兼容旧 `HEAD:对象ID` 快照；无关角色仓库提交不改变登记版本。排队任务仍检查登记未暂存/已暂存修改、项目路径、分支、远端、业务仓库版本以及角色和技能实际变动。
 
 管理员明确要求恢复旧任务时，可在核对原请求、当前来源、执行前失败记录及新规范后，为该任务的私有 runtime 写入 `reviewedContinuation`（sessionId、previousRevision、currentRevision、reason）。这只允许精确原会话的已复核角色刷新；目录、执行策略指纹和技能删除检查保持有效，其他任务及模型工具不能获得此覆盖。恢复必须留存原记录与证据，复用 jobId/resumeSessionId，且先取得只读技能刷新回执；禁止用此机制重放状态未知或已发生业务操作的失败轮次。
+
+
+### 结构化协作与迟到补充
+
+完整时序、字段和例子见 [Main/Worker 协作协议](../../docs/main-worker-collaboration.md)。所有等待类型都保留超时继续：继续独立步骤，跳过依赖缺失信息或未完成授权的步骤。
+
+`pluginCall={callId,capability,arguments,purpose}` 仅用于 requestKind=plugin。首个自动能力为 `person_lookup`：只读原任务可信请求人/原生提及人员的本地资料；账号、应用与 Agent 从可信来源读取，不接受 Worker 指定。不命中自动能力条件时交回 Main。宿主记录请求和结果并以原问题 reply 恢复；同一 callId 的结果缓存，改变参数不能复用旧结果。最终交付仍由 Main 处理。
+
+超时卡新增“重新补充”。补充由原任务入口直接受理，绕过 Main 答案 FIFO；当前 `codex exec` 模式不能在运行中注入输入，宿主持久化后等待当前轮结束，再优先续接，仍遵守容量及资源/会话互斥。等待中的 job 原地恢复；已完成的 job 保留旧报告，创建带 parentJobId 的关联执行并固定原 session/model/project/constraints/resourceKeys。会话绑定已经变化时拒绝另起新会话执行。此例外不改变普通 reply 不创建 job 的规则。
+
+宿主通过 AgentWorkerObservation 将自动协作过程加入原 Main 的系统事件队列，后续 Main 轮次读取；最终完成事件也带 collaboration 摘要。过程记录不是新的用户指令。原始约束继续使用自然语言，没有新增业务授权合同；没有绕过 Main 的完成交付。

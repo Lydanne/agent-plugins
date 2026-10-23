@@ -1,3 +1,9 @@
+export function validatePluginCall(value){
+ if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!['callId','capability','arguments','purpose'].includes(k)))throw Error('Invalid plugin call');
+ for(const k of ['callId','capability','purpose'])if(typeof value[k]!=='string'||!value[k].trim()||value[k].length>(k==='purpose'?1000:100))throw Error('Invalid plugin call '+k);
+ if(!/^[a-zA-Z0-9._-]+$/.test(value.callId)||!value.arguments||typeof value.arguments!=='object'||Array.isArray(value.arguments)||JSON.stringify(value.arguments).length>4000)throw Error('Invalid plugin arguments');
+ return value;
+}
 // Explicit final-turn protocol; ordinary prose never changes task state.
 const record=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const types=new Set(['text','number','single_select','multi_select','date','date_range','datetime']);
@@ -14,13 +20,15 @@ export function parseContextRequest(text) {
  // Accept the old discriminator for in-flight tasks and resumed Worker sessions.
  if(!['request','context_request'].includes(value?.type))return undefined;
  if(!record(value))throw Error('Invalid context request fields: expected an object');
- const extra=Object.keys(value).filter(key=>!['type','question','reason','progress','fields','allowFreeText','recommendation','questionId','requestKind'].includes(key));
+ const extra=Object.keys(value).filter(key=>!['type','question','reason','progress','fields','allowFreeText','recommendation','questionId','requestKind','pluginCall','waitKind'].includes(key));
  if(extra.length)throw Error('Invalid context request fields: unsupported '+extra.map(key=>JSON.stringify(key.slice(0,64))).join(', '));
  // Model-provided identifiers are advisory only. The host assigns the trusted
  // question ID after parsing, so they cannot target or replace a pending question.
  if(value.questionId!==undefined&&!string(value.questionId,100))throw Error('Invalid context request questionId: expected a non-empty string of at most 100 characters');
  for(const key of ['question','reason','progress'])if(!string(value[key]))throw Error('Invalid context request '+key);
  if(value.requestKind!==undefined&&!['context','plugin'].includes(value.requestKind))throw Error('Invalid context request kind');
+ if(value.pluginCall!==undefined){if(value.requestKind!=='plugin')throw Error('Plugin call requires plugin request');validatePluginCall(value.pluginCall);}
+ if(value.waitKind!==undefined&&!['optional','required','decision','authorization'].includes(value.waitKind))throw Error('Invalid wait kind');
  if(value.allowFreeText!==undefined&&typeof value.allowFreeText!=='boolean')throw Error('Invalid free text policy');
  if(value.allowFreeText===false&&value.fields===undefined)throw Error('Invalid context request fields: fields required when allowFreeText is false');
  if(value.recommendation!==undefined&&!string(value.recommendation,1000))throw Error('Invalid recommendation');

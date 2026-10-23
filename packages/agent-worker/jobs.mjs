@@ -24,9 +24,10 @@ export function normalizeTags(tags=[]) {
 }
 export const USER_INPUT_WAIT_MS=3*60*1000;
 const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。保留已核验信息，未补充字段标为未知；跳过依赖这些字段、账号选择或额外授权的步骤，在原 task/constraints 范围内继续可独立完成的工作。不得猜测用户选择、扩大写入权限、重做已执行操作或重复询问同一缺口。无法继续时交付已核验结果、限制与未完成项，不把未知当成否定或成功。';
+const waitPolicy={optional:'可选补充未取得时注明缺失并继续。',required:'必要业务参数未知时跳过依赖步骤，交付未完成项。',decision:'用户未明确决策时跳过对应操作，不代选。',authorization:'外部授权未确认完成时跳过依赖授权的操作，不把超时当授权成功。'};
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,logger}) {
  const lock=join(root,'scheduler-lock');
  let timer;
  const files=()=>readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x)).map(x=>readJson(join(root,x)));
@@ -34,7 +35,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   if(!Number.isInteger(maxConcurrentJobs)||maxConcurrentJobs<1||maxConcurrentJobs>10||!Number.isInteger(maxQueuedJobs)||maxQueuedJobs<1||maxQueuedJobs>1000)throw Error('Invalid scheduler capacity');
   return {maxConcurrentJobs,maxQueuedJobs};};
  const legacyBusy=()=>existsSync(join(root,'active'))||existsSync(join(root,'..','lock'));
- const order=(a,b)=>(a.queueSequence??a.createdAt)-(b.queueSequence??b.createdAt)||a.createdAt-b.createdAt||a.jobId.localeCompare(b.jobId);
+ const order=(a,b)=>(b.continuationPriority??0)-(a.continuationPriority??0)||(a.queueSequence??a.createdAt)-(b.queueSequence??b.createdAt)||a.createdAt-b.createdAt||a.jobId.localeCompare(b.jobId);
  const sameSession=(a,b)=>a.scope===b.scope&&a.topic===b.topic&&(!a.executionScope||!b.executionScope||a.executionScope===b.executionScope)&&(!a.modelSessionScope||!b.modelSessionScope||a.modelSessionScope===b.modelSessionScope);
  const conflict=(a,b)=>sameSession(a,b)||(a.resourceKeys??[]).some(key=>(b.resourceKeys??[]).includes(key));
  const queued=j=>j.schedulerVersion===1&&j.status==='queued'&&(!j.startedAt||j.resumePending===true);
@@ -93,7 +94,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
  function scheduleLocked(){
   const all=files();
   for(const job of all.filter(j=>waiting.has(j.status)&&j.contextRequest?.expiresAt<=Date.now())){job.status='timed_out';job.error='Context reply deadline exceeded';job.finishedAt=Date.now();if(job.notification)job.notification={state:'pending',eventKey:randomUUID()};terminalJob(job);}
-  for(const job of all.filter(j=>j.status==='awaiting_user')){
+  for(const job of all.filter(j=>j.status==='awaiting_user'||j.status==='awaiting_main'&&j.contextRequest?.timeoutRequestedAt)){
    const question=job.contextRequest,at=Date.now();
    if(!question||!Number.isFinite(question.waitingForUserAt)||at-question.waitingForUserAt<USER_INPUT_WAIT_MS||
     question.expiresAt<=at||existsSync(join(root,job.jobId+'.cancel'))||!hasSourceProvenance(job.provenance)||
@@ -107,7 +108,18 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const submitted=getUserTimeoutSubmission(job);
    // A real submission wins the race and gets its own processing grace period.
    if(submitted && (!Number.isFinite(submitted.userSubmittedAt)||at-submitted.userSubmittedAt<USER_INPUT_WAIT_MS||typeof submitted.answerText!=='string'))continue;
+   if(!submitted&&mainTimeoutGraceMs>0){
+    if(!question.timeoutRequestedAt){
+     question.timeoutRequestedAt=at;question.resumeReason='user_wait_timeout';
+     job.status='awaiting_main';job.questions=job.questions.map(q=>q.questionId===question.questionId?{...q,...question}:q);
+     job.progress='等待已超时，Main 核对已知信息后继续；未知步骤跳过';
+     if(job.notification)job.notification={state:'pending',eventKey:randomUUID()};
+     writeJson(join(root,job.jobId+'.json'),job);continue;
+    }
+    if(at-question.timeoutRequestedAt<mainTimeoutGraceMs)continue;
+   }
    const answer=(submitted?timeoutAnswer.replace('用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。','用户已提交补充，但等待处理超过 3 分钟。以下仅恢复已保存的补充，不提供新授权。'):timeoutAnswer)+
+    ' '+waitPolicy[question.waitKind??'required']+
     (question.knownValues?' 已确认字段：'+JSON.stringify(question.knownValues):'')+
     (submitted?'\n已保存的用户补充（仅作原任务参考，不扩大约束）：\n'+submitted.answerText:'');
    const metadata={answerSource:submitted?.answerSource??'user_wait_timeout',resumeReason:'user_wait_timeout',userWaitTimedOutAt:at,
@@ -222,7 +234,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      writeJson(join(root,jobId+'.json'),updated);return view(updated);
     }
     if(files().filter(queued).length>=limits().maxQueuedJobs)throw Error('Waiting queue is full; question remains pending');
-    const metadata={answerSource:job.status==='awaiting_main'?'main_context':'user_text',...answerMetadata};
+    const metadata={answerSource:job.status==='awaiting_main'?'main_context':'user_text',...(job.contextRequest.timeoutRequestedAt?{resumeReason:'user_wait_timeout'}:{}),...answerMetadata};
     if(metadata.attachmentSource){
      metadata.attachmentSource=attachmentSupplement(job.provenance,metadata.attachmentSource);
      if((job.provenance?.attachmentSources?.length??0)>=64)throw Error('Attachment supplement limit reached');
@@ -232,7 +244,73 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     resumeLocked(job,request,answer,metadata);scheduleLocked();return view(get(jobId,scope));
    }finally{release();}
   },
+  async openSupplement(jobId,scope,questionId,authorize){
+   const release=await acquireLock(lock);
+   try{
+    const job=get(jobId,scope),question=job.questions?.find(q=>q.questionId===questionId);
+    if(!authorize(job.provenance)||['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))||!question||question.expiresAt<=Date.now()||question.resumeReason!=='user_wait_timeout'||question.answer===undefined)throw Error('Task cannot reopen this question');
+    const directory=join(root,'supplements');mkdirSync(directory,{recursive:true,mode:0o700});
+    const prior=readdirSync(directory).map(f=>readJson(join(directory,f))).find(s=>s.jobId===jobId&&s.originalQuestionId===questionId);
+    if(prior)return prior;
+    const {answer,answerValues,answerSource,answeredAt,timeoutRequestedAt,resumeReason,waitingForUserAt,...fields}=question;
+    const id=randomUUID(),record={supplementId:id,jobId,originalQuestionId:questionId,scope:job.scope,provenance:job.provenance,question:{...fields,questionId:id,createdAt:Date.now()},status:'waiting',createdAt:Date.now()};
+    writeJson(join(directory,id+'.json'),record);return record;
+   }finally{release();}
+  },
+  supplement(jobId,scope,id){
+   if(!/^[0-9a-f-]{36}$/i.test(id??''))return undefined;
+   const file=join(root,'supplements',id+'.json');if(!existsSync(file))return undefined;
+   const record=readJson(file);if(record.jobId!==jobId||record.scope!==scopeKey(scope))throw Error('Supplement scope mismatch');return record;
+  },
+  async submitSupplement(jobId,scope,id,answer,metadata,authorize){
+   const release=await acquireLock(lock);
+   try{
+    const job=get(jobId,scope),s=this.supplement(jobId,scope,id);
+    if(!s||s.question.expiresAt<=Date.now()||!authorize(job.provenance)||['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Supplement is no longer valid');
+    if(typeof answer!=='string'||!answer.trim()||answer.length>16000)throw Error('Invalid supplement');
+    if(metadata.answerValues)validateContextAnswers(s.question,metadata.answerValues);
+    if(s.status!=='waiting'){if(s.answer!==answer)throw Error('Supplement already answered differently');return s;}
+    const accepted={...s,answer,answerSource:metadata.answerSource,answerValues:metadata.answerValues,answerMessageId:metadata.answerMessageId,status:'accepted',acceptedAt:Date.now()};
+    writeJson(join(root,'supplements',id+'.json'),accepted);return accepted;
+   }finally{release();}
+  },
+  async processSupplements(jobId,scope,authorize,observe){
+   const directory=join(root,'supplements');if(!existsSync(directory))return;
+   for(const name of readdirSync(directory)){
+    let s=readJson(join(directory,name));if(s.jobId!==jobId||!['waiting','accepted','dispatched'].includes(s.status))continue;
+    await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,answer:s.answer,childJobId:s.childJobId});
+    if(s.status!=='accepted')continue;
+    const release=await acquireLock(lock);
+    try{
+     const job=get(jobId,scope);s=readJson(join(directory,name));if(s.status!=='accepted')continue;
+     if(!authorize(job.provenance)||s.question.expiresAt<=Date.now()||['cancelled','failed','timed_out','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){writeJson(join(directory,name),{...s,status:'suppressed'});continue;}
+     if(['running','queued','unknown'].includes(job.status))continue;
+     const request=readJson(join(root,jobId+'.request.json'));
+     if(request.scope!==scope||requestKeyFor(request.params,scope,job.provenance)!==job.requestKey)throw Error('Original request binding mismatch');
+     const answer='原 questionId='+s.originalQuestionId+'，原问题：'+s.question.question+'\n原请求人的迟到补充，仅针对原问题，不增加授权；保留已完成结果，不重复外部操作。若当前正在等待其他问题，不把本补充当作其他问题的答案；核对仍缺信息后继续独立步骤。\n'+s.answer;
+     if(waiting.has(job.status)){
+      resumeLocked(job,request,answer,{answerSource:s.answerSource,answerMessageId:s.answerMessageId,supplementId:s.supplementId});
+      writeJson(join(directory,name),{...s,status:'dispatched',childJobId:jobId});scheduleLocked();continue;
+     }
+     if(job.status!=='completed'||files().filter(queued).length>=limits().maxQueuedJobs)continue;
+     // Keep the parent's immutable final report. Exact session resume may fail
+     // closed if another task has since changed its binding; never start fresh.
+     let output;try{output=JSON.parse(job.result?.content?.find(c=>c.type==='text')?.text);}catch{}
+     const sessionId=output?.sessionId??job.resumeSessionId??job.sessionId;
+     if(!sessionId){writeJson(join(directory,name),{...s,status:'blocked',reason:'original_session_missing'});continue;}
+     const childId=s.supplementId,params={...request.params,requestId:'supplement:'+s.supplementId};
+     const question={...s.question,answer,answerSource:s.answerSource,answerValues:s.answerValues,answerMessageId:s.answerMessageId,answeredAt:s.acceptedAt};
+     const questions=[...(job.questions??[]),question];
+     const resumeParams={...params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
+     const child={jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance:job.provenance,topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
+     if(!existsSync(join(root,childId+'.json'))){writeJson(join(root,childId+'.request.json'),{...request,params,resumeParams});writeJson(join(root,childId+'.json'),child);}
+     writeJson(join(directory,name),{...s,status:'dispatched',childJobId:childId});scheduleLocked();
+    }finally{release();}
+   }
+  },
   async run(params,scope,provenance){
+   const automaticRequestId=params.requestId===undefined;
+   if(automaticRequestId)params={...params,requestId:getRequestId(params,provenance)};
    const tags=normalizeTags(params.tags);
    if(params.resourceKeys!==undefined&&(!Array.isArray(params.resourceKeys)||params.resourceKeys.length>20))throw Error('resourceKeys must contain at most 20 keys');
    normalizeTags(params.resourceKeys);
@@ -246,12 +324,15 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const sameBody=all.filter(j=>j.project&&j.scope===scopeKey(scope)&&j.requestBodyKey===requestKeyFor({...params,repository:undefined,projectId:undefined},scope,provenance));
     const matches=sameBody.filter(j=>params.repository?j.repository===params.repository:params.projectId?j.projectId===params.projectId&&j.repository==='projects/'+params.projectId:false);
     if(matches.length===1)return matches[0];
-    if(params.requestId&&all.some(j=>j.project&&j.scope===scopeKey(scope)&&j.topic===params.topic&&j.requestId===params.requestId&&j.provenance?.accountId===provenance?.accountId&&j.provenance?.senderId===provenance?.senderId))throw Object.assign(Error('Existing project request has different task or selectors'),{code:'REQUEST_ID_CONFLICT'});
+    if(params.requestId&&all.some(j=>(j.project||params.requestId.startsWith('host:'))&&j.scope===scopeKey(scope)&&j.topic===params.topic&&j.requestId===params.requestId&&j.provenance?.accountId===provenance?.accountId&&j.provenance?.senderId===provenance?.senderId))throw Object.assign(Error('Existing project request has different task or selectors'),{code:'REQUEST_ID_CONFLICT'});
    };
    const early=findPrior(files());
    const runtime=early?undefined:await getRuntime(params,{...provenance,sessionKey:scope});
    const originalParams=params;
-   if(runtime?.projectContext)params={...params,projectId:runtime.projectContext.projectId,repository:runtime.projectContext.repository};
+   if(runtime?.projectContext){
+    params={...params,projectId:runtime.projectContext.projectId,repository:runtime.projectContext.repository};
+    if(automaticRequestId)params={...params,requestId:getRequestId({...params,requestId:undefined},provenance)};
+   }
    const requestKey=requestKeyFor(params,scope,provenance);
    const release=await acquireLock(lock);
    let jobId;
@@ -266,7 +347,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      const canStart=!legacyBusy()&&running.length<limits().maxConcurrentJobs&&!running.some(job=>conflict(job,candidate))&&!all.some(job=>waiting.has(job.status)&&sameSession(job,candidate));
      if(!canStart&&all.filter(queued).length>=limits().maxQueuedJobs)return {status:'queue_full',accepted:false,message:'Waiting queue is full; no job was created.'};
      jobId=randomUUID();
-     const job={jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{inputRequestKey,requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance),requestId:params.requestId}:{}),provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
+     const job={jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{inputRequestKey,requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance)}:{}),requestId:params.requestId,provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
      writeJson(join(root,jobId+'.request.json'),{params,scope,runtime});
      writeJson(join(root,jobId+'.json'),job);
     }

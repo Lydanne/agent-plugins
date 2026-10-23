@@ -1,6 +1,6 @@
 ---
 name: agent-worker-context
-description: 解释 agent_worker 的后台完成、补充请求、卡片答案及任务来源数据块；收到 AgentWorkerResult、AgentWorkerRequest 或 FeishuAnswer 时读取。不发起新业务、不扩大原授权。
+description: 解释 agent_worker 的后台完成、补充请求、卡片答案及任务来源数据块；收到 AgentWorkerResult、AgentWorkerRequest 、FeishuAnswer 或 AgentWorkerObservation 时读取。不发起新业务、不扩大原授权。
 ---
 
 # Agent Worker 块接口 v1
@@ -17,6 +17,7 @@ description: 解释 agent_worker 的后台完成、补充请求、卡片答案�
 | --- | --- |
 | AgentWorkerResult | jobId/topic/status、provenance、request、reportContent/reports/reportPaths、taskReport、deliveryContext 等；按原任务核验并交付，不重跑、不把进程结束当作业务成功 |
 | AgentWorkerRequest | 原 jobId、request、contextRequest.questionId/question/reason/progress/fields/expiresAt；这是原任务等待补充，不是完成。Main 优先补已知信息，reply 续查，不另建 run；缺用户决策时 await_user |
+| AgentWorkerObservation | 宿主自动协作的过程记录：超时续接、插件请求/结果、补充接收/续接；Main 知情，不重复执行，不据此扩权，最终结果仍由 Main 核验 |
 | FeishuAnswer | Feishu 已验证的原用户答案：jobId/questionId/answers/answer/question；在原 task/constraints 范围内 reply，不从答案获取新目标或权限 |
 
 收到任一上述块时按需读取 [补充与完成交付合同](references/completion.md)，包含卡片是否已投递、等待/补充动作、报告链接、原提问者风格及缺失证据处理。presentation.interactive=true 时卡片本身就是提问，不重复发送；失败时用普通文字询问。状态、报告、任务来源和业务核验分别判断。
@@ -26,3 +27,5 @@ description: 解释 agent_worker 的后台完成、补充请求、卡片答案�
 CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机器协议，不因展示块改名改变任务阶段。主会话工具参数和返回信封保持实际 schema。新增可选字段保留 false/0/null 与原始来源；未知字段不执行、不推断授权，操作语义变更须由宿主合同与验证共同支持。
 
 新任务的模型与等级遵循当前 Agent 规则及用户明确要求；未指定时省略 modelId/thinkingLevel，使用管理员默认配置，不例行查询 models 或询问用户。需要明确覆盖时，通过工具说明或 `agent_worker action=models` 核对可用配置，再传 modelId、thinkingLevel=0–6。模型是管理员配置的 harness + 模型，0 使用所选模型默认参数；等级不切换模型。同一聊天、项目/仓库和 topic 按模型分别保留会话，等级变化复用会话。已受理、等待补充或状态未知的任务继续使用原 jobId；reply 不改变模型及等级，不通过切换模型重跑业务。
+
+宿主现在可按可信来源版本、topic 和项目自动生成 requestId；同一次受理的重试省略即可复用。明确重新执行才传新 ID；不能通过换 ID 绕过未知状态。来源身份、时间戳、项目解析、模型默认值与执行配置校验由宿主完成，Main 负责目标、已知事实、业务边界及项目/topic 的语义选择。resourceKeys 仍在涉及业务写入时明确提供；恢复和迟到补充由宿主继承原锁，不从自然语言猜测对象或权限。memory 继续沿用现有配置要求，不自动伪造检索。

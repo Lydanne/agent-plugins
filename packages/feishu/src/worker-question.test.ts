@@ -2,15 +2,15 @@ import {beforeEach,afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {renderQuestionCard,parseQuestionSubmission,saveQuestionCard,readQuestionCard,claimQuestionAnswer,questionAction,workerQuestionBridge,type QuestionCard} from './worker-question.js';
+import {renderQuestionCard,parseQuestionSubmission,saveQuestionCard,readQuestionCard,claimQuestionAnswer,questionAction,workerQuestionBridge,WORKER_QUESTION_REOPEN,type QuestionCard} from './worker-question.js';
 import {handleWorkerQuestionAction,handleWorkerQuestionTextReply} from './worker-question-action.js';
-const mocks=vi.hoisted(()=>({edit:vi.fn(),send:vi.fn()}));
-vi.mock('./send.js',()=>({editMessageFeishu:mocks.edit,sendMessageFeishu:mocks.send}));
+const mocks=vi.hoisted(()=>({edit:vi.fn(),send:vi.fn(),card:vi.fn()}));
+vi.mock('./send.js',()=>({editMessageFeishu:mocks.edit,sendMessageFeishu:mocks.send,sendCardFeishu:mocks.card}));
 let stateDir:string;
 const fixture=():QuestionCard=>({jobId:'job',provenance:{taskId:'task',revision:0,accountId:'a',chatId:'chat',senderId:'alice',sessionKey:'agent:main:feishu:chat',requestMessageIds:['request'],sourceMessageIds:['request']},messageId:'card',status:'waiting',question:{questionId:'q',expiresAt:Date.now()+60000,question:'请确认日期范围',reason:'日期未知',progress:'已确认只读方式',knownValues:{env:'prod'},fields:[{id:'env',label:'环境',type:'single_select',required:true,options:[{label:'生产',value:'prod'},{label:'测试',value:'test'}]},{id:'period',label:'日期',type:'date_range',timezone:'Asia/Shanghai',required:true}],allowFreeText:true}});
 const event=(card:QuestionCard,form:Record<string,unknown>)=>({operator:{open_id:'alice'},token:'token',context:{chat_id:'chat',open_message_id:'card'},action:{tag:'button',value:questionAction(card),form_value:form}});
-beforeEach(()=>{stateDir=mkdtempSync(join(tmpdir(),'worker-form-'));mocks.edit.mockReset().mockResolvedValue({messageId:'card'});mocks.send.mockReset().mockResolvedValue({messageId:'notice'});workerQuestionBridge.read=()=>({status:'awaiting_user',question:fixture().question});workerQuestionBridge.authorize=()=>true;workerQuestionBridge.submit=vi.fn(async card=>saveQuestionCard(stateDir,{...card,status:'accepted',workingMessageId:'new-working'}));});
-afterEach(()=>{rmSync(stateDir,{recursive:true,force:true});workerQuestionBridge.read=undefined;workerQuestionBridge.authorize=undefined;workerQuestionBridge.submit=undefined;});
+beforeEach(()=>{stateDir=mkdtempSync(join(tmpdir(),'worker-form-'));mocks.card.mockReset().mockResolvedValue({messageId:'supplement-card'});mocks.edit.mockReset().mockResolvedValue({messageId:'card'});mocks.send.mockReset().mockResolvedValue({messageId:'notice'});workerQuestionBridge.read=()=>({status:'awaiting_user',question:fixture().question});workerQuestionBridge.authorize=()=>true;workerQuestionBridge.submit=vi.fn(async card=>saveQuestionCard(stateDir,{...card,status:'accepted',workingMessageId:'new-working'}));});
+afterEach(()=>{rmSync(stateDir,{recursive:true,force:true});workerQuestionBridge.read=undefined;workerQuestionBridge.authorize=undefined;workerQuestionBridge.submit=undefined;workerQuestionBridge.reopen=undefined;workerQuestionBridge.supplement=undefined;});
 it('renders missing fields only, with timezone and explicit submit and no GIF',()=>{
  const card=renderQuestionCard(fixture());const raw=JSON.stringify(card);
  expect(raw).toContain('date_picker');expect(raw).toContain('Asia/Shanghai');expect(raw).toContain('form_action_type');expect(raw).not.toContain('select_static');expect(raw).not.toContain('img_key');expect(raw).toContain('生产');
@@ -167,4 +167,48 @@ it('rejects waiting cards with no remaining response controls',()=>{
  expect(()=>renderQuestionCard({...card,question:{...card.question,fields:undefined,allowFreeText:false}})).toThrow('no answer controls');
  expect(()=>renderQuestionCard({...card,question:{...card.question,fields:card.question.fields!.slice(0,1),allowFreeText:false}})).toThrow('no answer controls');
  expect(JSON.stringify(renderQuestionCard({...card,question:{...card.question,fields:undefined,allowFreeText:true}}))).toContain('worker_note');
+});
+
+function reopenFixture(){
+ const card:QuestionCard={...fixture(),status:'accepted',reopenAllowed:true};card.question={...card.question,answer:'未知跳过',resumeReason:'user_wait_timeout'};
+ saveQuestionCard(stateDir,card);const question={...fixture().question,questionId:'supplement'};
+ workerQuestionBridge.read=()=>({status:'running',question:card.question});
+ workerQuestionBridge.reopen=vi.fn(async()=>({question,supplementId:'supplement'}));
+ const e=event(card,{});e.action.value.a=WORKER_QUESTION_REOPEN;return {card,e};
+}
+it('reopens one supplemental card and removes the original button, including repeated callbacks',async()=>{
+ const {e}=reopenFixture();
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir});
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir});
+ expect(mocks.card).toHaveBeenCalledOnce();expect(readQuestionCard(stateDir,'q')?.reopenedQuestionId).toBe('supplement');
+ const next=readQuestionCard(stateDir,'supplement')!;expect(next.supplementOf).toBe('q');expect(next.messageId).toBe('supplement-card');
+ expect(JSON.stringify(renderQuestionCard(next))).not.toContain('取消任务');
+ expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).not.toContain('重新补充');
+});
+it('does not create another supplemental card after an uncertain send',async()=>{
+ const {e}=reopenFixture();mocks.card.mockRejectedValue(Error('transport lost'));
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir});
+ expect(readQuestionCard(stateDir,'supplement')?.creationState).toBe('uncertain');
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir});
+ expect(mocks.card).toHaveBeenCalledOnce();expect(JSON.stringify(mocks.send.mock.calls.at(-1))).toContain('待核实');
+});
+it('repairs the old button without resending a card after an edit failure',async()=>{
+ const {e}=reopenFixture();mocks.edit.mockRejectedValueOnce(Error('edit failed'));
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir});
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir});expect(mocks.card).toHaveBeenCalledOnce();expect(mocks.edit).toHaveBeenCalledTimes(2);
+});
+it('never reopens a card when the original source has been revoked',async()=>{
+ const {e}=reopenFixture();workerQuestionBridge.authorize=()=>false;
+ await expect(handleWorkerQuestionAction({cfg:{},accountId:'a',event:e,stateDir})).rejects.toThrow();expect(mocks.card).not.toHaveBeenCalled();
+});
+it('supplement retries describe Worker continuation rather than Main submission',()=>{
+ const card:QuestionCard={...fixture(),status:'submitted',supplementOf:'old',answers:{}};
+ const raw=JSON.stringify(renderQuestionCard(card,'暂未确认'));expect(raw).toContain('重试补充');expect(raw).not.toContain('重试交回 Main');
+});
+
+it('timeout status never claims the requester answered and preserves reopen in oversized fallback cards',()=>{
+ const card:QuestionCard={...fixture(),status:'accepted',answerSource:'user_wait_timeout',note:'跳过未知',reopenAllowed:true,submittedAt:123};
+ card.question={...card.question,resumeReason:'user_wait_timeout'};
+ let raw=JSON.stringify(renderQuestionCard(card));expect(raw).toContain('已超时继续');expect(raw).toContain('宿主超时续接');expect(raw).not.toContain('回答者为原提问者');
+ card.question.question='大'.repeat(12000);raw=JSON.stringify(renderQuestionCard(card));expect(raw).toContain('重新补充');expect(Buffer.byteLength(raw)).toBeLessThan(28000);
 });

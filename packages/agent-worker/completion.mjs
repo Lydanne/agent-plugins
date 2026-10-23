@@ -48,7 +48,7 @@ export function readCompletionRequest(root, job) {
 export function completionEvent(job, request = {availability:'unavailable',reason:'request_not_loaded'}) {
  let result;
  try {result = JSON.parse(job.result?.content?.find(c => c.type === 'text')?.text);} catch {}
- return {type: job.status==='awaiting_main'?'agent_worker.context_request':'agent_worker.completed', eventId: job.status==='awaiting_main'?'agent_worker:question:'+job.contextRequest.questionId:'codex_query:' + job.jobId,
+ return {type: job.status==='awaiting_main'?'agent_worker.context_request':'agent_worker.completed', eventId: job.status==='awaiting_main'?'agent_worker:question:'+job.contextRequest.questionId+(job.contextRequest.timeoutRequestedAt?':timeout':''):'codex_query:' + job.jobId,
   ...(job.status==='awaiting_main'?{contextRequest:job.contextRequest}:{}),
   jobId: job.jobId, topic: job.topic,...(job.project?{project:job.project,projectId:job.projectId,repository:job.repository,cwd:job.cwd}:{}), status: job.status, provenance: job.provenance, request,
   reportContent: result?.result ?? (job.status === 'cancelled' ? '任务已取消；已发生的外部操作不代表已回滚。' : job.error ?? '未取得执行结果'),
@@ -56,8 +56,14 @@ export function completionEvent(job, request = {availability:'unavailable',reaso
   createdAt: job.createdAt, startedAt: job.startedAt, finishedAt: job.finishedAt};
 }
 
+export function readCollaboration(root,job){
+ const file=join(root,'collaboration',job.jobId+'.json');
+ const events=existsSync(file)?Object.values(readJson(file).events??{}).filter(v=>v&&typeof v==='object').slice(-200):[];
+ return events.length||job.parentJobId?{parentJobId:job.parentJobId,supplementId:job.supplementId,events}:undefined;
+}
+
 /** Only opted-in new jobs have delivery records; never replay historical business results. */
-export function createCompletionService({root, bridge = completionBridge, logger = console, pollMs = 1000}) {
+export function createCompletionService({root, bridge = completionBridge, logger = console, pollMs = 1000, beforeDeliver}) {
  const inflight = new Map();
  let controller = new AbortController();
  let timer, scheduled, stopped = true;
@@ -71,8 +77,10 @@ export function createCompletionService({root, bridge = completionBridge, logger
   const signal=controller.signal;
   const patchEvent=change=>patch(job.jobId,change,job.notification.eventKey);
   try {
+   if(beforeDeliver){await beforeDeliver(job);const latest=readJson(fileOf(job.jobId));if(latest.status!==job.status||latest.notification?.eventKey!==job.notification.eventKey)return;}
    patchEvent({state: 'processing', attempts: (job.notification.attempts ?? 0) + 1});
-   const outcome = await bridge.deliver(completionEvent(job,readCompletionRequest(root,job)), {
+   const collaboration=readCollaboration(root,job);
+   const outcome = await bridge.deliver({...completionEvent(job,readCompletionRequest(root,job)),...(collaboration?{collaboration}:{})}, {
     signal,
     beforeSend: () => {signal.throwIfAborted();if(readJson(fileOf(job.jobId)).notification?.eventKey!==job.notification.eventKey)throw Object.assign(Error('Delivery superseded'),{name:'AbortError'}); patchEvent({state: 'sending', sendingAt: Date.now()});},
     onReceipt: receipt => patchEvent({state: 'delivered', receipt, deliveredAt: Date.now()}),

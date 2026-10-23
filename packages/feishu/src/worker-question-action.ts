@@ -1,4 +1,6 @@
-import {readQuestionCard,saveQuestionCard,findQuestionCardsForReply,claimQuestionAnswer,answerSummary,parseQuestionSubmission,renderQuestionCard,workerQuestionBridge,WORKER_QUESTION_CANCEL,type QuestionCard,type QuestionTextReply} from './worker-question.js';
+import {isFeishuCardValidationRejection} from './api-response.js';
+import {readQuestionCard,saveQuestionCard,findQuestionCardsForReply,claimQuestionAnswer,answerSummary,parseQuestionSubmission,renderQuestionCard,workerQuestionBridge,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN,type QuestionCard,type QuestionTextReply} from './worker-question.js';
+import {sendCardFeishu} from './send.js';
 import {isTaskSourceRecalled} from './source-task.js';
 import {editMessageFeishu,sendMessageFeishu} from './send.js';
 import type {FeishuCardActionEvent} from './card-action.js';
@@ -13,7 +15,7 @@ async function submitSavedAnswer(params:{cfg:ClawdbotConfig;accountId:string;sta
   await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(latest)});
  }catch{
   const latest=readQuestionCard(stateDir,questionId)??card;
-  try{await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(latest,'答案已保存；暂未确认恢复，可重试交回 Main。')});}catch{console.warn('Saved answer recovery card update failed; answer retained');}
+  try{await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(latest,latest.supplementOf?'补充已保存；暂未确认接续，可重试补充。':'答案已保存；暂未确认恢复，可重试交回 Main。')});}catch{console.warn('Saved answer recovery card update failed; answer retained');}
  }finally{inFlight.delete(stateDir+':'+questionId);}
 }
 
@@ -60,6 +62,22 @@ export async function handleWorkerQuestionAction(params:{cfg:ClawdbotConfig;acco
  try{
   const current=workerQuestionBridge.read?.({jobId:card.jobId,questionId,provenance:card.provenance});
   if(!current)throw Error('Worker question service unavailable');
+  if(event.action.value.a===WORKER_QUESTION_REOPEN){
+   if(!card.reopenAllowed||!workerQuestionBridge.reopen)throw Error('当前问题不能重新补充');
+   const reopened=await workerQuestionBridge.reopen({jobId:card.jobId,questionId,provenance:card.provenance});
+   let next=readQuestionCard(stateDir,reopened.question.questionId);
+   if(next?.creationState==='uncertain')throw Error('补充卡片发送结果待核实，请勿重复创建');
+   if(!next?.messageId){
+    next={jobId:card.jobId,provenance:card.provenance,question:reopened.question,messageId:'',status:'waiting',supplementOf:questionId,creationState:'uncertain'};
+    const rendered=renderQuestionCard(next);saveQuestionCard(stateDir,next);
+    try{
+     const receipt=await sendCardFeishu({cfg,accountId,to:'chat:'+card.provenance.chatId,replyToMessageId:card.messageId,replyInThread:card.provenance.replyInThread??false,card:rendered});
+     next={...next,messageId:receipt.messageId,rendered:true};delete next.creationState;saveQuestionCard(stateDir,next);
+    }catch(error){if(isFeishuCardValidationRejection(error)){next.creationState='retryable';saveQuestionCard(stateDir,next);}throw error;}
+   }
+   const updated={...card,reopenedQuestionId:next.question.questionId};saveQuestionCard(stateDir,updated);
+   await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(updated)});return;
+  }
   if(current.question.answer!==undefined){const accepted={...card,status:'accepted' as const};saveQuestionCard(stateDir,accepted);await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(accepted)});return;}
   if(current.status!=='awaiting_user'||current.question.questionId!==questionId)throw Error('本轮提问已失效');
   if(event.action.value.a===WORKER_QUESTION_CANCEL){
@@ -69,7 +87,7 @@ export async function handleWorkerQuestionAction(params:{cfg:ClawdbotConfig;acco
    await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(updated)});return;
   }
   if(card.status==='submitted'){
-   if(meta?.retry!==true)throw Error('答案已保存，请等待或点击重试交回 Main');
+   if(meta?.retry!==true)throw Error(card.supplementOf?'补充已保存，请等待或点击重试补充':'答案已保存，请等待或点击重试交回 Main');
    submitted=card;
   }else{
    const field=card.question.fields?.filter(f=>!Object.hasOwn(card.question.knownValues??{},f.id));
@@ -85,7 +103,7 @@ export async function handleWorkerQuestionAction(params:{cfg:ClawdbotConfig;acco
   const message=error instanceof Error?error.message:'补充信息处理失败';
   if(submitted){
    const latest=readQuestionCard(stateDir,questionId)??submitted;
-   try{await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(latest,'答案已保存；暂未确认恢复，可重试交回 Main。')});}catch{await sendMessageFeishu({cfg,accountId,to:'chat:'+card.provenance.chatId,replyToMessageId:card.messageId,text:'答案已保存，暂未确认任务恢复，请稍后重试。'});}
+   try{await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(latest,latest.supplementOf?'补充已保存；暂未确认接续，可重试补充。':'答案已保存；暂未确认恢复，可重试交回 Main。')});}catch{await sendMessageFeishu({cfg,accountId,to:'chat:'+card.provenance.chatId,replyToMessageId:card.messageId,text:'答案已保存，暂未确认任务恢复，请稍后重试。'});}
   }else{
    // Do not edit the form on validation errors: preserve the client's locally entered values.
    await sendMessageFeishu({cfg,accountId,to:'chat:'+card.provenance.chatId,replyToMessageId:card.messageId,text:message,replyInThread:card.provenance.replyInThread??false});

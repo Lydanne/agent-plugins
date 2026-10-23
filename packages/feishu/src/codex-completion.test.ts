@@ -10,7 +10,7 @@ import {join} from 'node:path';
 import {acceptAsyncCardResult,bindAsyncTaskCard,readAsyncTaskCard,continueAsyncTaskCard} from './async-task-card.js';
 import {runFeishuWorkingTurn} from "./working-turn-queue.js";
 import {savePreparedCompletion,readPreparedCompletion} from "./completion-outbox.js";
-const mocks=vi.hoisted(()=>({directory:vi.fn(),valid:true,buzz:vi.fn(),media:vi.fn(),send:vi.fn(),edit:vi.fn(),run:vi.fn(),recalls:new Set(),withdrawnMessages:new Set<string>(),leases:new Map(),entry: {sessionId:"current"},config:{messages:{queue:{mode:'steer'}}}}));
+const mocks=vi.hoisted(()=>({observe:vi.fn(),directory:vi.fn(),valid:true,buzz:vi.fn(),media:vi.fn(),send:vi.fn(),edit:vi.fn(),run:vi.fn(),recalls:new Set(),withdrawnMessages:new Set<string>(),leases:new Map(),entry: {sessionId:"current"},config:{messages:{queue:{mode:'steer'}}}}));
 vi.mock('./media.js',()=>({sendMediaFeishu:mocks.media}));
 vi.mock('./question-urgent.js',()=>({urgentQuestion:mocks.buzz}));
 vi.mock('./bot-sender-name.js',()=>({resolveFeishuSenderName:mocks.directory}));
@@ -21,13 +21,13 @@ import {ensureCompletionReportLink,buildCodexCompletionText,deliverCodexCompleti
 import type {OpenClawPluginApi} from 'openclaw/plugin-sdk/channel-entry-contract';
 import {clearRecentOutboundMentions,recordOutboundMentions,recordEditedMentions,nativeMentionIds} from './recent-outbound-mentions.js';
 let cardStateDir: string;
-const runtime={state:{resolveStateDir:()=>cardStateDir},config:{current:()=>mocks.config},agent:{session:{resolveStorePath:vi.fn(()=>'/isolated/sessions.json'),getSessionEntry:vi.fn(()=>mocks.entry)}},channel:{text:{resolveTextChunkLimit:()=>4000,resolveChunkMode:()=> 'line',chunkMarkdownTextWithMode:(text:string)=>[text]},reply:{finalizeInboundContext:(x:unknown)=>x},inbound:{run:mocks.run}}} as unknown as OpenClawPluginApi['runtime'];
+const runtime={system:{enqueueSystemEvent:mocks.observe},state:{resolveStateDir:()=>cardStateDir},config:{current:()=>mocks.config},agent:{session:{resolveStorePath:vi.fn(()=>'/isolated/sessions.json'),getSessionEntry:vi.fn(()=>mocks.entry)}},channel:{text:{resolveTextChunkLimit:()=>4000,resolveChunkMode:()=> 'line',chunkMarkdownTextWithMode:(text:string)=>[text]},reply:{finalizeInboundContext:(x:unknown)=>x},inbound:{run:mocks.run}}} as unknown as OpenClawPluginApi['runtime'];
 const deliverCodexCompletion=(event:CompletionEvent,callbacks:Parameters<typeof deliverWithRuntime>[1])=>deliverWithRuntime(event,callbacks,runtime);
 const event:CompletionEvent={type:'codex_query.completed',eventId:'event',jobId:'job',topic:'test',status:'completed',reportContent:'完整报告',reportPaths:['/workspace/.tmp/report.md'],provenance:{sessionId:'current',taskId:'task',revision:0,accountId:'a',chatId:'chat',sessionKey:'agent:main:feishu:chat',senderId:'sender',sourceMessageIds:['request','quote'],requestMessageIds:['request']}};
 const reminderCard=(text:unknown,sender='sender')=>({body:{elements:[{tag:'markdown',content:typeof text==='string'?`<at id="${sender}"></at>${text}`:text}]}});
 const completionPayload=(value:CompletionEvent)=>JSON.parse(buildCodexCompletionText(value).split('\n').at(-1)!);
 afterEach(()=>rmSync(cardStateDir,{recursive:true,force:true}));
-beforeEach(()=>{mocks.media.mockReset().mockResolvedValue({messageId:"image"});mocks.buzz.mockReset().mockResolvedValue(undefined);clearRecentOutboundMentions();mocks.directory.mockReset().mockResolvedValue({});cardStateDir=mkdtempSync(join(tmpdir(),'feishu-completion-test-'));mocks.edit.mockReset().mockImplementation(async p=>{recordEditedMentions(p.accountId,p.messageId,p.card,Date.now(),p.mentionScope);return {messageId:p.messageId,contentType:'interactive',mentionedUserIds:nativeMentionIds(p.card)};});mocks.entry={sessionId:"current"};mocks.valid=true;mocks.send.mockReset().mockResolvedValue({messageId:'sent'});mocks.run.mockReset();mocks.recalls.clear();mocks.withdrawnMessages.clear();mocks.leases.clear();mocks.run.mockImplementation(async({adapter})=>{const plan=adapter.resolveTurn();await plan.delivery.deliver({text:'核验结果'}, {kind:'final'});});});
+beforeEach(()=>{mocks.observe.mockReset();mocks.media.mockReset().mockResolvedValue({messageId:"image"});mocks.buzz.mockReset().mockResolvedValue(undefined);clearRecentOutboundMentions();mocks.directory.mockReset().mockResolvedValue({});cardStateDir=mkdtempSync(join(tmpdir(),'feishu-completion-test-'));mocks.edit.mockReset().mockImplementation(async p=>{recordEditedMentions(p.accountId,p.messageId,p.card,Date.now(),p.mentionScope);return {messageId:p.messageId,contentType:'interactive',mentionedUserIds:nativeMentionIds(p.card)};});mocks.entry={sessionId:"current"};mocks.valid=true;mocks.send.mockReset().mockResolvedValue({messageId:'sent'});mocks.run.mockReset();mocks.recalls.clear();mocks.withdrawnMessages.clear();mocks.leases.clear();mocks.run.mockImplementation(async({adapter})=>{const plan=adapter.resolveTurn();await plan.delivery.deliver({text:'核验结果'}, {kind:'final'});});});
 it('retains the original completion envelope and full submitted context for Ada and host routing',async()=>{
  const sample={...event,reportContent:'aaa',reportPaths:[],experienceReview:{status:'none',candidates:[],reportedBy:'codex_executor',persisted:false}};
  expect(completionPayload(sample)).toEqual({...sample,request:{availability:'unavailable',reason:'legacy_event'}});
@@ -1184,4 +1184,36 @@ it.each(['safe','uncertain','cancelled','recalled','expired','older'] as const)(
   expect(readQuestionCard(cardStateDir,question.questionId)?.note).toBe(question.answer);
   expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe(scenario==='safe'?'recovered':'original');
  }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
+it('accepts late supplements directly while Main is busy and records their process in Main',async()=>{
+ const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{observe:(e:unknown)=>Promise<void>}})[Symbol.for('ada.codex-completion.v1')];
+ await service.start({} as Parameters<typeof service.start>[0]);
+ const card={jobId:event.jobId,provenance:event.provenance,question:{questionId:'late-q',question:'日期',reason:'缺失',progress:'已查',expiresAt:Date.now()+60000},messageId:'late-card',status:'submitted' as const,supplementOf:'old-q',answers:{},note:'2026-10-23'};
+ saveQuestionCard(cardStateDir,card);workerQuestionBridge.supplement=vi.fn().mockResolvedValue({accepted:true});
+ try{
+  await workerQuestionBridge.submit!(card);expect(workerQuestionBridge.supplement).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();expect(readQuestionCard(cardStateDir,'late-q')?.status).toBe('accepted');
+  await bridge.observe({jobId:event.jobId,provenance:event.provenance,kind:'supplement_dispatched',supplementId:'late-q',childJobId:'child'});
+  expect(mocks.observe).toHaveBeenCalledWith(expect.stringContaining('AgentWorkerObservation'),expect.objectContaining({sessionKey:event.provenance.sessionKey}));
+  expect(readAsyncTaskCard(cardStateDir,'child',event.provenance)?.messageId).toBe('late-card');expect(mocks.run).not.toHaveBeenCalled();
+  mocks.valid=false;await expect(bridge.observe({jobId:event.jobId,provenance:event.provenance,kind:'plugin_result'})).rejects.toThrow();expect(mocks.observe).toHaveBeenCalledOnce();
+ }finally{workerQuestionBridge.supplement=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+it('updates the timeout question with reopen even after the original result was delivered',async()=>{
+ const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'result'});
+ acceptAsyncCardResult(cardStateDir,readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)!,'已交付');
+ const question={questionId:'timeout-q',question:'日期',reason:'缺失',progress:'已查',expiresAt:Date.now()+60000,answer:'未知跳过',resumeReason:'user_wait_timeout'};
+ saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question,messageId:'question-card',status:'waiting'});
+ workerQuestionBridge.read=()=>({status:'completed',question});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ await service.start({} as Parameters<typeof service.start>[0]);
+ try{
+  await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:event.provenance,status:'resumed'});
+  expect(readQuestionCard(cardStateDir,question.questionId)?.reopenAllowed).toBe(true);expect(JSON.stringify(mocks.edit.mock.calls)).toContain('重新补充');expect(mocks.send).not.toHaveBeenCalled();
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe('已交付');
+ }finally{workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });

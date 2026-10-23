@@ -163,3 +163,15 @@ test('host scheduled shutdown aborts and joins delivery without starting another
  await registration.run();assert.equal(calls,1);assert.equal(cancelled,true);
  assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'pending');
 }));
+
+test('automatic collaboration is resolved before Main request delivery to prevent duplicate plugin execution',()=>fixture(async root=>{
+ const j={...job(),status:'awaiting_main',contextRequest:{questionId:'q',pluginCall:{callId:'one'}}};writeJson(join(root,j.jobId+'.json'),j);
+ let calls=0;const service=createCompletionService({root,beforeDeliver:async()=>writeJson(join(root,j.jobId+'.json'),{...j,status:'queued',notification:{state:'pending',eventKey:'resumed'}}),bridge:{deliver:async()=>{calls++;}}});
+ service.start();await flush();await service.stop();assert.equal(calls,0);assert.equal(readJson(join(root,j.jobId+'.json')).status,'queued');
+}));
+test('completion retains durable process summaries and links supplemental runs to the parent',()=>fixture(async root=>{
+ const j={...job(),parentJobId:'parent',supplementId:'supplement'};writeJson(join(root,j.jobId+'.json'),j);mkdirSync(join(root,'collaboration'));
+ const recorded={kind:'supplement_received',at:123,supplementId:'supplement'};writeJson(join(root,'collaboration',j.jobId+'.json'),{events:{receipt:recorded,'card:q':true}});
+ let received;const service=createCompletionService({root,bridge:{deliver:async(e,c)=>{received=e;c.onReceipt({messageId:'final'});}}});
+ service.start();await flush();await service.stop();assert.deepEqual(received.collaboration,{parentJobId:'parent',supplementId:'supplement',events:[recorded]});
+}));
