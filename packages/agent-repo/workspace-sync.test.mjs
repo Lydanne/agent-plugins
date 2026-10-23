@@ -328,15 +328,3 @@ test('structured progress captures repository stages and safe failure diagnostic
  assert.equal(failed.ok,false);assert.equal(events.at(-1).status,'failed');assert.equal(events.at(-1).reason,failed.reason);
  assert.ok(events.every(event=>!Object.hasOwn(event,'stdout')&&!Object.hasOwn(event,'stderr')));
 });
-
-test('Agent-only workspace runtime state does not block sync or exempt unrelated/staged files',async()=>{
- const f=fixture();mkdirSync(join(f.root,'worktree'),{recursive:true});writeFileSync(join(f.root,'worktree/state.json'),JSON.stringify({version:1,workspaces:{}}));
- const config={...f.config,preserveLocalWorkspaceState:true};assert.equal((await syncWorkspace(config)).ok,true);assert.ok(existsSync(join(f.root,'worktree/state.json')));
- blocked(await syncWorkspace(f.config),/本地改动/);
- writeFileSync(join(f.root,'worktree/other.txt'),'not runtime');blocked(await syncWorkspace(config),/本地改动/);rmSync(join(f.root,'worktree/other.txt'));
- git(f.root,'add','worktree/state.json');blocked(await syncWorkspace(config),/暂存/);
-});
-test('incoming workspace state cannot overwrite preserved local state',async()=>{
- const f=fixture();mkdirSync(join(f.root,'worktree'),{recursive:true});writeFileSync(join(f.root,'worktree/state.json'),'local state');f.commit(f.seed,'worktree/state.json','remote state');
- blocked(await syncWorkspace({...f.config,preserveLocalWorkspaceState:true}),/MEMORY_CONFLICT/);assert.equal(readFileSync(join(f.root,'worktree/state.json'),'utf8'),'local state');
-});

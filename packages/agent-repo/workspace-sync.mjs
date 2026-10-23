@@ -1,4 +1,3 @@
-import {isWorkspaceStatePath} from './dist/workspace-pool.mjs';
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -157,8 +156,7 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       const memoryPaths = [];
       for (const change of changes) {
         const path = change.slice(3);
-        const managedState=cwd===root&&config.preserveLocalWorkspaceState===true&&!includeUpstream&&change.slice(0,2)==='??'&&isWorkspaceStatePath(path);
-        const permitted = managedState || cwd === root && config.preserveLocalMemory === true && !includeUpstream && [" M", "??"].includes(change.slice(0, 2)) && /^(?:MEMORY\.md|memory\/\d{4}-\d{2}-\d{2}\.md)$/.test(path);
+        const permitted = cwd === root && config.preserveLocalMemory === true && !includeUpstream && [" M", "??"].includes(change.slice(0, 2)) && /^(?:MEMORY\.md|memory\/\d{4}-\d{2}-\d{2}\.md)$/.test(path);
         if (!permitted) throw new SyncBlocked(`${repo}存在本地改动，已保留现场`, "LOCAL_CHANGES");
         const file = join(cwd, path);
         if (!(await lstat(file)).isFile() || await realpath(file) !== file) throw new SyncBlocked("记忆路径不是普通文件，已保留现场");

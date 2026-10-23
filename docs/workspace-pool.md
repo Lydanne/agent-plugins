@@ -13,7 +13,7 @@
 maxSize 为 1–20 的整数。目录由宿主生成，不接受模型传路径或初始化命令：
 
 - `workspace/xgj-0/`、`workspace/xgj-1/`：完整独立 Git clone，不是 Git worktree。
-- `worktree/state.json`：分配、任务身份、依赖指纹及状态；`worktree/state.lock`：短时跨进程锁。
+- `workspace/state.json`：分配、任务身份、依赖指纹及状态；`workspace/state.lock`：短时跨进程锁。
 - 仅在 Agent Repo `.gitignore` 添加 `/workspace/`，不自动添加 `/worktree/`。state 文件属于本机运行状态，不提交；维护时只显式暂存任务文件。
 
 配置格式应在支持本协议的插件部署后启用，旧版本登记解析器不认识 workspacePool。启用时确认角色和实际配置允许明确授权的 workspace 代码任务；管理员自定义的更严格执行指令不会被插件覆盖。
@@ -60,5 +60,3 @@ AgentRepo → 项目与技能 → 选择项目 → 代码工作区池。管理�
 保存写入 projects.json，不自动 commit、push 或部署。界面提示待提交状态；请在维护窗口修改并按仓库流程提交同步，未提交期间新任务准备与自动同步可能暂停。单纯的池配置变化不使原任务快照失效；项目路径、远端、分支等其他登记变化仍阻止旧任务继续。状态读取不会创建或改写 state.json；读取失败显示错误，不假装空池。异常槽位只展示原因，人工核验后处理，不提供强制释放/删除按钮。
 
 并发保护：缩容后仍将超出新编号范围的占用计入容量；释放期间调度器持久记录归属，其他实例与同分配的续执行等待其完成。远端确认使用 fetch --prune，已删除分支的过期跟踪引用不能证明已安全保存。WebUI 保存相同配置不改写登记文件；状态不可读取时在写入前失败，保留原配置。
-
-Agent Repo 自动同步仅允许本机未跟踪的 worktree/state.json、其原子写临时文件和 state.lock/owner.json；不放宽其他 worktree 文件、暂存修改、软链接或 Project Repo 的检查，远端同路径变化仍保留现场并阻止覆盖。无需添加 /worktree/ 忽略规则。

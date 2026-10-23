@@ -13,7 +13,7 @@ async function fixture(t){
 }
 test('atomic allocation never exceeds the project pool; blocked and preparing slots count',async t=>{
  const f=await fixture(t),rows=await Promise.all(Array.from({length:8},()=>allocateWorkspace(f.plan,randomUUID())));assert.equal(rows.filter(Boolean).length,2);assert.deepEqual(rows.filter(Boolean).map(s=>s.id).sort(),['xgj-0','xgj-1']);
- const state=JSON.parse(await readFile(join(f.root,'worktree/state.json')));assert.equal(Object.keys(state.workspaces).length,2);assert.ok(Object.values(state.workspaces).every(s=>s.status==='preparing'));
+ const state=JSON.parse(await readFile(join(f.root,'workspace/state.json')));assert.equal(Object.keys(state.workspaces).length,2);assert.ok(Object.values(state.workspaces).every(s=>s.status==='preparing'));
 });
 test('clones isolate edits and branches; published clean slots reuse without reinstalling unchanged package.json',async t=>{
  const f=await fixture(t),a=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install}),b=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});assert.equal(f.installs,2);
@@ -26,7 +26,7 @@ test('only package.json changes trigger dependency installation; failed installs
  const f=await fixture(t);f.plan.maxSize=1;let slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});const old=slot.dependencies['.'].packageJsonHash;await releaseWorkspace(f.plan,slot);
  await writeFile(join(f.source,'package-lock.json'),'{}');f.plan.repositories[0].baseSha=await commit(f.source);await poolGit(f.source,['push']);slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});assert.equal(f.installs,1);await releaseWorkspace(f.plan,slot);
  await writeFile(join(f.source,'package.json'),'{"name":"changed","private":true}');f.plan.repositories[0].baseSha=await commit(f.source);await poolGit(f.source,['push']);slot=await allocateWorkspace(f.plan,randomUUID());await assert.rejects(prepareWorkspace(f.plan,slot,{install:async()=>{throw Error('private token');}}),/initialization failed/);
- const state=JSON.parse(await readFile(join(f.root,'worktree/state.json')));assert.equal(state.workspaces[slot.id].dependencies['.'].packageJsonHash,old);assert.equal(state.workspaces[slot.id].status,'blocked');assert.equal(await allocateWorkspace(f.plan,randomUUID()),null);
+ const state=JSON.parse(await readFile(join(f.root,'workspace/state.json')));assert.equal(state.workspaces[slot.id].dependencies['.'].packageJsonHash,old);assert.equal(state.workspaces[slot.id].status,'blocked');assert.equal(await allocateWorkspace(f.plan,randomUUID()),null);
 });
 test('dirty and unpushed work remains blocked; cancellation cannot discard files',async t=>{
  for(const pushed of [false,true]){const f=await fixture(t);const slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});await writeFile(join(slot.path,'code.txt'),'unfinished');if(pushed)await commit(slot.path);assert.equal((await releaseWorkspace(f.plan,slot)).status,'blocked');assert.equal(await readFile(join(slot.path,'code.txt'),'utf8'),'unfinished');}
@@ -37,7 +37,7 @@ test('resume retains assignment and branch; stale releases and symlink paths are
  const g=await fixture(t);await symlink(f.root,join(g.root,'workspace'));await assert.rejects(allocateWorkspace(g.plan,randomUUID()),/linked/);
 });
 test('recovery never treats an interrupted preparation as idle and lowering max does not reclaim occupied work',async t=>{
- const f=await fixture(t);const a=await allocateWorkspace(f.plan,randomUUID()),b=await allocateWorkspace(f.plan,randomUUID());const file=join(f.root,'worktree/state.json'),s=JSON.parse(await readFile(file));s.workspaces[a.id].preparerPid=2147483647;await writeFile(file,JSON.stringify(s));assert.equal((await allocateWorkspace(f.plan,a.owner)).blocked,true);assert.equal(await allocateWorkspace({...f.plan,maxSize:1},randomUUID()),null);assert.equal((await allocateWorkspace(f.plan,b.owner)).assignmentId,b.assignmentId);
+ const f=await fixture(t);const a=await allocateWorkspace(f.plan,randomUUID()),b=await allocateWorkspace(f.plan,randomUUID());const file=join(f.root,'workspace/state.json'),s=JSON.parse(await readFile(file));s.workspaces[a.id].preparerPid=2147483647;await writeFile(file,JSON.stringify(s));assert.equal((await allocateWorkspace(f.plan,a.owner)).blocked,true);assert.equal(await allocateWorkspace({...f.plan,maxSize:1},randomUUID()),null);assert.equal((await allocateWorkspace(f.plan,b.owner)).assignmentId,b.assignmentId);
 });
 test('workspace plan pins source commit and rejects disabled pools',async t=>{
  const f=await fixture(t);const result={root:f.root,cwd:f.source,repository:'projects/xgj',snapshot:{repositorySources:[{root:f.source,head:f.plan.repositories[0].baseSha}]}};

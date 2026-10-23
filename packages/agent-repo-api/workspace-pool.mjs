@@ -16,9 +16,9 @@ async function safePath(root,path){
 }
 async function atomic(file,value){const tmp=file+'.'+randomUUID();await writeFile(tmp,JSON.stringify(value,null,2),{mode:0o600});await rename(tmp,file);}
 async function transaction(root,fn){
- root=await realpath(root);const dir=await safePath(root,'worktree');await mkdir(dir,{recursive:true,mode:0o700});
+ root=await realpath(root);const dir=await safePath(root,'workspace');await mkdir(dir,{recursive:true,mode:0o700});
  const release=await acquireLock(join(dir,'state.lock'));
- try{const file=await safePath(root,'worktree/state.json');let state;
+ try{const file=await safePath(root,'workspace/state.json');let state;
  try{state=JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;state={version:1,revision:0,workspaces:{}};}
  if(state.version!==1||!state.workspaces||typeof state.workspaces!=='object'||Array.isArray(state.workspaces))throw Error('Invalid workspace state; allocation withheld');
  const result=await fn(state);state.revision++;await atomic(file,state);return result;
@@ -168,5 +168,3 @@ export function sameRegistryExceptPool(before,after){
   return JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
  }catch{return false;}
 }
-
-export const isWorkspaceStatePath=path=>/^worktree\/(?:state\.json(?:\.[a-f0-9-]{36})?|state\.lock\/owner\.json)$/.test(path);

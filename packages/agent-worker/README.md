@@ -518,4 +518,4 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 
 ## 独立 clone 工作区池
 
-项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `worktree/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。
+项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `workspace/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。

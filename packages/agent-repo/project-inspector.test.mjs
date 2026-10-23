@@ -128,16 +128,16 @@ test('workspace management scopes reads and writes, detects stale config and pre
  const syncLock=join(f.root,'.git/ada-workspace-sync.lock');await writeFile(syncLock,String(process.pid));await assert.rejects(f.inspector.workspacePoolSave({...write,payload:{...payload,revision:after.revision,maxSize:3}}),/同步/);await rm(syncLock);
  const unchanged=await readFile(join(f.root,'projects.json'),'utf8');const noop=await f.inspector.workspacePoolSave({...write,payload:{...payload,revision:after.revision}});assert.equal(noop.revision,after.revision);assert.equal(await readFile(join(f.root,'projects.json'),'utf8'),unchanged);
  await assert.rejects(f.inspector.workspacePoolSave(write),/刷新/);
- await mkdir(join(f.root,'worktree'));const state={version:1,workspaces:{'a-0':{id:'a-0',projectId:'a',status:'running',owner:'job-a'},'b-0':{id:'b-0',projectId:'b',status:'blocked',owner:'private-b'}}};
- await writeFile(join(f.root,'worktree/state.json'),JSON.stringify(state));
+ await mkdir(join(f.root,'workspace'));const state={version:1,workspaces:{'a-0':{id:'a-0',projectId:'a',status:'running',owner:'job-a'},'b-0':{id:'b-0',projectId:'b',status:'blocked',owner:'private-b'}}};
+ await writeFile(join(f.root,'workspace/state.json'),JSON.stringify(state));
  const current=await f.inspector.workspacePool(ctx);assert.equal(current.slots.length,1);assert.equal(current.occupied,1);assert.ok(!JSON.stringify(current).includes('private-b'));
  await f.inspector.workspacePoolSave({...write,payload:{...payload,revision:current.revision,enabled:false,maxSize:1}});
- assert.deepEqual(JSON.parse(await readFile(join(f.root,'worktree/state.json'))),state);
+ assert.deepEqual(JSON.parse(await readFile(join(f.root,'workspace/state.json'))),state);
  await assert.rejects(f.inspector.workspacePool({...ctx,payload:{projectId:'missing'}}));
  await assert.rejects(f.inspector.workspacePoolSave({...write,payload:{...payload,maxSize:0}}));
  const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.deepEqual(actions.find(a=>a.id==='projects-workspacePoolSave').requiredScopes,['operator.write']);
  const latest=await f.inspector.workspacePool(ctx),results=await Promise.allSettled([2,3].map(maxSize=>f.inspector.workspacePoolSave({...write,payload:{...payload,revision:latest.revision,maxSize}})));assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
- await writeFile(join(f.root,'worktree/state.json'),'{corrupt');await assert.rejects(f.inspector.workspacePool(ctx),/状态不可读取/);
+ await writeFile(join(f.root,'workspace/state.json'),'{corrupt');await assert.rejects(f.inspector.workspacePool(ctx),/状态不可读取/);
  const saved=await readFile(join(f.root,'projects.json'),'utf8');await assert.rejects(f.inspector.workspacePoolSave({...write,payload:{...payload,revision:(await import('node:crypto')).createHash('sha256').update(saved).digest('hex'),maxSize:4}}),/状态不可读取/);assert.equal(await readFile(join(f.root,'projects.json'),'utf8'),saved);
 
 });

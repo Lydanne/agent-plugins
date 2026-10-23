@@ -15,7 +15,7 @@ export async function workspaceCatalog(root,projectId){
  if(!project)throw new WorkspaceManagementError('请选择当前 Agent 已登记项目');
  let slots=[];
  try{
-  const directory=join(root,'worktree');if(await realpath(directory)!==directory)throw Error('Linked state directory');
+  const directory=join(root,'workspace');if(await realpath(directory)!==directory)throw Error('Linked state directory');
   const file=join(directory,'state.json');if((await lstat(file)).isSymbolicLink())throw Error('Linked state file');
   const state=JSON.parse(await readFile(file,'utf8'));if(state.version!==1||!state.workspaces||Array.isArray(state.workspaces))throw Error('Invalid state');
   slots=Object.values(state.workspaces).filter(s=>s.projectId===projectId).map(s=>({id:s.id,status:s.status,owner:s.owner,path:s.path,branch:s.branch,target:s.target,error:s.error,createdAt:s.createdAt,releasedAt:s.releasedAt,dependencies:Object.entries(s.dependencies??{}).map(([repository,d])=>({repository,installedAt:d.installedAt,packageJsonHash:d.packageJsonHash}))}));
