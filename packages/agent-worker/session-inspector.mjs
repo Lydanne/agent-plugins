@@ -10,6 +10,7 @@ import {readdir,readFile,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 const uuid=/^[0-9a-f-]{36}$/i;
 const active=new Set(['queued','running','cancelling','unknown','awaiting_main','awaiting_user']);
+const directoryFields=entry=>({cwd:entry.useWorkspace&&!entry.workspace?undefined:entry.cwd,workspacePending:entry.useWorkspace===true&&!entry.workspace,directoryKind:entry.workspace?'workspace':'project'});
 const listGroup=row=>row.status==='unknown'?'unknown':active.has(row.status)?'active':'history';
 const groupPriority={active:2,unknown:1,history:0};
 function listProgress(job){
@@ -52,7 +53,7 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
  async function sessionSummaries(scope,all){
   const groups=new Map();
    const bindings=await optionalJson(join(state,hash(scope)+'.json'));
-   for(const entry of Object.values(bindings??{}))groups.set(bindingKey(entry.topic,entry),{topic:entry.topic,...modelFields(entry),...(entry.project?{projectId:entry.project.projectId,repository:entry.project.repository,executionScope:entry.executionScope}:{}),sessionId:entry.sessionId,tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:Date.parse(entry.updatedAt)||0,status:'unknown',progress:'历史任务记录不可用'});
+   for(const entry of Object.values(bindings??{}))groups.set(bindingKey(entry.topic,entry),{topic:entry.topic,...directoryFields(entry),...modelFields(entry),...(entry.project?{projectId:entry.project.projectId,repository:entry.project.repository,executionScope:entry.executionScope}:{}),sessionId:entry.sessionId,tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:Date.parse(entry.updatedAt)||0,status:'unknown',progress:'历史任务记录不可用'});
    for(const job of all){
     const group=bindingKey(job.topic,job);
     const row=groups.get(group)??{topic:job.topic,...modelFields(job),...(job.project?{projectId:job.projectId,repository:job.repository,executionScope:job.executionScope}:{}),tags:[],taskCount:0,interactionCount:0,heat:0,updatedAt:0};
@@ -61,7 +62,7 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
     row.heat+=10*Math.pow(0.5,Math.max(0,now()-job.createdAt)/(7*86400000));
     if(job.status==='completed')row.heat+=5*Math.pow(0.5,Math.max(0,now()-(job.finishedAt??job.createdAt))/(7*86400000));
     row.tags=[...new Set([...row.tags,...(job.tags??[])])];
-    if(!row.jobId||(active.has(job.status)&&!active.has(row.status))||(job.status==='running'&&row.status!=='running')||(['awaiting_main','awaiting_user'].includes(job.status)&&row.status==='queued')){Object.assign(row,{jobId:job.jobId,sessionId:job.sessionId??row.sessionId,status:job.status,jobCreatedAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt,heartbeatAt:job.heartbeatAt,questions:(job.questions??[]).map(q=>({createdAt:q.createdAt,waitingForUserAt:q.waitingForUserAt})),progress:listProgress(job),notificationState:job.notification?.state});}
+    if(!row.jobId||(active.has(job.status)&&!active.has(row.status))||(job.status==='running'&&row.status!=='running')||(['awaiting_main','awaiting_user'].includes(job.status)&&row.status==='queued')){Object.assign(row,{...directoryFields(job),jobId:job.jobId,sessionId:job.sessionId??row.sessionId,status:job.status,jobCreatedAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt,heartbeatAt:job.heartbeatAt,questions:(job.questions??[]).map(q=>({createdAt:q.createdAt,waitingForUserAt:q.waitingForUserAt})),progress:listProgress(job),notificationState:job.notification?.state});}
     row.updatedAt=Math.max(row.updatedAt,job.createdAt,job.finishedAt??0,...(job.questions??[]).flatMap(q=>[q.createdAt??0,q.answeredAt??0,q.waitingForUserAt??0]),...(job.executionRounds??[]).map(r=>r.startedAt??0));
     row.activeCount=(row.activeCount??0)+(active.has(job.status)?1:0);
     groups.set(group,row);

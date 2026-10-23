@@ -161,3 +161,11 @@ test('process clocks tick without replacing disclosures and stop at task complet
  click(f.container,'刷新');await settle();assert.match(f.container.textContent,/总用时 21s/);assert.match(f.container.querySelector('.cq-calls>details summary').textContent,/16s/);
  t.mock.timers.tick(1000);assert.match(f.container.textContent,/总用时 21s/);
 });
+for(const fields of [{cwd:'/agent/workspace/xgj-0/a long directory',directoryKind:'workspace'},{cwd:'/agent/projects/xgj',directoryKind:'project'},{workspacePending:true},{}]) test('session directory display '+JSON.stringify(fields),async t=>{
+  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname);
+  const session={topic:'directory',status:'completed',tags:[],heat:0,taskCount:1,interactionCount:1,...fields};
+  const ctx=uiContext(async(_m,p)=>({ok:true,result:p.payload.topic?{session,records:[],currentTasks:[],taskHistory:[],hasMore:false}:{...listing(null),sessions:[session],groupCounts:{active:0,history:1,unknown:0}}}),{agentId:'main',sessionKey:'agent:main:test'});
+  f.track(f.ui.mountPanel(f.container,ctx));await settle();f.container.querySelector('.cq-row-open').click();await settle();click(f.container,'会话信息');
+  assert.ok(f.container.textContent.includes(fields.cwd??(fields.workspacePending?'等待分配 workspace':'未记录运行目录')));
+  if(fields.directoryKind==='workspace')assert.ok(f.container.textContent.includes('独立 workspace'));
+});

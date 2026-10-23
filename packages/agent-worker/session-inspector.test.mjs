@@ -186,3 +186,19 @@ test('session and task clocks use the selected job timestamps without replacing 
  assert.deepEqual(summary.questions,[{createdAt:12000,waitingForUserAt:13000}]);
  const detail=await inspector.detail(scope,{topic:'clock'});assert.equal(detail.currentTasks[0].startedAt,11000);assert.equal(detail.records.find(job=>job.jobId===id2).heartbeatAt,15000);assert.deepEqual(detail.currentTasks[0].questions,summary.questions);
 }));
+test('session directory follows the selected active job and never guesses a pending workspace cwd',()=>fixture(async state=>{
+ const scope='directory-chat';
+ const rows=[{jobId:id,scope:hash(scope),topic:'directory',status:'running',createdAt:1,cwd:'/agent/workspace/xgj-0',useWorkspace:true,workspace:{id:'xgj-0'}},{jobId:id2,scope:hash(scope),topic:'directory',status:'queued',createdAt:2,cwd:'/agent/projects/xgj',useWorkspace:true}];
+ for(const row of rows)await writeFile(join(state,'jobs',row.jobId+'.json'),JSON.stringify(row));
+ const inspector=createSessionInspector({state,jobs:{status:jobId=>rows.find(j=>j.jobId===jobId)}});
+ let session=(await inspector.detail(scope,{topic:'directory'})).session;
+ assert.equal(session.cwd,'/agent/workspace/xgj-0');assert.equal(session.directoryKind,'workspace');assert.equal(session.workspacePending,false);
+ rows[0].status='completed';
+ session=(await inspector.detail(scope,{topic:'directory'})).session;
+ assert.equal(session.cwd,undefined);assert.equal(session.workspacePending,true);
+ rows[1].useWorkspace=false;
+ session=(await inspector.detail(scope,{topic:'directory'})).session;
+ assert.equal(session.cwd,'/agent/projects/xgj');assert.equal(session.directoryKind,'project');
+ delete rows[1].cwd;
+ assert.equal((await inspector.detail(scope,{topic:'directory'})).session.cwd,undefined);
+}));

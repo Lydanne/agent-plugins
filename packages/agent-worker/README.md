@@ -519,3 +519,5 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 ## 独立 clone 工作区池
 
 项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `workspace/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。
+
+会话信息显示所选当前任务保存的运行目录（Worker 启动 cwd）与目录类型；已结束会话显示最后任务的目录，不代表仍在运行或仍持有 workspace。等待分配 workspace 时不显示源仓库为运行目录，旧记录缺失时显示未记录，不根据当前配置猜测。命令内临时 cd 不改变此字段。
