@@ -203,6 +203,7 @@ describe("FeishuConfigSchema webhook validation", () => {
     const expected = {
       anyOf: [
         { type: "string", enum: ["open", "disabled", "allowlist"] },
+        { type: "string", const: "pairing" },
         { type: "string", const: "allowall" },
       ],
     };
@@ -852,3 +853,5 @@ it('defaults conversation decisions to auto and accepts off at global, account a
  expect(parsed.groups?.test.conversationWindow?.decisionMode).toBe('off');
  expect(FeishuConfigSchema.safeParse({conversationWindow:{enabled:true,decisionMode:'on'}}).success).toBe(false);
 });
+
+describe("group pairing policy",()=>{it("accepts pairing globally and per account",()=>{expect(FeishuConfigSchema.parse({groupPolicy:"pairing",accounts:{work:{groupPolicy:"pairing"}}}).groupPolicy).toBe("pairing");});});

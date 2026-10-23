@@ -1,5 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+const pairingStore = vi.hoisted(() => vi.fn<() => string[]>(() => []));
+vi.mock("openclaw/plugin-sdk/channel-pairing", async (original) => ({...await original<object>(),readChannelAllowFromStoreSync: pairingStore}));
 import { resolveFeishuAccount } from "./accounts.js";
 import { resolveFeishuChatType } from "./chat-type.js";
 import {
@@ -365,5 +367,22 @@ describe("Feishu read policy", () => {
         ctx: { conversationReadOrigin: "direct-operator" },
       }),
     ).toEqual({ chatId: "oc_unknown", decision: "allow" });
+  });
+});
+
+describe("paired group read access", () => {
+  it.each([{approved:[]},{approved:["ou_approved"]},{approved:["oc_other"]},{approved:["oc_current"]}])("checks durable group approval $approved", ({approved}) => {
+    pairingStore.mockReturnValue(approved);
+    const account=createAccount();account.config.groupPolicy="pairing";
+    account.config.groups={oc_current:{enabled:true}};account.config.groupAllowFrom=["oc_current"];
+    const check=()=>assertFeishuChatReadAllowed({cfg,account,chatId:"oc_current",chatType:"group",ctx:{accountId:"default",requesterAccountId:"default",toolContext:{currentChannelProvider:"feishu",currentChannelId:"oc_current"}}});
+    if(approved.includes("oc_current"))expect(check()).toBe("oc_current");else expect(check).toThrow();
+    expect(canEnumerateAllFeishuGroups(cfg,account)).toBe(false);
+    expect(pairingStore).toHaveBeenCalledWith("feishu",process.env,"default");
+  });
+  it("fails closed when the approval store is unreadable",()=>{
+    pairingStore.mockImplementation(()=>{throw Error("unreadable");});
+    const account=createAccount();account.config.groupPolicy="pairing";
+    expect(()=>assertFeishuChatReadAllowed({cfg,account,chatId:"oc_current",chatType:"group",ctx:{conversationReadOrigin:"direct-operator"}})).toThrow();
   });
 });

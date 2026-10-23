@@ -66,7 +66,7 @@ const sharedHints: Hints = {
   responsePrefix: hint("回复前缀 / Response prefix"),
   dmPolicy: hint("私聊准入策略 / Direct-message policy", "pairing：配对审批；allowlist：允许列表；open：开放（allowFrom 需包含 *）；disabled：关闭。 / pairing: pairing approval; allowlist: allowed senders; open: public (allowFrom must include *); disabled: off."),
   allowFrom: hint("允许的私聊发送者 / Allowed DM senders"),
-  groupPolicy: hint("群聊准入策略 / Group policy", "allowlist：允许列表；open：开放；disabled：关闭；allowall 是 open 的兼容别名。 / allowlist: allowed groups; open: public; disabled: off; allowall is a legacy alias for open."),
+  groupPolicy: hint("群聊准入策略 / Group policy", "pairing：新群配对审批；allowlist：允许列表；open：开放；disabled：关闭；allowall 是 open 的兼容别名。 / allowlist: allowed groups; open: public; disabled: off; allowall is a legacy alias for open."),
   groupAllowFrom: hint("允许的群聊 / Allowed groups"),
   groupSenderAllowFrom: hint("允许的群聊发送者 / Allowed group senders"),
   requireMention: hint("需要 @ 机器人 / Require bot mention"),

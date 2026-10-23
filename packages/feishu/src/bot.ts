@@ -636,10 +636,43 @@ export async function handleFeishuMessage(params: {
       log(`feishu[${account.accountId}]: group ${ctx.chatId} is disabled`);
       return;
     }
+    // Group approval is account-scoped and stored under the chat ID, never the
+    // requesting member. DM approvals and static group entries cannot admit it.
+    if (feishuCfg?.groupPolicy === "pairing") {
+      try {
+        const pairing = createChannelPairingController({
+          core: { channel: channelRuntime?.inbound ? channelRuntime : getFeishuRuntime().channel } as ReturnType<typeof getFeishuRuntime>,
+          channel: "feishu",
+          accountId: account.accountId,
+        });
+        const approved = (await pairing.readAllowFromStore()).some(
+          (entry) => normalizeFeishuAllowEntry(entry) === `chat:${ctx.chatId}`,
+        );
+        if (!approved) {
+          if (ctx.mentionedBot && ctx.senderType !== "bot") await pairing.issueChallenge({
+            senderId: ctx.chatId,
+            senderIdLine: `Feishu group id: ${ctx.chatId}`,
+            meta: { kind: "group" },
+            buildReplyText: ({ code }) => {
+              const profile = process.env.OPENCLAW_PROFILE;
+              const command = profile && /^[a-zA-Z0-9_-]{1,64}$/.test(profile)
+                ? `openclaw --profile ${profile}` : "openclaw";
+              return `此群尚未获准使用机器人。请管理员在本机对应 OpenClaw 实例执行：\n${command} pairing approve feishu ${code} --account ${account.accountId}\n批准后请重新 @ 机器人。`;
+            },
+            sendPairingReply: async (text) => { await sendMessageFeishu({ cfg, to: `chat:${ctx.chatId}`, text, accountId: account.accountId }); },
+            onReplyError: () => log(`feishu[${account.accountId}]: group pairing reply failed`),
+          });
+          return;
+        }
+      } catch {
+        log(`feishu[${account.accountId}]: group pairing verification failed; ingress denied`);
+        return;
+      }
+    }
     const defaultGroupPolicy = resolveDefaultGroupPolicy(cfg);
     const { groupPolicy, providerMissingFallbackApplied } = resolveOpenProviderRuntimeGroupPolicy({
       providerConfigPresent: cfg.channels?.feishu !== undefined,
-      groupPolicy: feishuCfg?.groupPolicy,
+      groupPolicy: feishuCfg?.groupPolicy === "pairing" ? "open" : feishuCfg?.groupPolicy,
       defaultGroupPolicy,
     });
     warnMissingProviderGroupPolicyFallbackOnce({

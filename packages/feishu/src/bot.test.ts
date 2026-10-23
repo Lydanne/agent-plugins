@@ -2272,6 +2272,29 @@ describe("handleFeishuMessage command authorization", () => {
     expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { approved: [], mention: true, admitted: false, challenge: true },
+    { approved: ["ou_sender_1"], mention: true, admitted: false, challenge: true },
+    { approved: ["oc_other"], mention: true, admitted: false, challenge: true },
+    { approved: [], mention: false, admitted: false, challenge: false },
+    { approved: ["oc_pairing"], mention: true, admitted: true, challenge: false },
+  ])("group pairing approval $approved mention=$mention", async ({approved, mention, admitted, challenge}) => {
+    mockReadAllowFromStore.mockResolvedValue(approved);
+    mockUpsertPairingRequest.mockResolvedValue({code:"GROUP123",created:true});
+    const cfg=createFeishuTestConfig({groupPolicy:"pairing",requireMention:true,
+      groupAllowFrom:["oc_pairing"],groups:{oc_pairing:{enabled:true}}});
+    await dispatchMessage({cfg,botOpenId:"ou_bot",event:createFeishuTestEvent({
+      messageId:`group-pairing-${approved.join()}-${mention}`,chatId:"oc_pairing",chatType:"group",
+      text:mention?"@_bot hello":"hello",message:{mentions:mention?[{key:"@_bot",id:{open_id:"ou_bot"},name:"Bot"}]:[]},
+    })});
+    if (challenge) {
+      expect(mockUpsertPairingRequest).toHaveBeenCalledWith(expect.objectContaining({channel:"feishu",accountId:"default",id:"oc_pairing",meta:{kind:"group"}}));
+      expect(mockSendMessageFeishu).toHaveBeenCalledWith(expect.objectContaining({to:"chat:oc_pairing",text:expect.stringContaining("GROUP123")}));
+    } else expect(mockUpsertPairingRequest).not.toHaveBeenCalled();
+    if (admitted) expect(mockDispatchReplyFromConfig).toHaveBeenCalled();
+    else { expect(mockDispatchReplyFromConfig).not.toHaveBeenCalled(); expect(mockLoadMentionHistory).not.toHaveBeenCalled(); }
+  });
+
   it("computes group command authorization from group allowFrom", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(true);
     mockResolveCommandAuthorizedFromAuthorizers.mockReturnValue(false);

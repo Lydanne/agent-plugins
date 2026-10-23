@@ -1,3 +1,4 @@
+import { readChannelAllowFromStoreSync } from "openclaw/plugin-sdk/channel-pairing";
 import {
   compileAllowlist,
   resolveAllowlistMatchByCandidates,
@@ -91,7 +92,7 @@ function isCurrentChat(params: {
 function resolveFeishuReadGroupPolicy(cfg: OpenClawConfig, account: ResolvedFeishuAccount) {
   return resolveOpenProviderRuntimeGroupPolicy({
     providerConfigPresent: cfg.channels?.feishu !== undefined,
-    groupPolicy: account.config.groupPolicy,
+    groupPolicy: account.config.groupPolicy === "pairing" ? "allowlist" : account.config.groupPolicy,
     defaultGroupPolicy: resolveDefaultGroupPolicy(cfg),
   }).groupPolicy;
 }
@@ -109,6 +110,13 @@ export function isFeishuGroupReadAllowed(
   const group = resolveFeishuGroupConfig({ cfg: account.config, groupId: chatId });
   if (group?.enabled === false) {
     return false;
+  }
+  if (account.config.groupPolicy === "pairing") {
+    try {
+      return readChannelAllowFromStoreSync("feishu", process.env, account.accountId).some(
+        (entry) => normalizeFeishuAllowEntry(entry) === `chat:${chatId}`,
+      );
+    } catch { return false; }
   }
   if (current) {
     return true;
@@ -138,7 +146,9 @@ export function isFeishuGroupReadEnabled(
   if (resolveFeishuReadGroupPolicy(cfg, account) === "disabled") {
     return false;
   }
-  return resolveFeishuGroupConfig({ cfg: account.config, groupId: chatId })?.enabled !== false;
+  return account.config.groupPolicy === "pairing"
+    ? isFeishuGroupReadAllowed(cfg, account, chatId, false)
+    : resolveFeishuGroupConfig({ cfg: account.config, groupId: chatId })?.enabled !== false;
 }
 
 function isDmUniversallyAllowed(account: ResolvedFeishuAccount): boolean {

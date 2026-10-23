@@ -57,6 +57,7 @@ const FeishuStickerSetsSchema = z
 
 const FeishuGroupPolicySchema = z.union([
   GroupPolicySchema,
+  z.literal("pairing"),
   // Preserve the shipped Feishu alias while the canonical value remains "open".
   z.literal("allowall").transform(() => "open" as const),
 ]);

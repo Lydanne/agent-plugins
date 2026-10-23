@@ -104,6 +104,10 @@ Worker 可在原任务授权及自身已有权限内直接使用 Feishu CLI、�
 
 机器人是否执行业务写入仍由角色、工具权限和本轮授权决定；接话窗口只决定是否响应。撤回来源消息会使相关任务/结果失效，不撤销已被外部系统接受的业务操作。
 
+### 群聊与私聊配对审批
+
+`groupPolicy="pairing"` 时，新群首次 @ 机器人返回配对码，在审批前不进入模型、历史读取或 Worker。管理员在对应本机 profile 执行 `openclaw --profile <profile> pairing approve feishu <code> --account <account>`；批准的是整个群，不是发起人。私聊独立使用 `dmPolicy="pairing"`，同一批准命令只批准对应个人。群批准不会开放私聊，私聊批准不会开放群；账号隔离，静态 groups 配置也不能绕过配对。未 @ 的未批准群消息保持静默。批准后仍遵守发送者和 @ 要求。可以用 `pairing list feishu` 查看待审批对象；不将聊天配对视为代码、数据或管理命令授权。
+
 ### 飞书管理指令
 
 群内使用 `@机器人 /subagents list`；私聊可直接发送 `/subagents list`。`/help`、`/commands`、`/status`、`/whoami`、`/agents` 和 `/subagents` 通过宿主指令处理，不为它们同步仓库、整理群历史或创建后台任务卡。`/skill`、`/compact`、普通技能名称及未识别的斜杠请求保留正常任务流程。

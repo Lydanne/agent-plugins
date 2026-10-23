@@ -395,8 +395,10 @@ const collectFeishuSecurityWarnings = createAllowlistProviderGroupPolicyWarningC
   accountId?: string | null;
 }>({
   providerConfigPresent: (cfg) => cfg.channels?.feishu !== undefined,
-  resolveGroupPolicy: ({ cfg, accountId }) =>
-    resolveFeishuAccount({ cfg, accountId }).config?.groupPolicy,
+  resolveGroupPolicy: ({ cfg, accountId }) => {
+    const policy = resolveFeishuAccount({ cfg, accountId }).config?.groupPolicy;
+    return policy === "pairing" ? "allowlist" : policy;
+  },
   collect: ({ cfg, accountId, groupPolicy }) => {
     if (groupPolicy !== "open") {
       return [];

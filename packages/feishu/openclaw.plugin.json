@@ -893,6 +893,10 @@
               },
               {
                 "type": "string",
+                "const": "pairing"
+              },
+              {
+                "type": "string",
                 "const": "allowall"
               }
             ]
@@ -2614,6 +2618,10 @@
                     },
                     {
                       "type": "string",
+                      "const": "pairing"
+                    },
+                    {
+                      "type": "string",
                       "const": "allowall"
                     }
                   ]
@@ -3830,7 +3838,7 @@
         },
         "groupPolicy": {
           "label": "群聊准入策略 / Group policy",
-          "help": "allowlist：允许列表；open：开放；disabled：关闭；allowall 是 open 的兼容别名。 / allowlist: allowed groups; open: public; disabled: off; allowall is a legacy alias for open."
+          "help": "pairing：新群配对审批；allowlist：允许列表；open：开放；disabled：关闭；allowall 是 open 的兼容别名。 / allowlist: allowed groups; open: public; disabled: off; allowall is a legacy alias for open."
         },
         "groupAllowFrom": {
           "label": "允许的群聊 / Allowed groups"
@@ -4728,7 +4736,7 @@
         },
         "accounts.*.groupPolicy": {
           "label": "群聊准入策略 / Group policy",
-          "help": "allowlist：允许列表；open：开放；disabled：关闭；allowall 是 open 的兼容别名。 / allowlist: allowed groups; open: public; disabled: off; allowall is a legacy alias for open."
+          "help": "pairing：新群配对审批；allowlist：允许列表；open：开放；disabled：关闭；allowall 是 open 的兼容别名。 / allowlist: allowed groups; open: public; disabled: off; allowall is a legacy alias for open."
         },
         "accounts.*.groupAllowFrom": {
           "label": "允许的群聊 / Allowed groups"
