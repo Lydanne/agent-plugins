@@ -572,3 +572,5 @@
 @media(max-width:600px){.ar-management{padding:20px 16px 32px}.ar-management .ar-task-card-actions{flex-wrap:wrap}.ar-management .ar-panel button.ar-scheduled-task{padding:18px}}
 
 .ar-worker-elapsed{font-variant-numeric:tabular-nums;min-width:130px}
+
+.ar-workspace-pool{border:1px solid var(--border-color,#8885);border-radius:8px;padding:12px;margin:12px 0;overflow-wrap:anywhere}.ar-workspace-pool form{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0}.ar-workspace-pool label{display:flex;gap:8px;align-items:center}.ar-workspace-pool input[type=number]{width:5em}.ar-workspace-pool details{padding:8px 0;border-top:1px solid #8883}.ar-workspace-pool p{font-size:13px;line-height:1.5}

@@ -68,7 +68,9 @@
     "scheduled-requests.mjs",
     "schedule-manager.mjs",
     "dist/workspace-pool.mjs",
-    "dist/workspace-lock.mjs"
+    "dist/workspace-lock.mjs",
+    "workspace-management.mjs",
+    "workspace-pool-page.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

@@ -111,6 +111,8 @@ test('workspace selector is opt-in, exposes pool config and maps skill scope int
  assert.equal(runtime.cwd,join(f.root,'workspace/a-0'));assert.equal(runtime.projectContext.repository,'projects/a');
  const snapshot=await readScopedSkillVersion(runtime);assert.equal(snapshot.protocol,4);assert.ok(snapshot.catalog.includes('workspace/a-0/.agents/skills/a/SKILL.md'));assert.ok(snapshot.catalog.includes('skills/role/SKILL.md'));
  await writeFile(join(runtime.cwd,'fix.txt'),'change');await commit(runtime.cwd);await readScopedSkillVersion(runtime);
+ f.projects.a.workspacePool={enabled:false,maxSize:1};await writeFile(join(f.root,'projects.json'),JSON.stringify({schemaVersion:1,projects:f.projects}));await readScopedSkillVersion(runtime);await commit(f.root);await readScopedSkillVersion(runtime);
+ const registryText=await readFile(join(f.root,'projects.json'),'utf8'),staged=JSON.parse(registryText);staged.projects.a.branch='other';await writeFile(join(f.root,'projects.json'),JSON.stringify(staged));await git(f.root,['add','projects.json']);await writeFile(join(f.root,'projects.json'),registryText);await assert.rejects(readScopedSkillVersion(runtime),/registration changed/);await git(f.root,['add','projects.json']);
  const resumed=await prepareJobWorkspace(runtime,runtime.workspace.owner);assert.equal(resumed.workspace.assignmentId,runtime.workspace.assignmentId);assert.equal(resumed.executionScope,runtime.executionScope);
  await git(runtime.cwd,['switch','-c','wrong']);await assert.rejects(readScopedSkillVersion(runtime),/branch/);
 });

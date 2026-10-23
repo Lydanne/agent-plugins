@@ -155,3 +155,15 @@ export async function releaseWorkspace(plan,lease){
   return await update(plan,lease,s=>{s.status='idle';s.releasedAt=Date.now();});
  }catch{ return update(plan,lease,s=>{s.status='blocked';s.error='Workspace has uncommitted, unpushed or unverifiable changes; preserved';}); }
 }
+
+// Pool capacity is operational configuration; changing it does not replace a task's project identity.
+export function sameRegistryExceptPool(before,after){
+ try{
+  const pools=text=>Object.entries(JSON.parse(text).projects??{}).map(([id,p])=>[id,p.workspacePool]);
+  const normalize=text=>{const value=JSON.parse(text);if(!value.projects||Array.isArray(value.projects))throw Error('Invalid registry');for(const project of Object.values(value.projects)){const pool=project.workspacePool;if(pool!==undefined&&(pool===null||typeof pool!=='object'||Object.keys(pool).some(k=>!['enabled','maxSize'].includes(k))||typeof pool.enabled!=='boolean'||!Number.isInteger(pool.maxSize)||pool.maxSize<1||pool.maxSize>20))throw Error('Invalid pool');delete project.workspacePool;}return value;};
+  const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
+  const a=normalize(before),b=normalize(after);
+  if(JSON.stringify(pools(before))===JSON.stringify(pools(after)))return before===after;
+  return JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+ }catch{return false;}
+}

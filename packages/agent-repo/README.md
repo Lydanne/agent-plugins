@@ -452,3 +452,5 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 ## 独立 clone 工作区池
 
 项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `worktree/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。
+
+WebUI 项目页提供代码工作区池配置、占用与异常详情。保存 projects.json 需要 operator.write，检测过期版本，不执行 Git 提交或服务重启；待提交变化及其对新任务准备/同步的影响在界面明确提示。池配置调整不终止已有分配，异常目录保留。详见 [工作区池](../../docs/workspace-pool.md)。

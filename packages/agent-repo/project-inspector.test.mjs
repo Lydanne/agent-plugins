@@ -45,7 +45,7 @@ test('dirty inspection shows committed metadata without loading changes or follo
 });
 test('native actions require read scope and chunk ownership includes Agent and conversation',async()=>{
  let clock=0;const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>({text:'x'.repeat(80000)}),detail:async()=>{throw Error('secret-path');}},{now:()=>clock});
- assert.deepEqual(actions.filter(a=>!['projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun'].includes(a.id)).map(a=>a.requiredScopes),Array(13).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
+ assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun'].includes(a.id)).map(a=>a.requiredScopes),Array(14).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
  const actual=await readInspectionResponse((action,payload)=>actions.find(a=>a.id==='projects-'+action).handler({...ctx,payload}),'list',{});assert.equal(actual.text.length,80000);
  const first=await actions[0].handler(ctx),transferId=first.result.transferId;
  for(const extra of [{agentId:'other',sessionKey:'agent:other:test'},{sessionKey:'agent:main:other'},{payload:{transferId,index:-1}},{payload:{transferId,index:3}}])assert.equal((await actions[2].handler({...ctx,payload:{transferId,index:1},...extra})).ok,false);
@@ -116,4 +116,25 @@ test('repository schedule catalog and mutation stay bound to trusted Agent and w
  const f=await fixture(t),calls=[];repositoryScheduleBridge.catalog=async id=>[{id:'repo-sync:'+id,kind:'repository-sync',operations:[]}];repositoryScheduleBridge.administer=async(...args)=>{calls.push(args);return {status:'succeeded'};};
  const catalog=await f.inspector.scheduleCatalog(f.ctx);assert.equal(catalog.tasks[0].id,'repo-sync:main');
  await assert.rejects(f.inspector.scheduleManage({...f.ctx,payload:{id:'repo-sync:main',action:'pause'}}),/写入/);await f.inspector.scheduleManage({...f.ctx,client:{scopes:['operator.write']},payload:{id:'repo-sync:main',action:'pause'}});assert.equal(calls[0][0],'main');assert.equal(calls.length,1);
+});
+
+test('workspace management scopes reads and writes, detects stale config and preserves occupied slots',async t=>{
+ const f=await fixture(t),ctx={...f.ctx,payload:{projectId:'a'}},before=await f.inspector.workspacePool(ctx);
+ assert.equal(before.config.enabled,false);assert.deepEqual(before.slots,[]);
+ const payload={projectId:'a',revision:before.revision,enabled:true,maxSize:2};
+ await assert.rejects(f.inspector.workspacePoolSave({...ctx,payload}),/写入权限/);
+ const write={...ctx,client:{scopes:['operator.write']},payload};
+ const after=await f.inspector.workspacePoolSave(write);assert.equal(after.config.maxSize,2);assert.equal(after.pendingCommit,true);
+ await assert.rejects(f.inspector.workspacePoolSave(write),/刷新/);
+ await mkdir(join(f.root,'worktree'));const state={version:1,workspaces:{'a-0':{id:'a-0',projectId:'a',status:'running',owner:'job-a'},'b-0':{id:'b-0',projectId:'b',status:'blocked',owner:'private-b'}}};
+ await writeFile(join(f.root,'worktree/state.json'),JSON.stringify(state));
+ const current=await f.inspector.workspacePool(ctx);assert.equal(current.slots.length,1);assert.equal(current.occupied,1);assert.ok(!JSON.stringify(current).includes('private-b'));
+ await f.inspector.workspacePoolSave({...write,payload:{...payload,revision:current.revision,enabled:false,maxSize:1}});
+ assert.deepEqual(JSON.parse(await readFile(join(f.root,'worktree/state.json'))),state);
+ await assert.rejects(f.inspector.workspacePool({...ctx,payload:{projectId:'missing'}}));
+ await assert.rejects(f.inspector.workspacePoolSave({...write,payload:{...payload,maxSize:0}}));
+ const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.deepEqual(actions.find(a=>a.id==='projects-workspacePoolSave').requiredScopes,['operator.write']);
+ const latest=await f.inspector.workspacePool(ctx),results=await Promise.allSettled([2,3].map(maxSize=>f.inspector.workspacePoolSave({...write,payload:{...payload,revision:latest.revision,maxSize}})));assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ await writeFile(join(f.root,'worktree/state.json'),'{corrupt');await assert.rejects(f.inspector.workspacePool(ctx),/状态不可读取/);
+
 });

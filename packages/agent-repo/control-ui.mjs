@@ -1,3 +1,4 @@
+import {mountWorkspacePool} from './workspace-pool-page.mjs';
 import {mountScheduleManager} from './schedule-manager.mjs';
 import {mountLogConsole} from './log-console.mjs';
 import {mountSkillMaintenance} from './skill-maintenance-page.mjs';
@@ -22,6 +23,7 @@ export function mountProjects(container,initial){
  function groupName(task){const key='agent:'+target().agentId+':feishu:group:'+task.chatId;const row=(context.host.sessions.rows??[]).find(row=>row.key===key);return [row?.label,row?.displayName].find(name=>typeof name==='string'&&name.trim()&&!name.includes(task.chatId))?.trim()??'群名称未获取';}
  function closeScheduleManager(){scheduleManager?.dispose();scheduleManager=null;}
  function openScheduleManager(initialTaskId){closeScheduleManager();scheduleManager=mountScheduleManager(container,{initialTaskId,groupName,invoke,canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{scheduleManager=null;},onChanged:()=>refresh()});}
+ let workspaceView=null;
  let maintenanceView=null;
  function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
@@ -38,7 +40,7 @@ export function mountProjects(container,initial){
   else {skillArea.append(maintenanceView.element);maintenanceView.setSources(sources,projectId+':'+repository);}
   subagentArea=element('div');subagentArea.append(subagents(projectId?(detail?.subagentSources??[]).filter(source=>source.source!=='agent'):[list.agentSubagents].filter(Boolean)));subagentArea.hidden=maintenanceView.view==='cli';skillArea.append(subagentArea);
  }
- function reset(){closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
+ function reset(){workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
  async function invoke(action,payload){const current=context,selected=projectInspectionTarget(context);return readInspectionResponse(async(name,data)=>{current.signal.throwIfAborted();if(current!==context)throw Error('Agent 已切换');return current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data});},action,payload);}
  async function refresh({scanList=true}={}){
   if(disposed||!context.presented||context.signal.aborted||!context.host.connection.canRead||!target().agentId)return;
@@ -220,6 +222,7 @@ export function mountProjects(container,initial){
  }
  function jump(){try{openWorkerProject({...target(),projectId});}catch(failure){error=safe(failure.message);render();}}
  function render(){
+  workspaceView?.dispose();workspaceView=null;
   root.dataset.managementSection=context.props.managementSection??'';
   renderSyncDialog();
   const tabScroll=root.querySelector('.ar-project-tabs')?.scrollLeft??0;
@@ -245,6 +248,7 @@ export function mountProjects(container,initial){
    const heading=element('div',undefined,'ar-project-heading');heading.append(element('h2',safe(detail.name)));
    const worker=button('查看 Worker 项目任务 ↗',jump);worker.disabled=!selected.sessionKey||!canOpenWorkerProject();worker.title=!selected.sessionKey?'先选择该 Agent 的会话':!canOpenWorkerProject()?'需要加载配套 Agent Worker UI':'打开当前会话中此项目的 Worker 任务';heading.append(worker);body.append(heading);
    body.append(element('code',safe(detail.cwd),'ar-path'));
+   if(context.presented&&!context.signal.aborted)workspaceView=mountWorkspacePool(body,{projectId,invoke,canWrite:()=>context.host.connection.canWrite===true,safe});
    const scope=element('select');scope.setAttribute('aria-label','当前仓库范围');for(const row of detail.scopes){const option=element('option',safe(row.label));option.value=row.repository;scope.append(option);}scope.value=repository;scope.onchange=()=>{repository=scope.value;refresh({scanList:false});};body.append(scope);
    body.append(element('p',safe('当前范围 · '+detail.repository+' · 共 '+detail.effectiveSkillCount+' 个候选技能'),'ar-meta'));
    const inherited=element('p',undefined,'ar-meta'),role=detail.sources.find(source=>source.source==='agent');inherited.append(element('span',!role||role.state==='unavailable'?'继承的技能暂不可读取 · ':'继承 '+role.skills.length+' 个技能 · '));const viewRole=button('查看 Agent Repo',()=>chooseTab(''));viewRole.className='ar-text-action';inherited.append(viewRole);body.append(inherited);if(role?.warning)body.append(element('p',safe(role.warning),'ar-warning'));if(role?.state==='dirty')body.append(element('p','继承的技能有未提交变化，当前使用已提交版本。','ar-warning'));
@@ -261,7 +265,7 @@ export function mountProjects(container,initial){
  }
  const stopNavigation=subscribeWorkerNavigation(()=>{if(!disposed)render();}),stopHost=context.host.subscribe(()=>{if(disposed)return;const next=target(),read=context.host.connection.canRead,write=context.host.connection.canWrite,changed=next.agentId!==observedTarget.agentId||next.sessionKey!==observedTarget.sessionKey||read!==observedRead||write!==observedWrite;observedTarget=next;observedRead=read;observedWrite=write;if(changed){reset();render();refresh();}});
  render();refresh();
- return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
+ return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
 }
 const managementModules=[
  {id:'overview',label:'概览'},

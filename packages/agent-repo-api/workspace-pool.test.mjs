@@ -52,3 +52,10 @@ test('only the initial allocation may prepare; reuse rejects changed repository 
  const ready=await prepareWorkspace(f.plan,slot,{install:f.install});await releaseWorkspace(f.plan,ready);
  await assert.rejects(allocateWorkspace({...f.plan,repositories:[...f.plan.repositories,{path:'repositories/extra',url:'changed'}]},randomUUID()),/layout changed/);
 });
+
+test('operational pool updates preserve registry identity but cannot change repository or accept invalid limits',async()=>{
+ const {sameRegistryExceptPool}=await import('./workspace-pool.mjs');const manifest={schemaVersion:1,projects:{xgj:{repository:'projects/xgj',url:'trusted',branch:'main'}}},before=JSON.stringify(manifest);
+ manifest.projects.xgj.workspacePool={enabled:true,maxSize:2};assert.equal(sameRegistryExceptPool(before,JSON.stringify(manifest)),true);
+ manifest.projects.xgj.workspacePool.maxSize=0;assert.equal(sameRegistryExceptPool(before,JSON.stringify(manifest)),false);
+ manifest.projects.xgj.workspacePool.maxSize=2;manifest.projects.xgj.url='other';assert.equal(sameRegistryExceptPool(before,JSON.stringify(manifest)),false);
+});
