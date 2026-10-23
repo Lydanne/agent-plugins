@@ -6,11 +6,14 @@ import {renderQuestionCard,parseQuestionSubmission,saveQuestionCard,readQuestion
 import {handleWorkerQuestionAction,handleWorkerQuestionTextReply} from './worker-question-action.js';
 const mocks=vi.hoisted(()=>({edit:vi.fn(),send:vi.fn(),card:vi.fn()}));
 vi.mock('./send.js',()=>({editMessageFeishu:mocks.edit,sendMessageFeishu:mocks.send,sendCardFeishu:mocks.card}));
+vi.mock('./accounts.js',()=>({resolveFeishuRuntimeAccount:()=>({accountId:'a',config:{}})}));
+vi.mock('./bot.js',()=>({handleFeishuMessage:vi.fn()}));
+vi.mock('./client.js',()=>({createFeishuClient:vi.fn()}));
 let stateDir:string;
 const fixture=():QuestionCard=>({jobId:'job',provenance:{taskId:'task',revision:0,accountId:'a',chatId:'chat',senderId:'alice',sessionKey:'agent:main:feishu:chat',requestMessageIds:['request'],sourceMessageIds:['request']},messageId:'card',status:'waiting',question:{questionId:'q',expiresAt:Date.now()+60000,question:'请确认日期范围',reason:'日期未知',progress:'已确认只读方式',knownValues:{env:'prod'},fields:[{id:'env',label:'环境',type:'single_select',required:true,options:[{label:'生产',value:'prod'},{label:'测试',value:'test'}]},{id:'period',label:'日期',type:'date_range',timezone:'Asia/Shanghai',required:true}],allowFreeText:true}});
 const event=(card:QuestionCard,form:Record<string,unknown>)=>({operator:{open_id:'alice'},token:'token',context:{chat_id:'chat',open_message_id:'card'},action:{tag:'button',value:questionAction(card),form_value:form}});
 beforeEach(()=>{stateDir=mkdtempSync(join(tmpdir(),'worker-form-'));mocks.card.mockReset().mockResolvedValue({messageId:'supplement-card'});mocks.edit.mockReset().mockResolvedValue({messageId:'card'});mocks.send.mockReset().mockResolvedValue({messageId:'notice'});workerQuestionBridge.read=()=>({status:'awaiting_user',question:fixture().question});workerQuestionBridge.authorize=()=>true;workerQuestionBridge.submit=vi.fn(async card=>saveQuestionCard(stateDir,{...card,status:'accepted',workingMessageId:'new-working'}));});
-afterEach(()=>{rmSync(stateDir,{recursive:true,force:true});workerQuestionBridge.read=undefined;workerQuestionBridge.authorize=undefined;workerQuestionBridge.submit=undefined;workerQuestionBridge.reopen=undefined;workerQuestionBridge.supplement=undefined;});
+afterEach(()=>{rmSync(stateDir,{recursive:true,force:true});workerQuestionBridge.read=undefined;workerQuestionBridge.authorize=undefined;workerQuestionBridge.submit=undefined;workerQuestionBridge.reopen=undefined;workerQuestionBridge.supplement=undefined;workerQuestionBridge.acceptSubmission=undefined;});
 it('renders missing fields only, with timezone and explicit submit and no GIF',()=>{
  const card=renderQuestionCard(fixture());const raw=JSON.stringify(card);
  expect(raw).toContain('date_picker');expect(raw).toContain('Asia/Shanghai');expect(raw).toContain('form_action_type');expect(raw).not.toContain('select_static');expect(raw).not.toContain('img_key');expect(raw).toContain('生产');
@@ -211,4 +214,51 @@ it('timeout status never claims the requester answered and preserves reopen in o
  card.question={...card.question,resumeReason:'user_wait_timeout'};
  let raw=JSON.stringify(renderQuestionCard(card));expect(raw).toContain('已超时继续');expect(raw).toContain('宿主超时续接');expect(raw).not.toContain('回答者为原提问者');
  card.question.question='大'.repeat(12000);raw=JSON.stringify(renderQuestionCard(card));expect(raw).toContain('重新补充');expect(Buffer.byteLength(raw)).toBeLessThan(28000);
+});
+
+
+it.each(['form','text','rendered_form','rendered_text'] as const)('persists real late %s input after timeout instead of silently accepting the timeout answer',async mode=>{
+ const card=fixture();if(mode.startsWith('rendered')){card.status='accepted';card.answerSource='user_wait_timeout';card.question={...card.question,answer:'未知跳过',resumeReason:'user_wait_timeout'};}saveQuestionCard(stateDir,card);
+ workerQuestionBridge.read=()=>({status:'running',question:{...card.question,answer:'未知跳过',resumeReason:'user_wait_timeout'}});
+ if(mode.endsWith('form'))await handleWorkerQuestionAction({cfg:{},accountId:'a',event:event(card,{period__start:'2026-10-01',period__end:'2026-10-09'}),stateDir});
+ else await handleWorkerQuestionTextReply({cfg:{},accountId:'a',chatId:'chat',senderId:'alice',messageId:'late-message',parentId:'card',text:'日期为10月1日至9日',stateDir});
+ await vi.waitFor(()=>expect(workerQuestionBridge.submit).toHaveBeenCalledOnce());
+ const submitted=vi.mocked(workerQuestionBridge.submit!).mock.calls[0][0];
+ expect(submitted.submittedAt).toBeGreaterThan(0);expect(submitted.answerSource).toBe(mode.endsWith('form')?'user_card':'user_text');
+ if(mode.endsWith('form'))expect(submitted.answers?.period).toEqual({start:'2026-10-01',end:'2026-10-09'});else expect(submitted.note).toBe('日期为10月1日至9日');
+ await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+});
+it('retries only pre-expiry server-saved input after expiry and ignores callback replacement values',async()=>{
+ const card=fixture();saveQuestionCard(stateDir,card);
+ const saved=claimQuestionAnswer(stateDir,card,{env:'prod',period:{start:'2026-10-01',end:'2026-10-09'}});
+ const expired={...saved,submittedAt:Date.now()-2000,question:{...saved.question,expiresAt:Date.now()-1000}};saveQuestionCard(stateDir,expired);
+ workerQuestionBridge.read=()=>({status:'awaiting_user',question:expired.question});
+ const retry=event(card,{period__start:'2099-01-01',period__end:'2099-12-31'});retry.action.value.m={questionId:'q',retry:true};
+ await handleWorkerQuestionAction({cfg:{},accountId:'a',event:retry,stateDir});
+ await vi.waitFor(()=>expect(workerQuestionBridge.submit).toHaveBeenCalledOnce());
+ expect(vi.mocked(workerQuestionBridge.submit!).mock.calls[0][0].answers?.period).toEqual({start:'2026-10-01',end:'2026-10-09'});
+ await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+});
+it.each(['waiting','late_claim'] as const)('does not revive an expired new answer through retry metadata: %s',async mode=>{
+ const card=fixture();card.question.expiresAt=Date.now()-1000;
+ saveQuestionCard(stateDir,mode==='waiting'?card:{...card,status:'submitted',answers:{env:'prod'},answerSource:'user_card',submittedAt:Date.now()});
+ const retry=event(card,{});retry.action.value.m={questionId:'q',retry:true};
+ await expect(handleWorkerQuestionAction({cfg:{},accountId:'a',event:retry,stateDir})).rejects.toThrow('expired');expect(workerQuestionBridge.submit).not.toHaveBeenCalled();
+});
+
+it('outer callback retries an expired saved envelope and does not poison a failed adapter token',async()=>{
+ const {handleFeishuCardAction}=await import('./card-action.js');
+ const {processedCardActions}=await import('./card-action-state.js');processedCardActions.clear();
+ const card=fixture();const now=Date.now();card.question.expiresAt=now-1000;
+ saveQuestionCard(stateDir,{...card,status:'submitted',answers:{env:'prod'},answerSource:'user_card',submittedAt:now-2000});
+ const e=event(card,{});e.action.value.m={questionId:'q',retry:true};
+ workerQuestionBridge.action=undefined;
+ await expect(handleFeishuCardAction({cfg:{},event:e,accountId:'a'})).rejects.toThrow('adapter');
+ workerQuestionBridge.action=async args=>handleWorkerQuestionAction({...args,stateDir});
+ workerQuestionBridge.read=()=>({status:'awaiting_user',question:card.question});
+ try{
+  await handleFeishuCardAction({cfg:{},event:e,accountId:'a'});
+  await vi.waitFor(()=>expect(workerQuestionBridge.submit).toHaveBeenCalledOnce());
+  await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
+ }finally{workerQuestionBridge.action=undefined;processedCardActions.clear();}
 });

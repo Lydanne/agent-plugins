@@ -338,7 +338,12 @@ export async function handleFeishuCardAction(params: {
     );
     return;
   }
-  const decoded = decodeFeishuCardAction({ event });
+  let decoded = decodeFeishuCardAction({ event });
+  // An expired retry can only replay server-saved input. The worker handler
+  // revalidates its persisted admission time, owner, source and exact answer.
+  if(decoded.kind==='invalid'&&decoded.reason==='stale'&&event.action.value.a===WORKER_QUESTION_SUBMIT&&(event.action.value.m as Record<string,unknown>|undefined)?.retry===true){
+    decoded=decodeFeishuCardAction({event,now:0});
+  }
   const claimedToken = beginFeishuCardActionToken({
     token: event.token,
     accountId: account.accountId,
@@ -492,7 +497,8 @@ export async function handleFeishuCardAction(params: {
     });
     completeFeishuCardAction(event.token, account.accountId);
   } catch (err) {
-    completeFeishuCardAction(event.token, account.accountId);
+    if(decoded.kind==='structured'&&[WORKER_QUESTION_SUBMIT,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN].includes(decoded.envelope.a))processedCardActions.delete(`${account.accountId}:${event.token.trim()}`);
+    else completeFeishuCardAction(event.token, account.accountId);
     throw err;
   }
 }

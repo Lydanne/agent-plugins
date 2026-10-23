@@ -186,3 +186,48 @@ test('legacy suppressed supplement still emits a terminal reason after upgrade',
   assert.equal(existsSync(join(f.root,id+'.json')),false);
  }finally{f.close();}
 });
+
+for(const callId of ['constructor','__proto__','toString'])test('structured plugin IDs are own cache keys across restart: '+callId,async()=>{
+ const f=fixture('awaiting_main');let calls=0,replies=0;try{
+  const call={callId,capability:'person_lookup',arguments:{openId:'alice'},purpose:'核验'};
+  assert.equal(parseContextRequest(JSON.stringify({type:'request',requestKind:'plugin',question:'查询',reason:'必要',progress:'已查',pluginCall:call})).pluginCall.callId,callId);
+  writeJson(join(f.root,f.id+'.json'),{...f.job,contextRequest:{...f.q,pluginCall:call}});
+  const opts={root:f.root,jobs:{reply:async()=>{replies++;}},bridge:{authorizeReply:()=>true,observe:async()=>{}},personCall:()=>{calls++;return {ok:true};}};
+  let service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
+  service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
+  assert.equal(calls,1);assert.equal(replies,2);assert.equal(Object.hasOwn(readJson(join(f.root,'collaboration',f.id+'.json')).calls,callId),true);
+ }finally{f.close();}
+});
+for(const terminal of ['completed','failed'])test('old timeout card failure does not block supplement dispatch or failure notification: '+terminal,async()=>{
+ const f=fixture('running');try{
+  const parent={...f.job,contextRequest:undefined,questions:[{...f.q,answer:'未知',resumeReason:'user_wait_timeout'}]};writeJson(join(f.root,f.id+'.json'),parent);
+  const s=await f.jobs.openSupplement(f.id,f.scope,f.q.questionId,()=>true);await f.jobs.submitSupplement(f.id,f.scope,s.supplementId,'date',{},()=>true);
+  writeJson(join(f.root,f.id+'.json'),{...parent,status:terminal});
+  let cardFails=true,cardAttempts=0;const events=[];
+  const service=createCollaborationService({root:f.root,jobs:f.jobs,bridge:{authorizeReply:()=>true,observe:async e=>events.push(e),contextState:async()=>{cardAttempts++;if(cardFails)throw Error('deleted card');}},logger:{warn(){}}});
+  service.start();await service.tick();await service.tick();
+  assert.equal(f.jobs.supplement(f.id,f.scope,s.supplementId).status,terminal==='completed'?'dispatched':'blocked');
+  assert.ok(events.some(e=>e.kind===(terminal==='completed'?'supplement_dispatched':'supplement_unavailable')));
+  assert.equal(existsSync(join(f.root,s.supplementId+'.json')),terminal==='completed');
+  assert.ok(!readJson(join(f.root,'collaboration',f.id+'.json')).events['card:'+f.q.questionId]);
+  cardFails=false;await service.tick();const attempts=cardAttempts;await service.tick();await service.stop();
+  assert.equal(cardAttempts,attempts);assert.equal(readJson(join(f.root,'collaboration',f.id+'.json')).events['card:'+f.q.questionId],true);
+ }finally{f.close();}
+});
+test('old timeout card failure does not block a current structured plugin request',async()=>{
+ const f=fixture('awaiting_main');let calls=0,replies=0;try{
+  writeJson(join(f.root,f.id+'.json'),{...f.job,questions:[{...f.q,answer:'未知',resumeReason:'user_wait_timeout'}],contextRequest:{...f.q,questionId:randomUUID(),pluginCall:{callId:'lookup',capability:'person_lookup',arguments:{openId:'alice'},purpose:'核验'}}});
+  const service=createCollaborationService({root:f.root,jobs:{reply:async()=>{replies++;}},personCall:()=>{calls++;return {ok:true};},bridge:{authorizeReply:()=>true,observe:async()=>{},contextState:async()=>{throw Error('deleted card');}},logger:{warn(){}}});
+  service.start();await service.tick();await service.stop();assert.equal(calls,1);assert.equal(replies,1);
+ }finally{f.close();}
+});
+
+test('only explicit source revocation suppresses supplements and rechecks authorization',async()=>{
+ for(const authorization of [false,undefined,true]){
+  const f=fixture('completed');let suppressed=0;try{
+   const bridge={authorizeReply:authorization===undefined?undefined:()=>authorization,observe:async()=>{}};
+   const service=createCollaborationService({root:f.root,jobs:{suppressSupplements:async(jobId,scope,isRevoked)=>{suppressed++;assert.equal(jobId,f.id);assert.equal(scope,f.scope);assert.equal(isRevoked(f.job.provenance),true);bridge.authorizeReply=undefined;assert.equal(isRevoked(f.job.provenance),false);}},bridge,logger:{warn(){}}});
+   service.start();await service.tick();await service.stop();assert.equal(suppressed,authorization===false?1:0);
+  }finally{f.close();}
+ }
+});

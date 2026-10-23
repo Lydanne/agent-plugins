@@ -32,8 +32,12 @@ export function createCollaborationService({root,jobs,bridge,personCall=localPer
   for(const name of readdirSync(root).filter(n=>/^[0-9a-f-]{36}\.json$/.test(n))){
    try{
    let job=readJson(join(root,name));const p=job.provenance;
-   if(!p?.sessionKey||bridge.authorizeReply?.(p)!==true)continue;
+   if(!p?.sessionKey)continue;
+   const authorized=bridge.authorizeReply?.(p);
+   if(authorized!==true){if(authorized===false)await jobs.suppressSupplements?.(job.jobId,p.sessionKey,v=>bridge.authorizeReply?.(v)===false);continue;}
    const file=join(directory,name),state=existsSync(file)?readJson(file):{events:{},calls:{}};
+   // Model-chosen IDs are dictionary keys, including valid prototype names.
+   state.calls=Object.assign(Object.create(null),state.calls??{});
    const observe=async(key,event)=>{
     if(state.events[key])return;
     if(!bridge.observe)throw Error('Main observation unavailable');
@@ -42,11 +46,13 @@ export function createCollaborationService({root,jobs,bridge,personCall=localPer
    for(const q of job.questions??[])if(q.resumeReason==='user_wait_timeout'&&q.answer!==undefined){
     await observe('timeout:'+q.questionId,{kind:'timeout_continued',question:q});
     if(q.expiresAt>Date.now()&&!state.events['card:'+q.questionId]&&bridge.contextState){
-     await bridge.contextState({jobId:job.jobId,questionId:q.questionId,provenance:p,status:'resumed'});
-     state.events['card:'+q.questionId]=true;save(job.jobId,state);
+     try{
+      await bridge.contextState({jobId:job.jobId,questionId:q.questionId,provenance:p,status:'resumed'});
+      state.events['card:'+q.questionId]=true;save(job.jobId,state);
+     }catch{logger.warn?.('Worker question card update deferred: '+job.jobId);}
     }
    }
-   await jobs.processSupplements?.(job.jobId,p.sessionKey,v=>bridge.authorizeReply?.(v)===true,async event=>observe('supplement:'+event.supplementId+':'+event.kind,event));
+   await jobs.processSupplements?.(job.jobId,p.sessionKey,v=>bridge.authorizeReply?.(v),async event=>observe('supplement:'+event.supplementId+':'+event.kind,event));
    job=readJson(join(root,name));
    const q=job.contextRequest,call=q?.pluginCall;
    if(job.status==='awaiting_main'&&call){

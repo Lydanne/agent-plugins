@@ -12,6 +12,7 @@ const scope='agent:main:chat',executionScope=hash('project'),modelSessionScope=h
 async function fixture(t){
  const state=await mkdtemp(join(tmpdir(),'worker-delete-'));t.after(()=>rm(state,{recursive:true,force:true}));await mkdir(join(state,'jobs'));
  const rows=[],bindings={};
+ const bridge=globalThis[Symbol.for('ada.worker-question.v1')]??={};const previous=bridge.pendingSubmissions;bridge.pendingSubmissions=()=>({pendingQuestionIds:[]});t.after(()=>{bridge.pendingSubmissions=previous;});
  const inspector=createSessionInspector({state,jobs:{status:id=>{const {scope,...job}=rows.find(j=>j.jobId===id);return job;}}});
  async function add(index,patch={},chat=scope){
   const job={jobId:`${String(index).padStart(8,'0')}-1111-4111-8111-111111111111`,scope:hash(chat),topic:'same',project:{projectId:'demo'},projectId:'demo',executionScope,modelSessionScope,sessionId:'native-'+index,status:'completed',createdAt:index,notification:{state:'delivered'},...patch};
@@ -75,4 +76,80 @@ test('deleting a session invalidates cached inspection transfers from that conve
  const detail=actions.find(a=>a.id==='inspect-detail'),chunk=actions.find(a=>a.id==='inspect-chunk'),remove=actions.find(a=>a.id==='inspect-deleteSession');
  const a=await detail.handler({sessionKey:scope}),b=await detail.handler({sessionKey:'other'});await remove.handler({sessionKey:scope,payload:{}});
  assert.equal((await chunk.handler({sessionKey:scope,payload:{transferId:a.result.transferId,index:1}})).ok,false);assert.equal((await chunk.handler({sessionKey:'other',payload:{transferId:b.result.transferId,index:1}})).ok,true);
+});
+
+async function supplement(f,job,index,patch={}){
+ const id=`${String(index).padStart(8,'0')}-2222-4222-8222-222222222222`,record={jobId:job.jobId,supplementId:id,status:'waiting',question:{expiresAt:Date.now()+60000},...patch};
+ await mkdir(join(f.state,'jobs','supplements'),{recursive:true});await writeFile(join(f.state,'jobs','supplements',id+'.json'),JSON.stringify(record));return record;
+}
+async function settleSupplement(f,s,kind){
+ await mkdir(join(f.state,'jobs','collaboration'),{recursive:true});await writeFile(join(f.state,'jobs','collaboration',s.jobId+'.json'),JSON.stringify({events:{['supplement:'+s.supplementId+':'+kind]:{kind,at:Date.now()}},calls:{}}));
+}
+test('pending supplements and unacknowledged terminal outcomes block both UI and deletion',async t=>{
+ for(const status of ['waiting','accepted','unknown','blocked','suppressed','dispatched']){
+  const f=await fixture(t),job=await f.add(1);await supplement(f,job,1,{status});
+  const row=(await f.inspector.list(scope)).sessions[0];assert.equal(row.canDelete,false);assert.match(row.deleteReason,/补充/);
+  await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/补充/);assert.ok((await readdir(join(f.state,'jobs'))).includes(job.jobId+'.json'));
+ }
+});
+test('dispatched supplements require a present settled child and delivery acknowledgement',async t=>{
+ const f=await fixture(t),job=await f.add(1),child=await f.add(2);const s=await supplement(f,job,1,{status:'dispatched',childJobId:child.jobId});
+ await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/补充/);
+ await settleSupplement(f,s,'supplement_dispatched');assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,true);
+ await f.inspector.deleteSession(scope,await f.selection());
+ const archive=(await readdir(join(f.state,'deleted-sessions')))[0];
+ assert.equal(JSON.parse(await readFile(join(f.state,'deleted-sessions',archive,'jobs','supplements',s.supplementId+'.json'))).childJobId,child.jobId);
+ assert.equal((await readdir(join(f.state,'jobs','collaboration'))).length,0);
+});
+test('settled terminal supplements are archived with their parent',async t=>{
+ for(const status of ['blocked','suppressed']){
+  const f=await fixture(t),job=await f.add(1);const s=await supplement(f,job,1,{status,question:{expiresAt:Date.now()-1}});
+  await settleSupplement(f,s,'supplement_unavailable');
+  const other=await f.add(2,{},'agent:main:other'),keep=await supplement(f,other,2,{status:'accepted'});
+  assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,true);
+  await f.inspector.deleteSession(scope,await f.selection());
+  assert.deepEqual(await readdir(join(f.state,'jobs','supplements')),[keep.supplementId+'.json']);
+  const archive=(await readdir(join(f.state,'deleted-sessions')))[0];
+  assert.equal(JSON.parse(await readFile(join(f.state,'deleted-sessions',archive,'jobs','supplements',s.supplementId+'.json'))).status,status);
+ }
+});
+test('supplement changes invalidate deletion revision and admission is rechecked under scheduler lock',async t=>{
+ const f=await fixture(t),job=await f.add(1),old=await f.selection();
+ const s=await supplement(f,job,1,{status:'blocked'});await settleSupplement(f,s,'supplement_unavailable');
+ await assert.rejects(f.inspector.deleteSession(scope,old),/已变化/);
+ const payload=await f.selection(),{acquireLock}=await import('./locks.mjs'),release=await acquireLock(join(f.state,'jobs','scheduler-lock'));
+ const pending=f.inspector.deleteSession(scope,payload);await new Promise(resolve=>setTimeout(resolve,30));await supplement(f,job,2,{status:'accepted'});release();
+ await assert.rejects(pending,/补充/);assert.ok((await readdir(join(f.state,'jobs'))).includes(job.jobId+'.json'));
+});
+
+test('expired unfilled supplement can archive only after channel handoff is verified empty',async t=>{
+ const f=await fixture(t),job=await f.add(1),s=await supplement(f,job,1,{question:{expiresAt:Date.now()-1}});
+ const bridge=globalThis[Symbol.for('ada.worker-question.v1')];
+ bridge.pendingSubmissions=undefined;
+ await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/不可核实/);
+ bridge.pendingSubmissions=()=>({pendingQuestionIds:[s.supplementId]});
+ await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/待交接/);
+ bridge.pendingSubmissions=()=>({pendingQuestionIds:[]});
+ assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,true);
+ await f.inspector.deleteSession(scope,await f.selection());
+ const archive=(await readdir(join(f.state,'deleted-sessions')))[0];
+ assert.equal(JSON.parse(await readFile(join(f.state,'deleted-sessions',archive,'jobs','supplements',s.supplementId+'.json'))).status,'waiting');
+});
+test('saved channel submissions and unavailable adapters block deletion even before a supplement exists',async t=>{
+ const f=await fixture(t);const job=await f.add(1,{questions:[{questionId:'old-q',answer:'timeout'}]});
+ const bridge=globalThis[Symbol.for('ada.worker-question.v1')];
+ bridge.pendingSubmissions=params=>{assert.deepEqual(params,{jobIds:[job.jobId],sessionKey:scope});return {pendingQuestionIds:['old-q']};};
+ assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,false);await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/待交接/);
+ bridge.pendingSubmissions=undefined;assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,false);await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/不可核实/);
+ bridge.pendingSubmissions=()=>({pendingQuestionIds:[]});assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,true);await f.inspector.deleteSession(scope,await f.selection());
+});
+
+test('explicit source-invalid suppression can be archived without notifying revoked source',async t=>{
+ for(const overrides of [{},{notificationSuppressed:false},{reason:'task_cancelled'},{status:'blocked'}]){
+  const f=await fixture(t),job=await f.add(1),s=await supplement(f,job,1,{status:'suppressed',reason:'source_invalid',notificationSuppressed:true,...overrides});
+  const allowed=Object.keys(overrides).length===0;assert.equal((await f.inspector.list(scope)).sessions[0].canDelete,allowed);
+  if(!allowed){await assert.rejects(f.inspector.deleteSession(scope,await f.selection()),/补充/);continue;}
+  await f.inspector.deleteSession(scope,await f.selection());const archive=(await readdir(join(f.state,'deleted-sessions')))[0];
+  assert.equal(JSON.parse(await readFile(join(f.state,'deleted-sessions',archive,'jobs','supplements',s.supplementId+'.json'))).notificationSuppressed,true);
+ }
 });

@@ -1,5 +1,5 @@
 import {isFeishuCardValidationRejection} from './api-response.js';
-import {readQuestionCard,saveQuestionCard,findQuestionCardsForReply,claimQuestionAnswer,answerSummary,parseQuestionSubmission,renderQuestionCard,workerQuestionBridge,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN,type QuestionCard,type QuestionTextReply} from './worker-question.js';
+import {readQuestionCard,saveQuestionCard,canClaimQuestionAnswer,isSavedQuestionAnswer,findQuestionCardsForReply,claimQuestionAnswer,answerSummary,parseQuestionSubmission,renderQuestionCard,workerQuestionBridge,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN,type QuestionCard,type QuestionTextReply} from './worker-question.js';
 import {sendCardFeishu} from './send.js';
 import {isTaskSourceRecalled} from './source-task.js';
 import {editMessageFeishu,sendMessageFeishu} from './send.js';
@@ -28,7 +28,7 @@ export async function handleWorkerQuestionTextReply(params:QuestionTextReply&{st
  if(isTaskSourceRecalled({accountId,chatId,messageId},stateDir))return true;
  if(cards.some(c=>c.answerMessageId===messageId))return true;
  const notice=async(text:string)=>{await sendMessageFeishu({cfg,accountId,to:'chat:'+chatId,replyToMessageId:messageId,replyInThread:cards[0].provenance.replyInThread??false,text});};
- const pending=cards.filter(c=>c.status==='waiting'&&c.question.expiresAt>Date.now());
+ const pending=cards.filter(c=>canClaimQuestionAnswer(c)&&c.question.expiresAt>Date.now());
  if(pending.length!==1){await notice(pending.length?'这张卡片关联多个待补充问题，请使用卡片内的对应提交按钮。':'本轮补充已提交或失效，请查看最新卡片。');return true;}
  const card=pending[0],questionId=card.question.questionId,key=stateDir+':'+questionId;
  if(inFlight.has(key))return true;
@@ -37,7 +37,8 @@ export async function handleWorkerQuestionTextReply(params:QuestionTextReply&{st
   if(!workerQuestionBridge.authorize?.(card.provenance))throw Error('原任务已失效，不能继续接收本轮补充。');
   const current=workerQuestionBridge.read?.({jobId:card.jobId,questionId,provenance:card.provenance});
   if(!current||!workerQuestionBridge.submit)throw Error('补充服务暂不可用，请稍后重新回复这张卡片。');
-  if(current.status!=='awaiting_user'||current.question.questionId!==questionId||current.question.answer!==undefined)throw Error('本轮补充已受理或失效，请查看最新卡片。');
+  const late=current.question.resumeReason==='user_wait_timeout'&&current.question.answer!==undefined&&!['cancelled','failed','timed_out','unknown','cancelling'].includes(current.status);
+  if((!late&&(current.status!=='awaiting_user'||current.question.answer!==undefined))||current.question.questionId!==questionId)throw Error('本轮补充已受理或失效，请查看最新卡片。');
   const note=params.text.trim(),answers={...card.question.knownValues};
   if((answerSummary(card.question,answers)+'\n补充说明：'+note).length>16000)throw Error('补充文字过长，请缩短后重新回复这张卡片。');
   renderQuestionCard({...card,status:'submitted',answers,note,answerSource:'user_text'});
@@ -54,7 +55,7 @@ export async function handleWorkerQuestionAction(params:{cfg:ClawdbotConfig;acco
  const questionId=typeof meta?.questionId==='string'?meta.questionId:'';
  const card=readQuestionCard(stateDir,questionId);
  if(!card||card.provenance.accountId!==accountId||card.provenance.chatId!==event.context.chat_id||card.provenance.senderId!==event.operator.open_id||card.messageId!==(event.context.open_message_id??event.open_message_id))throw Error('Question card binding mismatch');
- if(card.question.expiresAt<=Date.now()||!workerQuestionBridge.authorize?.(card.provenance))throw Error('Question expired or task is no longer current');
+ if((card.question.expiresAt<=Date.now()&&!(meta?.retry===true&&isSavedQuestionAnswer(card)))||!workerQuestionBridge.authorize?.(card.provenance))throw Error('Question expired or task is no longer current');
  const key=stateDir+':'+questionId;if(inFlight.has(key))return;
  inFlight.add(key);
  let submitted:QuestionCard|undefined;
@@ -78,8 +79,13 @@ export async function handleWorkerQuestionAction(params:{cfg:ClawdbotConfig;acco
    const updated={...card,reopenedQuestionId:next.question.questionId};saveQuestionCard(stateDir,updated);
    await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(updated)});return;
   }
-  if(current.question.answer!==undefined){const accepted={...card,status:'accepted' as const};saveQuestionCard(stateDir,accepted);await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(accepted)});return;}
-  if(current.status!=='awaiting_user'||current.question.questionId!==questionId)throw Error('本轮提问已失效');
+  const late=current.question.resumeReason==='user_wait_timeout'&&current.question.answer!==undefined&&!['cancelled','failed','timed_out','unknown','cancelling'].includes(current.status);
+  if(current.question.answer!==undefined&&!late){
+   if(!isSavedQuestionAnswer(card))throw Error('本轮提问已处理，本次输入尚未受理，请查看最新卡片。');
+   const accepted={...card,status:'accepted' as const};saveQuestionCard(stateDir,accepted);await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(accepted)});return;
+  }
+  if((current.status!=='awaiting_user'&&!late)||current.question.questionId!==questionId)throw Error('本轮提问已失效');
+  if(card.status==='accepted'&&!canClaimQuestionAnswer(card)){await editMessageFeishu({cfg,accountId,messageId:card.messageId,card:renderQuestionCard(card)});return;}
   if(event.action.value.a===WORKER_QUESTION_CANCEL){
    const cancelled=workerQuestionBridge.cancel?.({jobId:card.jobId,questionId,provenance:card.provenance});
    if(cancelled?.status!=='cancelled')throw Error('任务尚未确认取消');

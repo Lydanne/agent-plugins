@@ -1,15 +1,18 @@
+import {savedBeforeDeadline} from './jobs.mjs';
 /** Read pending questions through the worker-owned state, never callback-supplied job data. */
 export function registerQuestionBridge(api,jobs,completionBridge){
  const bridge=globalThis[Symbol.for('ada.worker-question.v1')]??={};
- const verify=({jobId,questionId,provenance})=>{
+ const verify=({jobId,questionId,provenance},{allowSaved=false}={})=>{
   const job=jobs.status(jobId,provenance.sessionKey);
   if(['taskId','revision','senderId','accountId','chatId','sessionKey'].some(key=>job.provenance?.[key]!==provenance[key])||!completionBridge.authorizeReply?.(job.provenance))throw Error('Task source is no longer current');
   const supplement=jobs.supplement?.(jobId,provenance.sessionKey,questionId);
   const question=supplement?.question??(job.questions??[]).find(q=>q.questionId===questionId);
-  if(!question||question.expiresAt<=Date.now())throw Error('Question expired');
-  return {job,question,supplement};
+  const submission=allowSaved?bridge.submission?.({jobId,questionId,provenance}):undefined;
+  const saved=question&&submission&&savedBeforeDeadline(question,submission.userSubmittedAt);
+  if(!question||question.expiresAt<=Date.now()&&!(allowSaved&&(saved||supplement?.answer!==undefined)))throw Error('Question expired');
+  return {job,question,supplement,submission,saved};
  };
- const read=params=>{const {job,question,supplement}=verify(params);return {status:supplement?(supplement.status==='waiting'?'awaiting_user':supplement.status):job.status==='awaiting_main'&&job.contextRequest?.timeoutRequestedAt?'awaiting_user':job.status,question:supplement?.answer?{...question,answer:supplement.answer}:question,latestQuestionId:supplement?question.questionId:job.questions?.at(-1)?.questionId};};
+ const read=params=>{const {job,question,supplement}=verify(params,{allowSaved:true});return {status:supplement?(supplement.status==='waiting'?'awaiting_user':supplement.status):job.status==='awaiting_main'&&job.contextRequest?.timeoutRequestedAt?'awaiting_user':job.status,question:supplement?.answer?{...question,answer:supplement.answer}:question,latestQuestionId:supplement?question.questionId:job.questions?.at(-1)?.questionId};};
  const cancel=params=>{
   const {job,question}=verify(params);
   if(!(job.status==='awaiting_user'||job.status==='awaiting_main'&&job.contextRequest?.timeoutRequestedAt)||question.answer!==undefined||job.contextRequest?.questionId!==params.questionId)throw Error('Question is no longer awaiting user');
@@ -17,7 +20,18 @@ export function registerQuestionBridge(api,jobs,completionBridge){
  };
  const reopen=async params=>{verify(params);return jobs.openSupplement(params.jobId,params.provenance.sessionKey,params.questionId,p=>completionBridge.authorizeReply?.(p)===true);};
  const supplement=async params=>{verify(params);return jobs.submitSupplement(params.jobId,params.provenance.sessionKey,params.questionId,params.answer,params,p=>completionBridge.authorizeReply?.(p)===true);};
- api.registerService({id:'agent-worker-questions',start:async()=>{bridge.read=read;bridge.cancel=cancel;bridge.reopen=reopen;bridge.supplement=supplement;await completionBridge.recoverContextCards?.();},stop:()=>{if(bridge.reopen===reopen)bridge.reopen=undefined;if(bridge.supplement===supplement)bridge.supplement=undefined;if(bridge.read===read)bridge.read=undefined;if(bridge.cancel===cancel)bridge.cancel=undefined;}});
+ // Read the durable Feishu receipt ourselves. Callback arguments cannot replace
+ // its answer, source, or admission time, including on retries after expiry.
+ const acceptSubmission=async params=>{
+  const {job,question,supplement:existing,submission,saved}=verify(params,{allowSaved:true});
+  if(!saved||!['user_card','user_text'].includes(submission.answerSource)||typeof submission.answerText!=='string')throw Error('No trusted saved submission');
+  if(!existing&&question.resumeReason!=='user_wait_timeout')throw Error('Question is not a late answer');
+  if(!existing&&question.userSubmittedAt===submission.userSubmittedAt&&question.answerMessageId===submission.answerMessageId)return {alreadyApplied:true};
+  const authorize=p=>completionBridge.authorizeReply?.(p)===true;
+  const record=existing??await jobs.openSupplement(job.jobId,params.provenance.sessionKey,question.questionId,authorize,{userSubmittedAt:submission.userSubmittedAt});
+  return jobs.submitSupplement(job.jobId,params.provenance.sessionKey,record.supplementId,submission.answerText,submission,authorize);
+ };
+ api.registerService({id:'agent-worker-questions',start:async()=>{bridge.read=read;bridge.cancel=cancel;bridge.acceptSubmission=acceptSubmission;bridge.reopen=reopen;bridge.supplement=supplement;await completionBridge.recoverContextCards?.();},stop:()=>{if(bridge.acceptSubmission===acceptSubmission)bridge.acceptSubmission=undefined;if(bridge.reopen===reopen)bridge.reopen=undefined;if(bridge.supplement===supplement)bridge.supplement=undefined;if(bridge.read===read)bridge.read=undefined;if(bridge.cancel===cancel)bridge.cancel=undefined;}});
 }
 
 export async function contextPresentation(handler,event){

@@ -1,4 +1,4 @@
-import {createSessionDeletion,sessionDeletionState} from './session-deletion.mjs';
+import {createSessionDeletion,sessionDeletionState,sessionSupplements,sessionSubmissionState} from './session-deletion.mjs';
 import {collaborationDiagnostics} from './collaboration-diagnostics.mjs';
 import {createAgentTaskInspector} from './agent-task-inspector.mjs';
 import {trustedAgentId} from './dist/agent-repo-api.mjs';
@@ -66,7 +66,7 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
     row.activeCount=(row.activeCount??0)+(active.has(job.status)?1:0);
     groups.set(group,row);
    }
-  return [...groups.entries()].map(([key,row])=>({...row,...sessionDeletionState(Object.fromEntries(Object.entries(bindings??{}).filter(([,entry])=>bindingKey(entry.topic,entry)===key)),all.filter(job=>bindingKey(job.topic,job)===key))}));
+  return [...groups.entries()].map(([key,row])=>{const selectedJobs=all.filter(job=>bindingKey(job.topic,job)===key),supplements=sessionSupplements(root,selectedJobs);return {...row,...sessionDeletionState(Object.fromEntries(Object.entries(bindings??{}).filter(([,entry])=>bindingKey(entry.topic,entry)===key)),selectedJobs,supplements,sessionSubmissionState(scope,selectedJobs,supplements))};});
  }
  return {
   agentTasks:createAgentTaskInspector({state,jobs,now}),

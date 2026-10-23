@@ -23,6 +23,9 @@ export function normalizeTags(tags=[]) {
  return [...unique.values()];
 }
 export const USER_INPUT_WAIT_MS=3*60*1000;
+// Only host-owned adapters supply this receipt time, never model/callback fields.
+export function savedBeforeDeadline(question,submittedAt){return Number.isFinite(submittedAt)&&submittedAt>0&&submittedAt>=(question.createdAt??0)&&submittedAt<=question.expiresAt&&submittedAt<=Date.now();}
+
 const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。保留已核验信息，未补充字段标为未知；跳过依赖这些字段、账号选择或额外授权的步骤，在原 task/constraints 范围内继续可独立完成的工作。不得猜测用户选择、扩大写入权限、重做已执行操作或重复询问同一缺口。无法继续时交付已核验结果、限制与未完成项，不把未知当成否定或成功。';
 const waitPolicy={optional:'可选补充未取得时注明缺失并继续。',required:'必要业务参数未知时跳过依赖步骤，交付未完成项。',decision:'用户未明确决策时跳过对应操作，不代选。',authorization:'外部授权未确认完成时跳过依赖授权的操作，不把超时当授权成功。'};
 const waiting=new Set(['awaiting_main','awaiting_user']);
@@ -93,19 +96,21 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
  }
  function scheduleLocked(){
   const all=files();
-  for(const job of all.filter(j=>waiting.has(j.status)&&j.contextRequest?.expiresAt<=Date.now())){job.status='timed_out';job.error='Context reply deadline exceeded';job.finishedAt=Date.now();if(job.notification)job.notification={state:'pending',eventKey:randomUUID()};terminalJob(job);}
+  for(const job of all.filter(j=>waiting.has(j.status)&&j.contextRequest?.expiresAt<=Date.now())){
+   const submitted=getUserTimeoutSubmission(job);
+   if(submitted&&savedBeforeDeadline(job.contextRequest,submitted.userSubmittedAt))continue;
+   job.status='timed_out';job.error='Context reply deadline exceeded';job.finishedAt=Date.now();if(job.notification)job.notification={state:'pending',eventKey:randomUUID()};terminalJob(job);
+  }
   for(const job of all.filter(j=>j.status==='awaiting_user'||j.status==='awaiting_main'&&j.contextRequest?.timeoutRequestedAt)){
-   const question=job.contextRequest,at=Date.now();
+   const question=job.contextRequest,at=Date.now(),submitted=question?getUserTimeoutSubmission(job):undefined;
    if(!question||!Number.isFinite(question.waitingForUserAt)||at-question.waitingForUserAt<USER_INPUT_WAIT_MS||
-    question.expiresAt<=at||existsSync(join(root,job.jobId+'.cancel'))||!hasSourceProvenance(job.provenance)||
-    all.filter(queued).length>=limits().maxQueuedJobs)continue;
+    (question.expiresAt<=at&&!savedBeforeDeadline(question,submitted?.userSubmittedAt))||existsSync(join(root,job.jobId+'.cancel'))||!hasSourceProvenance(job.provenance))continue;
    // No caller impersonation: the host revalidates the original source. Unknown
    // authorization remains waiting; timeout never fabricates a user answer.
    if(authorizeUserTimeout(job.provenance,job)!==true)continue;
    const request=readJson(join(root,job.jobId+'.request.json'));
    if(typeof request.scope!=='string'||scopeKey(request.scope)!==job.scope||
     requestKeyFor(request.params,request.scope,job.provenance)!==job.requestKey)continue;
-   const submitted=getUserTimeoutSubmission(job);
    // A real submission wins the race and gets its own processing grace period.
    if(submitted && (!Number.isFinite(submitted.userSubmittedAt)||at-submitted.userSubmittedAt<USER_INPUT_WAIT_MS||typeof submitted.answerText!=='string'))continue;
    if(!submitted&&mainTimeoutGraceMs>0){
@@ -222,7 +227,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      return view(job);
     }
     if(!waiting.has(job.status)||job.contextRequest?.questionId!==questionId)throw Error('No matching pending question');
-    if(job.contextRequest.expiresAt<=Date.now()||existsSync(join(root,jobId+'.cancel')))throw Error('Question expired or task cancelled');
+    if((job.contextRequest.expiresAt<=Date.now()&&!savedBeforeDeadline(job.contextRequest,answerMetadata.userSubmittedAt))||existsSync(join(root,jobId+'.cancel')))throw Error('Question expired or task cancelled');
     const requestFile=join(root,jobId+'.request.json'),request=readJson(requestFile);
     if(requestKeyFor(request.params,scope,job.provenance)!==job.requestKey||request.scope!==scope)throw Error('Original request binding mismatch');
     if(waitingForUser){
@@ -233,7 +238,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:'main.awaiting_user',time:at,questionId})+'\n',{mode:0o600});
      writeJson(join(root,jobId+'.json'),updated);return view(updated);
     }
-    if(files().filter(queued).length>=limits().maxQueuedJobs)throw Error('Waiting queue is full; question remains pending');
+    // Resuming admitted work must not deadlock behind its own queued successors.
     const metadata={answerSource:job.status==='awaiting_main'?'main_context':'user_text',...(job.contextRequest.timeoutRequestedAt?{resumeReason:'user_wait_timeout'}:{}),...answerMetadata};
     if(metadata.attachmentSource){
      metadata.attachmentSource=attachmentSupplement(job.provenance,metadata.attachmentSource);
@@ -244,42 +249,56 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     resumeLocked(job,request,answer,metadata);scheduleLocked();return view(get(jobId,scope));
    }finally{release();}
   },
-  async openSupplement(jobId,scope,questionId,authorize){
+  async openSupplement(jobId,scope,questionId,authorize,metadata={}){
    const release=await acquireLock(lock);
    try{
     const job=get(jobId,scope),question=job.questions?.find(q=>q.questionId===questionId);
-    if(!authorize(job.provenance)||['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))||!question||question.expiresAt<=Date.now()||question.resumeReason!=='user_wait_timeout'||question.answer===undefined)throw Error('Task cannot reopen this question');
+    const saved=question&&savedBeforeDeadline(question,metadata.userSubmittedAt);
+    if(!authorize(job.provenance)||!question||(!saved&&(['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))||question.expiresAt<=Date.now()))||question.resumeReason!=='user_wait_timeout'||question.answer===undefined)throw Error('Task cannot reopen this question');
     const directory=join(root,'supplements');mkdirSync(directory,{recursive:true,mode:0o700});
-    const prior=readdirSync(directory).map(f=>readJson(join(directory,f))).find(s=>s.jobId===jobId&&s.originalQuestionId===questionId);
+    const prior=readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).map(f=>({name:f,record:readJson(join(directory,f))})).find(({name,record:s})=>name===s.supplementId+'.json'&&s.jobId===jobId&&s.originalQuestionId===questionId)?.record;
     if(prior)return prior;
     const {answer,answerValues,answerSource,answeredAt,timeoutRequestedAt,resumeReason,waitingForUserAt,...fields}=question;
-    const id=randomUUID(),record={supplementId:id,jobId,originalQuestionId:questionId,scope:job.scope,provenance:job.provenance,question:{...fields,questionId:id,createdAt:Date.now()},status:'waiting',createdAt:Date.now()};
+    const id=randomUUID(),record={supplementId:id,jobId,originalQuestionId:questionId,scope:job.scope,provenance:job.provenance,question:{...fields,questionId:id,createdAt:saved?(question.createdAt??0):Date.now()},status:'waiting',createdAt:Date.now()};
     writeJson(join(directory,id+'.json'),record);return record;
    }finally{release();}
   },
   supplement(jobId,scope,id){
    if(!/^[0-9a-f-]{36}$/i.test(id??''))return undefined;
    const file=join(root,'supplements',id+'.json');if(!existsSync(file))return undefined;
-   const record=readJson(file);if(record.jobId!==jobId||record.scope!==scopeKey(scope))throw Error('Supplement scope mismatch');return record;
+   const record=readJson(file);if(record.supplementId!==id||record.jobId!==jobId||record.scope!==scopeKey(scope))throw Error('Supplement scope mismatch');return record;
   },
   async submitSupplement(jobId,scope,id,answer,metadata,authorize){
    const release=await acquireLock(lock);
    try{
     const job=get(jobId,scope),s=this.supplement(jobId,scope,id);
-    if(!s||!authorize(job.provenance)||['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Supplement is no longer valid');
+    const saved=s&&savedBeforeDeadline(s.question,metadata.userSubmittedAt);
+    if(!s||!authorize(job.provenance)||(!saved&&(['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))))throw Error('Supplement is no longer valid');
     if(typeof answer!=='string'||!answer.trim()||answer.length>16000)throw Error('Invalid supplement');
     if(metadata.answerValues)validateContextAnswers(s.question,metadata.answerValues);
     if(s.status!=='waiting'){if(s.answer!==answer)throw Error('Supplement already answered differently');return s;}
-    if(s.question.expiresAt<=Date.now())throw Error('Supplement is no longer valid');
-    const accepted={...s,answer,answerSource:metadata.answerSource,answerValues:metadata.answerValues,answerMessageId:metadata.answerMessageId,status:'accepted',acceptedAt:Date.now()};
+    if(s.question.expiresAt<=Date.now()&&!saved)throw Error('Supplement is no longer valid');
+    const accepted={...s,answer,answerSource:metadata.answerSource,answerValues:metadata.answerValues,answerMessageId:metadata.answerMessageId,userSubmittedAt:metadata.userSubmittedAt,status:'accepted',acceptedAt:Date.now()};
     writeJson(join(root,'supplements',id+'.json'),accepted);return accepted;
+   }finally{release();}
+  },
+  async suppressSupplements(jobId,scope,isRevoked){
+   const directory=join(root,'supplements');if(!existsSync(directory))return;
+   const release=await acquireLock(lock);
+   try{
+    const job=get(jobId,scope);if(isRevoked(job.provenance)!==true)return;
+    for(const name of readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f))){
+     const s=readJson(join(directory,name));
+     if(s.supplementId+'.json'===name&&s.jobId===jobId&&['waiting','accepted'].includes(s.status))writeJson(join(directory,name),{...s,status:'suppressed',reason:'source_invalid',notificationSuppressed:true,finishedAt:Date.now()});
+    }
    }finally{release();}
   },
   async processSupplements(jobId,scope,authorize,observe){
    const directory=join(root,'supplements');if(!existsSync(directory))return;
-   for(const name of readdirSync(directory)){
-    let s=readJson(join(directory,name));if(s.jobId!==jobId)continue;
+   for(const name of readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f))){
+    let s=readJson(join(directory,name));if(s.supplementId+'.json'!==name||s.jobId!==jobId)continue;
     const terminalEvent=()=>({kind:'supplement_unavailable',supplementId:s.supplementId,status:s.status,reason:s.reason??'continuation_unavailable'});
+    if(s.status==='suppressed'&&s.reason==='source_invalid'&&s.notificationSuppressed===true)continue;
     if(['blocked','suppressed'].includes(s.status)){await observe(terminalEvent());continue;}
     if(!['waiting','accepted','dispatched'].includes(s.status))continue;
     await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,answer:s.answer,childJobId:s.childJobId});
@@ -289,12 +308,20 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      const job=get(jobId,scope);s=readJson(join(directory,name));if(s.status!=='accepted')continue;
      const fail=(status,reason)=>{s={...s,status,reason,finishedAt:Date.now()};writeJson(join(directory,name),s);};
      // Expiry limits admission, not execution of an already accepted answer.
-     if(!authorize(job.provenance)){fail('suppressed','source_invalid');continue;}
+     const authorized=authorize(job.provenance);
+     if(authorized===false){s={...s,notificationSuppressed:true};fail('suppressed','source_invalid');continue;}
+     if(authorized!==true)continue;
      if(['cancelled','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){fail('suppressed','task_cancelled');continue;}
      if(['failed','timed_out'].includes(job.status)){fail('blocked','worker_'+job.status);continue;}
      if(['running','queued','unknown'].includes(job.status))continue;
-     const request=readJson(join(root,jobId+'.request.json'));
-     if(request.scope!==scope||requestKeyFor(request.params,scope,job.provenance)!==job.requestKey)throw Error('Original request binding mismatch');
+     let request;
+     try{request=readJson(join(root,jobId+'.request.json'));}
+     catch(error){
+      if(error.code==='ENOENT'){fail('blocked','original_request_missing');continue;}
+      if(error instanceof SyntaxError){fail('blocked','original_request_invalid');continue;}
+      throw error;
+     }
+     if(!request?.params||request.scope!==scope||requestKeyFor(request.params,scope,job.provenance)!==job.requestKey){fail('blocked','original_request_mismatch');continue;}
      const answer='原 questionId='+s.originalQuestionId+'，原问题：'+s.question.question+'\n原请求人的迟到补充，仅针对原问题，不增加授权；保留已完成结果，不重复外部操作。若当前正在等待其他问题，不把本补充当作其他问题的答案；核对仍缺信息后继续独立步骤。\n'+s.answer;
      if(waiting.has(job.status)){
       // An answer to an older question cannot consume the current question,
@@ -319,7 +346,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     }finally{
      release();
      // Durable terminal records retry notification after adapter failure/restart.
-     if(['blocked','suppressed'].includes(s.status))await observe(terminalEvent());
+     if(['blocked','suppressed'].includes(s.status)&&s.notificationSuppressed!==true)await observe(terminalEvent());
     }
    }
   },

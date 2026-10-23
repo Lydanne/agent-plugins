@@ -677,7 +677,7 @@ it('splits an interactive question from a shared task card without editing sibli
 it('restores saved submission retry controls on service start without replaying Main',async()=>{
  const {workerQuestionBridge,saveQuestionCard}=await import('./worker-question.js');
  const question={questionId:'restart-q',question:'环境？',reason:'缺失',progress:'已查明方式',expiresAt:Date.now()+60000,fields:[{id:'env',label:'环境',type:'single_select' as const,options:[{label:'生产',value:'prod'}]}]};
- saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question,messageId:'question-card',status:'submitted',answers:{env:'prod'},submittedAt:Date.now()});
+ saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question,messageId:'question-card',status:'submitted',answers:{env:'prod'},answerSource:'user_card',submittedAt:Date.now()});
  workerQuestionBridge.read=()=>({status:'awaiting_user',question});
  let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,registerService:value=>{service=value;}} as OpenClawPluginApi);
  try{await service.start({} as Parameters<typeof service.start>[0]);expect(mocks.run).not.toHaveBeenCalled();expect(JSON.stringify(mocks.edit.mock.calls)).toContain('重试交回 Main');}finally{workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
@@ -1191,15 +1191,15 @@ it('accepts late supplements directly while Main is busy and records their proce
  let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
  const bridge=(globalThis as typeof globalThis & {[key:symbol]:{observe:(e:unknown)=>Promise<void>}})[Symbol.for('ada.codex-completion.v1')];
  await service.start({} as Parameters<typeof service.start>[0]);
- const card={jobId:event.jobId,provenance:event.provenance,question:{questionId:'late-q',question:'日期',reason:'缺失',progress:'已查',expiresAt:Date.now()+60000},messageId:'late-card',status:'submitted' as const,supplementOf:'old-q',answers:{},note:'2026-10-23'};
- saveQuestionCard(cardStateDir,card);workerQuestionBridge.supplement=vi.fn().mockResolvedValue({accepted:true});
+ const card={jobId:event.jobId,provenance:event.provenance,question:{questionId:'late-q',question:'日期',reason:'缺失',progress:'已查',expiresAt:Date.now()+60000},messageId:'late-card',status:'submitted' as const,supplementOf:'old-q',answers:{},note:'2026-10-23',answerSource:'user_card' as const,submittedAt:Date.now()};
+ saveQuestionCard(cardStateDir,card);workerQuestionBridge.acceptSubmission=vi.fn().mockResolvedValue({supplementId:'late-q'});
  try{
-  await workerQuestionBridge.submit!(card);expect(workerQuestionBridge.supplement).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();expect(readQuestionCard(cardStateDir,'late-q')?.status).toBe('accepted');
+  await workerQuestionBridge.submit!(card);expect(workerQuestionBridge.acceptSubmission).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();expect(readQuestionCard(cardStateDir,'late-q')?.status).toBe('accepted');
   await bridge.observe({jobId:event.jobId,provenance:event.provenance,kind:'supplement_dispatched',supplementId:'late-q',childJobId:'child'});
   expect(mocks.observe).toHaveBeenCalledWith(expect.stringContaining('AgentWorkerObservation'),expect.objectContaining({sessionKey:event.provenance.sessionKey}));
   expect(readAsyncTaskCard(cardStateDir,'child',event.provenance)?.messageId).toBe('late-card');expect(mocks.run).not.toHaveBeenCalled();
   mocks.valid=false;await expect(bridge.observe({jobId:event.jobId,provenance:event.provenance,kind:'plugin_result'})).rejects.toThrow();expect(mocks.observe).toHaveBeenCalledOnce();
- }finally{workerQuestionBridge.supplement=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+ }finally{workerQuestionBridge.acceptSubmission=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
 it('updates the timeout question with reopen even after the original result was delivered',async()=>{
  const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
@@ -1223,6 +1223,9 @@ it.each([
  ['worker_timed_out','blocked','原 Worker 执行超时'],
  ['task_cancelled','suppressed','原任务已取消'],
  ['original_session_missing','blocked','原 Worker 会话不可用'],
+ ['original_request_missing','blocked','原任务请求文件缺失'],
+ ['original_request_invalid','blocked','原任务请求文件损坏'],
+ ['original_request_mismatch','blocked','原任务请求绑定不匹配'],
 ] as const)('reports unavailable supplements to Main and replaces the waiting card: %s',async(reason,status,label)=>{
  const {saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
  let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
@@ -1245,4 +1248,28 @@ it.each([
   mocks.valid=false;const edits=mocks.edit.mock.calls.length;
   await expect(bridge.observe(observation)).rejects.toThrow('no longer current');expect(mocks.edit).toHaveBeenCalledTimes(edits);
  }finally{await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
+it('recovers expired saved answers, preserves human input on timeout and exposes pending deletion guards',async()=>{
+ const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
+ const now=Date.now(),question={questionId:'saved-q',question:'日期',reason:'缺失',progress:'已查',expiresAt:now-1000,answer:'未知跳过',resumeReason:'user_wait_timeout'};
+ const card={jobId:event.jobId,provenance:event.provenance,question,messageId:'saved-card',status:'submitted' as const,answers:{},note:'实际日期',answerSource:'user_card' as const,submittedAt:now-2000};
+ saveQuestionCard(cardStateDir,card);workerQuestionBridge.read=()=>({status:'running',question});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>,observe:(e:unknown)=>Promise<void>}})[Symbol.for('ada.codex-completion.v1')];
+ await service.start({} as Parameters<typeof service.start>[0]);
+ workerQuestionBridge.acceptSubmission=vi.fn().mockResolvedValue({supplementId:'saved-supplement',status:'accepted'});
+ try{
+  expect(readQuestionCard(cardStateDir,'saved-q')).toMatchObject({status:'submitted',note:'实际日期',answerSource:'user_card'});
+  expect(workerQuestionBridge.pendingSubmissions!({jobIds:[event.jobId],sessionKey:event.provenance.sessionKey})).toEqual({pendingQuestionIds:['saved-q']});
+  expect(workerQuestionBridge.pendingSubmissions!({jobIds:[event.jobId],sessionKey:'other'})).toEqual({pendingQuestionIds:[]});
+  await bridge.contextState({jobId:event.jobId,questionId:'saved-q',provenance:event.provenance,status:'resumed'});
+  expect(readQuestionCard(cardStateDir,'saved-q')).toMatchObject({status:'submitted',note:'实际日期',answerSource:'user_card',submittedAt:now-2000});
+  await workerQuestionBridge.submit!(readQuestionCard(cardStateDir,'saved-q')!);
+  expect(workerQuestionBridge.acceptSubmission).toHaveBeenCalledWith({jobId:event.jobId,questionId:'saved-q',provenance:event.provenance});
+  expect(readQuestionCard(cardStateDir,'saved-q')).toMatchObject({status:'accepted',acceptedSupplementId:'saved-supplement'});expect(mocks.run).not.toHaveBeenCalled();
+  await bridge.observe({jobId:event.jobId,provenance:event.provenance,kind:'supplement_dispatched',supplementId:'saved-supplement',childJobId:'late-child'});
+  expect(readAsyncTaskCard(cardStateDir,'late-child',event.provenance)?.messageId).toBe('saved-card');
+ }finally{workerQuestionBridge.read=undefined;workerQuestionBridge.acceptSubmission=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+ expect(workerQuestionBridge.pendingSubmissions).toBeUndefined();
 });
