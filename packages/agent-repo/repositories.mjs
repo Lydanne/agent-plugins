@@ -35,8 +35,9 @@ export async function readProjects(repo) {
  if(!object(manifest)||manifest.schemaVersion!==1||!object(manifest.projects)||Object.keys(manifest).some(key=>!['schemaVersion','projects'].includes(key))||Object.keys(manifest.projects).length>100)throw Error('Unsupported projects.json schema');
  const projects={};const locations=[];
  for(const [projectId,entry] of Object.entries(manifest.projects)) {
-  if(!idPattern.test(projectId)||!object(entry)||Object.keys(entry).some(key=>!['name','url','branch','repository','skills','knowledge'].includes(key)))throw Error('Invalid project registration');
+  if(!idPattern.test(projectId)||!object(entry)||Object.keys(entry).some(key=>!['name','url','branch','repository','skills','knowledge','workspacePool'].includes(key)))throw Error('Invalid project registration');
   if(typeof entry.name!=='string'||!entry.name.trim()||entry.name.length>160||!validUrl(entry.url)||typeof entry.branch!=='string'||!entry.branch||entry.branch.length>160||/[\s\u0000]/.test(entry.branch))throw Error('Invalid project metadata');
+  if(entry.workspacePool!==undefined&&(!object(entry.workspacePool)||Object.keys(entry.workspacePool).some(k=>!['enabled','maxSize'].includes(k))||typeof entry.workspacePool.enabled!=='boolean'||!Number.isInteger(entry.workspacePool.maxSize)||entry.workspacePool.maxSize<1||entry.workspacePool.maxSize>20))throw Error('Invalid workspace pool configuration');
   const repository=relativePath(entry.repository);
   if(repository!=='project'&&repository!=='projects/'+projectId)throw Error('Project repository layout is invalid');
   if(locations.some(path=>inside(path,repository)||inside(repository,path)))throw Error('Project repository paths overlap');

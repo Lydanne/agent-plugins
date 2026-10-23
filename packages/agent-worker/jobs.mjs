@@ -1,3 +1,4 @@
+import {processAlive} from './dist/workspace-pool.mjs';
 import {attachmentIdentity,attachmentSupplement} from './source-attachments.mjs';
 import {projectFields,modelFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
 import {validateContextAnswers} from './context-request.mjs';
@@ -12,7 +13,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 export function readJson(path){return JSON.parse(readFileSync(path,'utf8'));}
 export function writeJson(path,value){const tmp=path+'.'+randomUUID();writeFileSync(tmp,JSON.stringify(value),{mode:0o600});renameSync(tmp,path);}
-export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:attachmentIdentity(provenance.attachments)}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
+export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:attachmentIdentity(provenance.attachments)}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.useWorkspace===true?[{useWorkspace:true}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
 export function normalizeTags(tags=[]) {
  if(!Array.isArray(tags)||tags.length>50)throw Error('tags must be an array of at most 50 strings');
  const unique=new Map();
@@ -30,16 +31,17 @@ const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不�
 const waitPolicy={optional:'可选补充未取得时注明缺失并继续。',required:'必要业务参数未知时跳过依赖步骤，交付未完成项。',decision:'用户未明确决策时跳过对应操作，不代选。',authorization:'外部授权未确认完成时跳过依赖授权的操作，不把超时当授权成功。'};
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger}) {
  const lock=join(root,'scheduler-lock');
  let timer;
+ const workspaceOperations=new Set();let workspaceAdmission=Promise.resolve();
  const files=()=>readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x)).map(x=>readJson(join(root,x)));
  const limits=()=>{const {maxConcurrentJobs=3,maxQueuedJobs=100}=getLimits();
   if(!Number.isInteger(maxConcurrentJobs)||maxConcurrentJobs<1||maxConcurrentJobs>10||!Number.isInteger(maxQueuedJobs)||maxQueuedJobs<1||maxQueuedJobs>1000)throw Error('Invalid scheduler capacity');
   return {maxConcurrentJobs,maxQueuedJobs};};
  const legacyBusy=()=>existsSync(join(root,'active'))||existsSync(join(root,'..','lock'));
  const order=(a,b)=>(b.continuationPriority??0)-(a.continuationPriority??0)||(a.queueSequence??a.createdAt)-(b.queueSequence??b.createdAt)||a.createdAt-b.createdAt||a.jobId.localeCompare(b.jobId);
- const sameSession=(a,b)=>a.scope===b.scope&&a.topic===b.topic&&(!a.executionScope||!b.executionScope||a.executionScope===b.executionScope)&&(!a.modelSessionScope||!b.modelSessionScope||a.modelSessionScope===b.modelSessionScope);
+ const sameSession=(a,b)=>!!(a.workspace?.assignmentId&&a.workspace.assignmentId===b.workspace?.assignmentId)||a.scope===b.scope&&a.topic===b.topic&&(!a.executionScope||!b.executionScope||a.executionScope===b.executionScope)&&(!a.modelSessionScope||!b.modelSessionScope||a.modelSessionScope===b.modelSessionScope);
  const conflict=(a,b)=>sameSession(a,b)||(a.resourceKeys??[]).some(key=>(b.resourceKeys??[]).includes(key));
  const queued=j=>j.schedulerVersion===1&&j.status==='queued'&&(!j.startedAt||j.resumePending===true);
  const occupied=j=>(active.has(j.status)||j.status==='unknown')&&!queued(j);
@@ -54,7 +56,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   if(queued(j)){const all=files(),pending=all.filter(queued).sort(order);
    const running=all.filter(occupied);
    j.queuePosition=pending.findIndex(x=>x.jobId===j.jobId)+1;
-   j.waitingReason=legacyBusy()?'legacy_executor':(running.some(x=>sameSession(x,j))||all.some(x=>waiting.has(x.status)&&sameSession(x,j)))?'session_busy':running.some(x=>conflict(x,j))?'resource_busy':running.length>=limits().maxConcurrentJobs?'capacity':'awaiting_dispatch';
+   j.waitingReason=j.workspaceWaiting??(legacyBusy()?'legacy_executor':(running.some(x=>sameSession(x,j))||all.some(x=>waiting.has(x.status)&&sameSession(x,j)))?'session_busy':running.some(x=>conflict(x,j))?'resource_busy':running.length>=limits().maxConcurrentJobs?'capacity':'awaiting_dispatch');
   }
   return j;
  }
@@ -135,6 +137,20 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   for(const job of all.filter(queued)){
    if(existsSync(join(root,job.jobId+'.cancel'))){Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);}
   }
+  for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&!j.workspaceSettled)){
+   if(workspaceOperations.has(job.jobId)||!settleWorkspace)continue;
+   const processFile=join(root,job.jobId+'.process.json');
+   if(existsSync(processFile)&&processAlive(readJson(processFile).pid))continue;
+   if(Number.isInteger(job.executionPid)){try{process.kill(-job.executionPid,0);continue;}catch(error){if(error.code!=='ESRCH')continue;}}
+   const request=readJson(join(root,job.jobId+'.request.json'));
+   if(!request.runtime?.workspace)continue;
+   // A continuation with the same assignment keeps ownership, even when queued.
+   if(all.some(other=>other.jobId!==job.jobId&&other.workspace?.assignmentId===job.workspace?.assignmentId&&!['completed','failed','timed_out','cancelled'].includes(other.status)))continue;
+   workspaceOperations.add(job.jobId);
+   void settleWorkspace(request.runtime).then(async result=>{
+    const release=await acquireLock(lock);try{const current=readJson(join(root,job.jobId+'.json'));writeJson(join(root,job.jobId+'.json'),{...current,workspaceSettled:true,workspaceRelease:result?.status??'preserved'});}finally{release();}
+   }).catch(()=>{}).finally(()=>workspaceOperations.delete(job.jobId));
+  }
   // Old releases use a global admission directory. Never bypass their worker.
   if(legacyBusy())return;
   const {maxConcurrentJobs}=limits();
@@ -143,11 +159,34 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   for(const job of pending){
    const file=join(root,job.jobId+'.json');
    if(existsSync(join(root,job.jobId+'.cancel'))){terminalJob({...job,status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});continue;}
-   if(running.length>=maxConcurrentJobs||running.some(other=>conflict(other,job))||all.some(other=>waiting.has(other.status)&&sameSession(other,job)))continue;
+   if(all.some(other=>other.jobId!==job.jobId&&workspaceOperations.has(other.jobId)&&job.workspace?.assignmentId&&other.workspace?.assignmentId===job.workspace.assignmentId))continue;
+   if(running.some(other=>conflict(other,job))||all.some(other=>waiting.has(other.status)&&sameSession(other,job)))continue;
    const requestFile=join(root,job.jobId+'.request.json');
    if(!existsSync(requestFile)){terminalJob({...job,status:'failed',error:'Queued request missing; task was not executed',finishedAt:Date.now()});continue;}
    const request=readJson(requestFile);
    if(scopeKey(request.scope)!==job.scope||request.params?.topic!==job.topic)throw Error('Queued request binding mismatch; execution withheld');
+   if(request.runtime?.workspacePool&&!job.workspaceReady){
+    if(!prepareWorkspace){terminalJob({...job,status:'failed',error:'Workspace service unavailable',finishedAt:Date.now()});continue;}
+    job.workspaceWaiting='waiting_workspace';writeJson(file,job);
+    if(!workspaceOperations.has(job.jobId)){
+     workspaceOperations.add(job.jobId);
+     workspaceAdmission=workspaceAdmission.catch(()=>{}).then(async()=>{
+      try{
+       if(!queued(readJson(file))||existsSync(join(root,job.jobId+'.cancel')))return;
+       const owner=request.runtime.workspace?.owner??job.jobId;
+       const prepared=await prepareWorkspace(request.runtime,owner);
+       const release=await acquireLock(lock);
+       try{
+        const current=readJson(file);
+        if(prepared){request.runtime=prepared;writeJson(requestFile,request);Object.assign(current,projectFields(prepared),{workspaceReady:true});delete current.workspaceWaiting;writeJson(file,current);}
+       }finally{release();}
+      }catch(error){const release=await acquireLock(lock);try{const current=readJson(file);if(queued(current))terminalJob({...current,status:'failed',error:String(error.message),finishedAt:Date.now()});}finally{release();}}
+      finally{workspaceOperations.delete(job.jobId);}
+     });
+    }
+    continue;
+   }
+   if(running.length>=maxConcurrentJobs)continue;
    const claimed={...job,resumePending:false,status:'running',startedAt:job.startedAt??Date.now(),heartbeatAt:Date.now()};
    // Persist the reservation BEFORE spawning. An interrupted dispatch remains
    // unknown and occupied, never automatically spawning a second business worker.
@@ -157,6 +196,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    try{child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
    catch{failed();continue;}
    child.stdin.on('error',()=>{});child.once('error',failed);
+   writeJson(join(root,job.jobId+'.process.json'),{pid:child.pid});
    child.stdin.end(JSON.stringify({...request,params:request.resumeParams??request.params}));child.unref();
   }
  }
@@ -386,7 +426,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     else{
      // Retries of accepted jobs succeed even when the waiting queue is full.
      const running=all.filter(occupied),candidate={scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,modelSessionScope:runtime?.modelSessionScope,resourceKeys};
-     const canStart=!legacyBusy()&&running.length<limits().maxConcurrentJobs&&!running.some(job=>conflict(job,candidate))&&!all.some(job=>waiting.has(job.status)&&sameSession(job,candidate));
+     const canStart=!runtime?.workspacePool&&!legacyBusy()&&running.length<limits().maxConcurrentJobs&&!running.some(job=>conflict(job,candidate))&&!all.some(job=>waiting.has(job.status)&&sameSession(job,candidate));
      if(!canStart&&all.filter(queued).length>=limits().maxQueuedJobs)return {status:'queue_full',accepted:false,message:'Waiting queue is full; no job was created.'};
      jobId=randomUUID();
      const job={jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{inputRequestKey,requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance)}:{}),requestId:params.requestId,provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};

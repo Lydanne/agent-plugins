@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,readdirSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createJobs,requestKeyFor} from './jobs.mjs';
+const params={topic:'fix',task:'test',context:'test',constraints:'authorized fixture',waitSeconds:0};
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(check){for(let i=0;i<300;i++){if(await check())return;await delay(10);}throw Error('Fixture deadline');}
+function fixture(t){
+ const root=mkdtempSync(join(tmpdir(),'pool-scheduler-')),worker=join(root,'worker.mjs');
+ writeFileSync(worker,`import{readFileSync,writeFileSync,renameSync,existsSync}from'node:fs';const[root,id]=process.argv.slice(2);let input='';for await(const c of process.stdin)input+=c;writeFileSync(root+'/'+id+'.input',input);let j=JSON.parse(readFileSync(root+'/'+id+'.json'));const timer=setInterval(()=>{j.heartbeatAt=Date.now();if(existsSync(root+'/'+id+'.cancel')||existsSync(root+'/'+id+'.done')){j.status='completed';j.finishedAt=Date.now();clearInterval(timer);}writeFileSync(root+'/'+id+'.tmp',JSON.stringify(j));renameSync(root+'/'+id+'.tmp',root+'/'+id+'.json');},15);`);
+ let jobs;const options={root,worker,node:process.execPath,getLimits:()=>({maxConcurrentJobs:1,maxQueuedJobs:10}),getRuntime:p=>p.useWorkspace?{workspacePool:{},projectContext:{projectId:'xgj',repository:'projects/xgj'},executionScope:'source'}:{}};
+ const start=extra=>jobs=createJobs({...options,...extra});
+ t.after(async()=>{jobs?.stop();for(const f of readdirSync(root).filter(f=>f.endsWith('.input')))writeFileSync(join(root,f.slice(0,-6)+'.done'),'');await delay(80);rmSync(root,{recursive:true,force:true});});
+ return {root,start,finish:id=>writeFileSync(join(root,id+'.done'),'')};
+}
+test('workspace full jobs remain queued without consuming execution capacity and dispatch after release',async t=>{
+ const f=fixture(t);let available=false;const jobs=f.start({prepareWorkspace:async(runtime,owner)=>available?{...runtime,workspace:{id:'xgj-0',assignmentId:owner,owner,path:f.root},cwd:f.root}:null});
+ const waiting=await jobs.run({...params,useWorkspace:true},'a');assert.equal(waiting.status,'queued');assert.equal(waiting.waitingReason,'waiting_workspace');
+ const plain=await jobs.run({...params,topic:'plain'},'b');assert.equal(plain.status,'running');await until(()=>existsSync(join(f.root,plain.jobId+'.input')));
+ f.finish(plain.jobId);await until(()=>jobs.status(plain.jobId,'b').status==='completed');available=true;
+ await until(async()=>{jobs.tick();return jobs.status(waiting.jobId,'a').status==='running';});await until(()=>existsSync(join(f.root,waiting.jobId+'.input')));
+ const input=JSON.parse(readFileSync(join(f.root,waiting.jobId+'.input')));assert.equal(input.runtime.cwd,f.root);assert.equal((await jobs.run({...params,useWorkspace:true},'a')).jobId,waiting.jobId);
+});
+test('cancellation while initialization is in flight cannot launch a Worker and keeps allocation for settlement',async t=>{
+ const f=fixture(t);let unblock,entered=false;const gate=new Promise(r=>unblock=r),released=[];
+ const jobs=f.start({prepareWorkspace:async(runtime,owner)=>{entered=true;await gate;return {...runtime,workspace:{id:'xgj-0',assignmentId:owner,owner},cwd:f.root};},settleWorkspace:async runtime=>{released.push(runtime.workspace.owner);return {status:'idle'};}});
+ const accepted=await jobs.run({...params,useWorkspace:true},'a');await until(()=>entered);jobs.cancel(accepted.jobId,'a');jobs.tick();unblock();
+ await until(async()=>{jobs.tick();return released.length===1;});assert.equal(jobs.status(accepted.jobId,'a').status,'cancelled');assert.equal(existsSync(join(f.root,accepted.jobId+'.input')),false);
+});
+test('preparation failures are terminal without executing in the shared checkout',async t=>{
+ const f=fixture(t),jobs=f.start({prepareWorkspace:async()=>{throw Error('workspace blocked');}});const j=await jobs.run({...params,useWorkspace:true},'a');await until(()=>jobs.status(j.jobId,'a').status==='failed');assert.equal(existsSync(join(f.root,j.jobId+'.input')),false);
+});
+test('useWorkspace participates in request identity; false preserves legacy identity',()=>{
+ assert.notEqual(requestKeyFor(params,'a'),requestKeyFor({...params,useWorkspace:true},'a'));assert.equal(requestKeyFor(params,'a'),requestKeyFor({...params,useWorkspace:false},'a'));
+});
+
+test('pool waits respect maxQueuedJobs even when execution capacity is free',async t=>{
+ const f=fixture(t),jobs=f.start({getLimits:()=>({maxConcurrentJobs:3,maxQueuedJobs:1}),prepareWorkspace:async()=>null});
+ const first=await jobs.run({...params,useWorkspace:true},'a');assert.equal(first.status,'queued');
+ const second=await jobs.run({...params,topic:'other',useWorkspace:true},'b');assert.equal(second.status,'queue_full');
+ assert.equal((await jobs.run({...params,useWorkspace:true},'a')).jobId,first.jobId);
+});

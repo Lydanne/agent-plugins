@@ -38,7 +38,9 @@
     "maintenance.mjs",
     "maintenance.d.mts",
     "diagnostics.mjs",
-    "diagnostics.d.mts"
+    "diagnostics.d.mts",
+    "workspace-pool.mjs",
+    "workspace-lock.mjs"
   ],
   "scripts": {
     "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs",

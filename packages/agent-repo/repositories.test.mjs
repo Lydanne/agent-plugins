@@ -332,3 +332,9 @@ test('synchronization preparation rejects ignored untracked registrations before
  const plan=await buildConfigPlan({config,agentId:'main',repo:f.repo,prepareSync:true});
  assert.equal(plan.ready,false);assert.ok(plan.blockers.some(reason=>reason.includes('registration must be a committed ordinary file')));
 });
+
+test('project workspacePool accepts explicit bounds and rejects paths, commands and invalid capacity',async t=>{
+ const f=await fixture(t);
+ for(const pool of [{enabled:true,maxSize:3},{enabled:false,maxSize:1}]){f.entry.workspacePool=pool;await f.save();assert.deepEqual((await readProjects(f.repo)).demo.workspacePool,pool);}
+ for(const pool of [{enabled:true,maxSize:0},{enabled:true,maxSize:21},{enabled:'true',maxSize:2},{enabled:true,maxSize:1,path:'/tmp'},{enabled:true,maxSize:1,install:'shell'},{enabled:true}]){f.entry.workspacePool=pool;await f.save();await assert.rejects(readProjects(f.repo),/workspace pool/);}
+});

@@ -1,3 +1,4 @@
+import {checkJobWorkspace,holdJobWorkspace} from './workspace-runtime.mjs';
 import {jobSourceAttachments} from './source-attachments.mjs';
 import {randomUUID} from 'node:crypto';
 import {captureReports} from './completion.mjs';
@@ -24,6 +25,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   checkCancellation();controller.signal.throwIfAborted();
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});persist();
+  await checkJobWorkspace(runtime??{});
   const attachments=jobSourceAttachments(job.provenance);
   const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onProgress:progress=>{job={...job,...progress};persist();}},runtime);
   checkCancellation();controller.signal.throwIfAborted();
@@ -36,7 +38,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
    if(count>=(kind==='plugin'?50:5))throw Error(kind==='plugin'?'Plugin request limit reached':'Context question limit reached');
    if(typeof output.sessionId!=='string')throw Error('Context request has no Worker session');
    const question={...output.contextRequest,questionId:randomUUID(),createdAt:Date.now(),expiresAt:Date.now()+24*60*60*1000};
-   job.questions=[...(job.questions??[]),question];job.contextRequest=question;job.resumeSessionId=output.sessionId;job.status='awaiting_main';job.progress=question.question;
+   job.questions=[...(job.questions??[]),question];job.contextRequest=question;job.resumeSessionId=output.sessionId;job.status='awaiting_main';job.progress=question.question;await holdJobWorkspace(runtime??{});
    if(job.notification)job.notification={state:'pending',eventKey:question.questionId,createdAt:Date.now()};
    recordEvent({event:'worker.context_request',time:Date.now(),...question});
   }else {job.status='completed';delete job.contextRequest;}

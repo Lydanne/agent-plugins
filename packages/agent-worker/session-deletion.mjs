@@ -31,8 +31,9 @@ export function sessionSubmissionState(scope,jobs,supplements){
 export function sessionDeletionState(bindings,jobs,supplements=[],submissions={available:true,pendingQuestionIds:[]}){
  const ids=new Set(jobs.map(job=>job.jobId));
  const pending=supplements.some(s=>s.status==='waiting'&&Number.isFinite(s.expiresAt)&&s.expiresAt<=Date.now()?false:s.status==='dispatched'?(!s.notified||!ids.has(s.childJobId)):['blocked','suppressed'].includes(s.status)?!(s.notified||s.status==='suppressed'&&s.reason==='source_invalid'&&s.notificationSuppressed===true):true);
- const reason=jobs.some(job=>!terminal.has(job.status))?'会话仍有未结束或状态未知的任务，请先处理原任务。':jobs.some(job=>job.notification&&!settled.has(job.notification.state))?'会话仍有待交付或待核查的结果，请先处理交付状态。':pending?'会话仍有待补充、待接续或待通知的补充信息，请先处理补充状态。':!submissions.available?'渠道补充交接状态暂不可核实，请恢复渠道后重试。':submissions.pendingQuestionIds.length?'会话仍有已保存但待交接的回答，请先处理补充状态。':null;
- return {canDelete:!reason,deleteReason:reason,deletionRevision:hash(JSON.stringify([bindings,jobs.map(({jobId,status,sessionId,notification})=>({jobId,status,sessionId,notification})).sort((a,b)=>a.jobId.localeCompare(b.jobId)),supplements,submissions]))};
+ const workspacePending=jobs.some(job=>job.useWorkspace&&(!job.workspaceSettled||job.workspaceRelease!=='idle'));
+ const reason=workspacePending?'会话仍有占用或需恢复的 workspace，请先处理工作区。':jobs.some(job=>!terminal.has(job.status))?'会话仍有未结束或状态未知的任务，请先处理原任务。':jobs.some(job=>job.notification&&!settled.has(job.notification.state))?'会话仍有待交付或待核查的结果，请先处理交付状态。':pending?'会话仍有待补充、待接续或待通知的补充信息，请先处理补充状态。':!submissions.available?'渠道补充交接状态暂不可核实，请恢复渠道后重试。':submissions.pendingQuestionIds.length?'会话仍有已保存但待交接的回答，请先处理补充状态。':null;
+ return {canDelete:!reason,deleteReason:reason,deletionRevision:hash(JSON.stringify([bindings,jobs.map(({jobId,status,sessionId,notification,workspaceSettled,workspaceRelease})=>({jobId,status,sessionId,notification,workspaceSettled,workspaceRelease})).sort((a,b)=>a.jobId.localeCompare(b.jobId)),supplements,submissions]))};
 }
 export function createSessionDeletion({state}){
  return async function deleteSession(scope,payload={}){

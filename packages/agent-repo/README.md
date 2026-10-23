@@ -448,3 +448,7 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 每日仓库同步也由同一面板管理，支持修改每日时间/时区、暂停/启用、立即执行、删除及重新启用。首次从 `sync.submoduleSchedule` 导入并建立原生 cron；之后面板设置持久化在 `stateDir/agent-repo-repository-schedules/schedules.sqlite`，重启不覆盖面板设置，不自动恢复已删除计划。`sync.enabled` 和 `submoduleSchedule` 的部署开关仍是权限上限；关闭配置后不能从面板绕过启用。
 
 仓库同步使用固定同步执行器，不创建 Main/Worker 业务会话，也不发群消息。手动执行与启动补当天都调用 OpenClaw 原生队列，不直接调用同步函数、不使用插件自建计时器。每个 Agent 每个计划时区的日期至多尝试一次；原有 Git 目录每日 receipt 继续参与去重。当天已有成功、失败或中断记录时不能在面板重跑，删除/重建、改时间和重启不清除每日记录；显式项目同步 `agent_repo sync` 仍保留原语义。跨日只执行新一天，不补过去多天。原生任务丢失、被改写或写入响应不确定时保留待核验状态，不盲目创建第二个计划。缺少原生入队接口时不使用旧定时器降级，需管理员核验宿主版本。
+
+## 独立 clone 工作区池
+
+项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `worktree/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。

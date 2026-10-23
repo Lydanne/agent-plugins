@@ -29,3 +29,7 @@ CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机�
 新任务的模型与等级遵循当前 Agent 规则及用户明确要求；未指定时省略 modelId/thinkingLevel，使用管理员默认配置，不例行查询 models 或询问用户。需要明确覆盖时，通过工具说明或 `agent_worker action=models` 核对可用配置，再传 modelId、thinkingLevel=0–6。模型是管理员配置的 harness + 模型，0 使用所选模型默认参数；等级不切换模型。同一聊天、项目/仓库和 topic 按模型分别保留会话，等级变化复用会话。已受理、等待补充或状态未知的任务继续使用原 jobId；reply 不改变模型及等级，不通过切换模型重跑业务。
 
 宿主现在可按可信来源版本、topic 和项目自动生成 requestId；同一次受理的重试省略即可复用。明确重新执行才传新 ID；不能通过换 ID 绕过未知状态。来源身份、时间戳、项目解析、模型默认值与执行配置校验由宿主完成，Main 负责目标、已知事实、业务边界及项目/topic 的语义选择。resourceKeys 仍在涉及业务写入时明确提供；恢复和迟到补充由宿主继承原锁，不从自然语言猜测对象或权限。memory 继续沿用现有配置要求，不自动伪造检索。
+
+## 独立 workspace
+
+明确授权的代码修复任务可在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 保持原目录。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，提交推送只针对自己的任务分支。

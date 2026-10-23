@@ -97,3 +97,20 @@ test('Worker projects action does not bind sources, inspect memory or create job
  const tool=factories[0]({agentId:'main',sessionKey:'agent:main:test'});const result=JSON.parse((await tool.execute('',{action:'projects'})).content[0].text);assert.equal(result.projects.length,2);assert.equal((await f.api.listProjects()).registryRevision,result.registryRevision);
  assert.equal(tool.parameters.properties.projectId.type,'string');await assert.rejects(query({action:'projects',projectId:'a'},{agentId:'main',sessionKey:'agent:main:test'}),/only supported for run/);
 });
+
+test('workspace selector is opt-in, exposes pool config and maps skill scope into an isolated clone',async t=>{
+ const f=await fixture(t,{count:1});
+ await assert.rejects(f.api.prepareExecutionScope({projectId:'a',useWorkspace:true}),/Project preparation failed/);
+ await assert.rejects(f.api.prepareExecutionScope({projectId:'a',useWorkspace:'true'}),/boolean/);
+ f.projects.a.workspacePool={enabled:true,maxSize:2};await writeFile(join(f.root,'projects.json'),JSON.stringify({schemaVersion:1,projects:f.projects}));await commit(f.root);
+ assert.deepEqual((await f.api.listProjects()).projects[0].workspacePool,{enabled:true,maxSize:2});
+ const scoped=await scopeRuntime(f.baseline,{projectId:'a',useWorkspace:true},{agentId:'main',sessionKey:'agent:main:test'},f.host);
+ assert.equal(scoped.workspacePool.maxSize,2);
+ const {prepareJobWorkspace}=await import('../agent-worker/workspace-runtime.mjs');
+ const runtime=await prepareJobWorkspace(scoped,'11111111-1111-4111-8111-111111111111');
+ assert.equal(runtime.cwd,join(f.root,'workspace/a-0'));assert.equal(runtime.projectContext.repository,'projects/a');
+ const snapshot=await readScopedSkillVersion(runtime);assert.equal(snapshot.protocol,4);assert.ok(snapshot.catalog.includes('workspace/a-0/.agents/skills/a/SKILL.md'));assert.ok(snapshot.catalog.includes('skills/role/SKILL.md'));
+ await writeFile(join(runtime.cwd,'fix.txt'),'change');await commit(runtime.cwd);await readScopedSkillVersion(runtime);
+ const resumed=await prepareJobWorkspace(runtime,runtime.workspace.owner);assert.equal(resumed.workspace.assignmentId,runtime.workspace.assignmentId);assert.equal(resumed.executionScope,runtime.executionScope);
+ await git(runtime.cwd,['switch','-c','wrong']);await assert.rejects(readScopedSkillVersion(runtime),/branch/);
+});

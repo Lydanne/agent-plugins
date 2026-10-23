@@ -19,7 +19,7 @@ export function skillRefreshPlan(previous, current) {
   changed:current.catalog.filter(p=>old.includes(p) && previous.skills!==current.skills)};
 }
 export function skillTaskContext(snapshot) {
- return {revision:revisionOf(snapshot),root:snapshot.root,catalog:snapshot.catalog,...(snapshot.protocol>=2?{projectId:snapshot.projectId,repository:snapshot.repository,cwd:snapshot.root+'/'+snapshot.projectRepository}:{}),...(snapshot.protocol===3?{instructions:snapshot.instructionSources.flatMap(item=>item.paths)}:{}),
+ return {revision:revisionOf(snapshot),root:snapshot.root,catalog:snapshot.catalog,...(snapshot.protocol>=2?{projectId:snapshot.projectId,repository:snapshot.repository,cwd:snapshot.root+'/'+snapshot.projectRepository}:{}),...(snapshot.protocol>=3?{instructions:snapshot.instructionSources.flatMap(item=>item.paths)}:{}),
   instruction:'此列表替代旧版本工作区技能索引，其他来源仍遵守宿主配置。任务开始前必须读取本任务适用的 SKILL.md 最新正文、所需引用及 instructions 列出的仓库规范；索引确认不等于正文已读取。不得因历史任务执行过某操作就重复操作。'};
 }
 export async function refreshSkillSession({previous,current,runTurn,onApplied,signal}) {

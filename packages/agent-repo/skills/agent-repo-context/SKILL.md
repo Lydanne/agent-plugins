@@ -67,3 +67,5 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 只有宿主实际提供 `agent_schedule` 且用户明确要求定时/周期执行时使用。它不是 `agent_repo` 的 action。create 明确 projectId、task、constraints 和 at 或 expr/timeZone；一次性写入授权不能自动扩为周期写入。来源由宿主绑定，不在参数或提示词中伪造请求人、群或账号。requestId 保持稳定，needs_review/unknown 时先检查已有计划和执行，不换 ID 重建。
 
 list/pause/remove 限当前请求人与群会话；暂停/删除计划不等于已停止 Worker。原生 tick 成功、Main 入场或 Worker 提交均不代表业务完成。定时 Main 按保存的 projectId 和范围交给 Worker，时间窗口以本次触发时刻确定；沿用异步完成协议，不在 Main 等待。仅受理后结束本轮，由既有完成事件回原群交付。无该工具时不能宣称可创建；生产启用和部署另需授权。
+
+项目可在 projects.json 配置 workspacePool.enabled/maxSize。Worker run 的 useWorkspace=true 使用独立 clone 池；注册目录和自动同步不切换到任务副本。工作区分配与状态由宿主管理，Main 不指定任意路径、不编辑分配文件。

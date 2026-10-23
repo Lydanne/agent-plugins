@@ -515,3 +515,7 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 宿主通过 AgentWorkerObservation 将自动协作过程加入原 Main 的系统事件队列，后续 Main 轮次读取；最终完成事件也带 collaboration 摘要。过程记录不是新的用户指令。原始约束继续使用自然语言，没有新增业务授权合同；没有绕过 Main 的完成交付。
 
 已受理的迟到补充不会占用或回答另一个 pending question；另一个问题按原 reply/超时策略处理后再接续。问题有效期仅限制首次提交，已受理补充保留至执行或明确停止。原 Worker 失败、超时、取消或缺少原会话时保存终态及原因，以 `supplement_unavailable` 通知 Main 和更新补充卡；通知失败重试，不重放业务。
+
+## 独立 clone 工作区池
+
+项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `worktree/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。

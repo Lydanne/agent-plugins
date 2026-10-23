@@ -1,3 +1,4 @@
+import {validateWorkspace} from './dist/workspace-pool.mjs';
 import {getAgentRepoService,AgentRepoError} from './dist/agent-repo-api.mjs';
 import {realpath} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
@@ -14,11 +15,11 @@ export function executionScopeOf(result,agentId) {
 }
 export async function scopeRuntime(config,params,provenance,hostConfig={}) {
  const context=provenance;
- if(config.projectRouting==='legacy'){if(['projectId','repository','expectedRegistryRevision'].some(key=>params[key]!==undefined))throw new AgentRepoError('PROJECT_SELECTOR_INVALID','Legacy mode does not accept project selectors');return config;}
+ if(config.projectRouting==='legacy'){if((['projectId','repository','expectedRegistryRevision'].some(key=>params[key]!==undefined)||params.useWorkspace===true))throw new AgentRepoError('PROJECT_SELECTOR_INVALID','Legacy mode does not accept project selectors');return config;}
  const service=context?.agentId&&config.projectRouting!=='legacy'?getAgentRepoService(context,{required:false}):undefined;
  let result,mainCapabilitySkill;
  if(service) {
-  result=await service.prepareExecutionScope({projectId:params.projectId,repository:params.repository,expectedRegistryRevision:params.expectedRegistryRevision});
+  result=await service.prepareExecutionScope({projectId:params.projectId,repository:params.repository,expectedRegistryRevision:params.expectedRegistryRevision,...(params.useWorkspace!==undefined?{useWorkspace:params.useWorkspace}:{})});
   if(service.prepareWorkerSkill)mainCapabilitySkill=await service.prepareWorkerSkill();
  } else {
   const bound=hostConfig.plugins?.entries?.['agent-repo']?.enabled!==false&&hostConfig.plugins?.entries?.['agent-repo']?.config?.agents?.[context?.agentId];
@@ -35,16 +36,21 @@ export async function scopeRuntime(config,params,provenance,hostConfig={}) {
  }
  const projectContext={agentId:context.agentId,root:result.root??result.snapshot.root,projectId:result.projectId??result.snapshot.projectId,repository:result.repository??result.snapshot.repository,cwd:result.cwd,scopeDirectory:result.scopeDirectory,registryRevision:result.registryRevision};
  const render=text=>text.replaceAll(config.cwd,result.cwd).replaceAll('{projectDir}',result.cwd).replaceAll('{agentRepo}',projectContext.root).replaceAll('{scopeDirectory}',projectContext.scopeDirectory??result.cwd);
- return {...config,...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
+ return {...config,...(result.workspacePool?{workspacePool:result.workspacePool}:{}),...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
 }
 export async function readScopedSkillVersion(config) {
  const snapshot=config.scopedSkillSnapshot;
+ const pooled=snapshot?.protocol===4;
+ if(pooled){
+  if(!config.workspacePool||!config.workspace||snapshot.projectRepository!=='workspace/'+config.workspace.id)throw Error('Invalid workspace skill binding');
+  await validateWorkspace(config.workspacePool,config.workspace);
+ }
  const projectRepository=snapshot?.projectRepository??'project';
- if(!/^(?:project|projects\/[A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.test(projectRepository)||!(snapshot?.repository===projectRepository||new RegExp('^'+projectRepository+'/repositories/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$').test(snapshot?.repository??'')))throw Error('Invalid selected project snapshot');
- if(![1,2,3].includes(snapshot?.protocol)||snapshot.root!==config.skillContextRoot||!Array.isArray(snapshot.repositorySources)||snapshot.repositorySources.length<2||snapshot.repositorySources.length>3||!Array.isArray(snapshot.catalog)||snapshot.catalog.length>500||!snapshot.catalog.every(path=>typeof path==='string'&&["skills/",projectRepository+'/.agents/skills/',snapshot.repository+'/.agents/skills/'].some(prefix=>path.startsWith(prefix)&&path.endsWith('/SKILL.md'))&&!path.split('/').includes('..'))||!Array.isArray(snapshot.skillEntries)||!snapshot.skillEntries.every(entry=>typeof entry==='string')||!/^[a-f0-9]{64}$/.test(snapshot.roles)||hash(snapshot.skillEntries.join('\n'))!==snapshot.skills)throw Error('Invalid repository skill snapshot');
+ if(!/^(?:project|projects\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}|workspace\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}-[0-9]+)$/.test(projectRepository)||!(snapshot?.repository===projectRepository||new RegExp('^'+projectRepository+'/repositories/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$').test(snapshot?.repository??'')))throw Error('Invalid selected project snapshot');
+ if(![1,2,3,4].includes(snapshot?.protocol)||snapshot.root!==config.skillContextRoot||!Array.isArray(snapshot.repositorySources)||snapshot.repositorySources.length<2||snapshot.repositorySources.length>3||!Array.isArray(snapshot.catalog)||snapshot.catalog.length>500||!snapshot.catalog.every(path=>typeof path==='string'&&["skills/",projectRepository+'/.agents/skills/',snapshot.repository+'/.agents/skills/'].some(prefix=>path.startsWith(prefix)&&path.endsWith('/SKILL.md'))&&!path.split('/').includes('..'))||!Array.isArray(snapshot.skillEntries)||!snapshot.skillEntries.every(entry=>typeof entry==='string')||!/^[a-f0-9]{64}$/.test(snapshot.roles)||hash(snapshot.skillEntries.join('\n'))!==snapshot.skills)throw Error('Invalid repository skill snapshot');
  const root=await realpath(snapshot.root);
  if(snapshot.registryRevision&&(!/^(?:blob|[a-f0-9]{40,64}):[a-f0-9]{40,64}$/.test(snapshot.registryRevision)||(await git(root,['rev-parse','HEAD:projects.json'])).trim()!==snapshot.registryRevision.split(':')[1]||(await git(root,['status','--porcelain=v1','--untracked-files=all','--','projects.json'])).trim()))throw Error('Project registration changed after task submission');
- if(snapshot.projectRegistration){const project=root+'/'+projectRepository;if((await git(project,['branch','--show-current'])).trim()!==snapshot.projectRegistration.branch||(await git(project,['remote','get-url','origin'])).trim()!==snapshot.projectRegistration.url)throw Error('Project branch or origin changed after task submission');}
+ if(snapshot.projectRegistration&&!pooled){const project=root+'/'+projectRepository;if((await git(project,['branch','--show-current'])).trim()!==snapshot.projectRegistration.branch||(await git(project,['remote','get-url','origin'])).trim()!==snapshot.projectRegistration.url)throw Error('Project branch or origin changed after task submission');}
  for(const path of snapshot.catalog)if(await realpath(root+'/'+path)!==root+'/'+path)throw Error('Skill catalog path changed after submission');
  if(root+'/'+(snapshot.protocol>=2?projectRepository:snapshot.repository)!==await realpath(config.cwd))throw Error('Repository skill snapshot cwd mismatch');
  for(const item of snapshot.repositorySources) {
@@ -52,13 +58,14 @@ export async function readScopedSkillVersion(config) {
   if(actual!==root&&actual!==root+'/'+projectRepository&&actual!==root+'/'+snapshot.repository)throw Error('Repository skill source escapes selected scope');
   if(actual!==item.root||await realpath((await git(actual,['rev-parse','--show-toplevel'])).trim())!==actual)throw Error('Repository changed after task submission; task was not started');
   if((await git(actual,['rev-parse','HEAD'])).trim()!==item.head){
-   if(actual!==root)throw Error('Repository changed after task submission; task was not started');
+   if(actual!==root){if(!pooled)throw Error('Repository changed after task submission; task was not started');await git(actual,['merge-base','--is-ancestor',item.head,'HEAD']);if((await git(actual,['diff','--name-only',item.head,'HEAD','--',item.directory,'AGENTS.md'])).trim())throw Error('Workspace instructions changed after task submission');}
+   else
    if(!/^[a-f0-9]{40,64}$/.test(item.head)||(await git(root,['diff','--name-only',item.head,'HEAD','--','skills','SOUL.md','AGENTS.md','IDENTITY.md'])).trim())throw Error('Agent role or skills changed after task submission; task was not started');
   }
   if(!['skills','.agents/skills'].includes(item.directory))throw Error('Invalid skill source directory');
   if((await git(actual,['status','--porcelain=v1','--untracked-files=all','--',item.directory])).trim())throw Error('Skill files changed after task submission; task was not started');
  }
- if(snapshot.protocol===3) {
+ if(snapshot.protocol>=3) {
   const sources=snapshot.repositorySources.slice(0,-1);
   if(!Array.isArray(snapshot.instructionSources)||snapshot.instructionSources.length!==sources.length)throw Error('Invalid repository instruction snapshot');
   for(const [index,item] of snapshot.instructionSources.entries()) {
