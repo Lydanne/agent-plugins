@@ -1,3 +1,4 @@
+import {isWorkspaceStatePath} from './dist/workspace-pool.mjs';
 import {readFile,lstat,realpath} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {execFile} from 'node:child_process';
@@ -57,7 +58,7 @@ async function rootBlockers(repo,sync) {
   const changes=(await gitOutput(['status','--porcelain=v1','-z','--untracked-files=all','--ignore-submodules=all'])).split('\0').filter(Boolean);
   let blockedChanges=false;
   for(const change of changes) {
-   const path=change.slice(3),allowed=sync.preserveLocalMemory&&[' M','??'].includes(change.slice(0,2))&&/^(?:MEMORY\.md|memory\/\d{4}-\d{2}-\d{2}\.md)$/.test(path);
+   const path=change.slice(3),allowed=change.slice(0,2)==='??'&&isWorkspaceStatePath(path)||sync.preserveLocalMemory&&[' M','??'].includes(change.slice(0,2))&&/^(?:MEMORY\.md|memory\/\d{4}-\d{2}-\d{2}\.md)$/.test(path);
    if(!allowed){blockedChanges=true;break;}
    try {
     const file=resolve(repo,path);

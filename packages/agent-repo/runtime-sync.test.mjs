@@ -82,7 +82,7 @@ test('before_dispatch awaits both preparations using the trusted session Agent a
     .then(result => { finished = true; return result; });
   await rootStarted; assert.equal(finished, false); assert.equal(f.calls.length, 1);
   assert.deepEqual(f.calls[0].settings, { enabled: true, root: f.root, timeoutMs: 30000,
-    branch: 'main', remote: 'origin', preserveLocalMemory: true, includeUpstream: false, submodules: [] });
+    branch: 'main', remote: 'origin', preserveLocalMemory: true, preserveLocalWorkspaceState: true, includeUpstream: false, submodules: [] });
   releaseRoot(); assert.equal(await pending, undefined); assert.equal(finished, true);
   assert.equal(f.calls[1].settings.root, join(f.root, 'projects/demo'));
   assert.equal(f.calls[1].settings.repositorySubmodules, true);

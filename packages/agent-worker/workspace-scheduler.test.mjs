@@ -42,3 +42,17 @@ test('pool waits respect maxQueuedJobs even when execution capacity is free',asy
  const second=await jobs.run({...params,topic:'other',useWorkspace:true},'b');assert.equal(second.status,'queue_full');
  assert.equal((await jobs.run({...params,useWorkspace:true},'a')).jobId,first.jobId);
 });
+
+test('settlement claims survive scheduler instances and gate continuations until release completes',async t=>{
+ const f=fixture(t);let releases=0,unblock;const gate=new Promise(r=>unblock=r),options={prepareWorkspace:async(runtime,owner)=>({...runtime,workspace:{id:'xgj-0',assignmentId:owner,owner},cwd:f.root}),settleWorkspace:async()=>{releases++;await gate;return {status:'idle'};}};
+ const first=f.start(options),j=await first.run({...params,useWorkspace:true},'a');
+ await until(()=>{first.tick();return existsSync(join(f.root,j.jobId+'.input'));});f.finish(j.jobId);
+ await until(()=>first.status(j.jobId,'a').status==='completed');await delay(60);first.tick();await until(()=>releases===1);
+ const second=f.start(options);second.tick();await delay(30);assert.equal(releases,1);
+ const original=JSON.parse(readFileSync(join(f.root,j.jobId+'.json')));assert.ok(original.workspaceSettlement.token);
+ const childId='11111111-1111-4111-8111-111111111111',child={...original,jobId:childId,status:'queued',resumePending:true};delete child.workspaceSettlement;
+ writeFileSync(join(f.root,childId+'.json'),JSON.stringify(child));writeFileSync(join(f.root,childId+'.request.json'),readFileSync(join(f.root,j.jobId+'.request.json')));
+ second.tick();assert.equal(existsSync(join(f.root,childId+'.input')),false);
+ unblock();await until(()=>first.status(j.jobId,'a').workspaceSettled===true);
+ await until(()=>{second.tick();return existsSync(join(f.root,childId+'.input'));});assert.equal(releases,1);
+});

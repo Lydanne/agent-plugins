@@ -34,7 +34,10 @@ const active=new Set(['queued','running','cancelling']);
 export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger}) {
  const lock=join(root,'scheduler-lock');
  let timer;
- const workspaceOperations=new Set();let workspaceAdmission=Promise.resolve();
+ const workspaceOperations=new Set();
+ const settlementActive=job=>job.workspaceSettlement&&processAlive(job.workspaceSettlement.pid);
+ const sameWorkspace=(a,b)=>a.workspace?.assignmentId&&a.workspace.assignmentId===b.workspace?.assignmentId;
+ let workspaceAdmission=Promise.resolve();
  const files=()=>readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x)).map(x=>readJson(join(root,x)));
  const limits=()=>{const {maxConcurrentJobs=3,maxQueuedJobs=100}=getLimits();
   if(!Number.isInteger(maxConcurrentJobs)||maxConcurrentJobs<1||maxConcurrentJobs>10||!Number.isInteger(maxQueuedJobs)||maxQueuedJobs<1||maxQueuedJobs>1000)throw Error('Invalid scheduler capacity');
@@ -138,7 +141,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    if(existsSync(join(root,job.jobId+'.cancel'))){Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);}
   }
   for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&!j.workspaceSettled)){
-   if(workspaceOperations.has(job.jobId)||!settleWorkspace)continue;
+   if(workspaceOperations.has(job.jobId)||!settleWorkspace||all.some(other=>sameWorkspace(job,other)&&settlementActive(other)))continue;
    const processFile=join(root,job.jobId+'.process.json');
    if(existsSync(processFile)&&processAlive(readJson(processFile).pid))continue;
    if(Number.isInteger(job.executionPid)){try{process.kill(-job.executionPid,0);continue;}catch(error){if(error.code!=='ESRCH')continue;}}
@@ -146,10 +149,14 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    if(!request.runtime?.workspace)continue;
    // A continuation with the same assignment keeps ownership, even when queued.
    if(all.some(other=>other.jobId!==job.jobId&&other.workspace?.assignmentId===job.workspace?.assignmentId&&!['completed','failed','timed_out','cancelled'].includes(other.status)))continue;
+   const token=randomUUID();job.workspaceSettlement={pid:process.pid,token};writeJson(join(root,job.jobId+'.json'),job);
    workspaceOperations.add(job.jobId);
-   void settleWorkspace(request.runtime).then(async result=>{
-    const release=await acquireLock(lock);try{const current=readJson(join(root,job.jobId+'.json'));writeJson(join(root,job.jobId+'.json'),{...current,workspaceSettled:true,workspaceRelease:result?.status??'preserved'});}finally{release();}
-   }).catch(()=>{}).finally(()=>workspaceOperations.delete(job.jobId));
+   void Promise.resolve().then(()=>settleWorkspace(request.runtime)).then(async result=>{
+    const release=await acquireLock(lock);try{
+     const current=readJson(join(root,job.jobId+'.json'));if(current.workspaceSettlement?.token!==token)return;
+     for(const related of files().filter(j=>sameWorkspace(j,job)&&['completed','failed','timed_out','cancelled'].includes(j.status))){delete related.workspaceSettlement;writeJson(join(root,related.jobId+'.json'),{...related,workspaceSettled:true,workspaceRelease:result?.status??'preserved'});}
+    }finally{release();}
+   }).catch(async()=>{const release=await acquireLock(lock);try{const current=readJson(join(root,job.jobId+'.json'));if(current.workspaceSettlement?.token===token){delete current.workspaceSettlement;writeJson(join(root,job.jobId+'.json'),current);}}finally{release();}}).finally(()=>workspaceOperations.delete(job.jobId)).catch(()=>{});
   }
   // Old releases use a global admission directory. Never bypass their worker.
   if(legacyBusy())return;
@@ -159,7 +166,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   for(const job of pending){
    const file=join(root,job.jobId+'.json');
    if(existsSync(join(root,job.jobId+'.cancel'))){terminalJob({...job,status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});continue;}
-   if(all.some(other=>other.jobId!==job.jobId&&workspaceOperations.has(other.jobId)&&job.workspace?.assignmentId&&other.workspace?.assignmentId===job.workspace.assignmentId))continue;
+   if(all.some(other=>sameWorkspace(other,job)&&(settlementActive(other)||workspaceOperations.has(other.jobId))))continue;
    if(running.some(other=>conflict(other,job))||all.some(other=>waiting.has(other.status)&&sameSession(other,job)))continue;
    const requestFile=join(root,job.jobId+'.request.json');
    if(!existsSync(requestFile)){terminalJob({...job,status:'failed',error:'Queued request missing; task was not executed',finishedAt:Date.now()});continue;}

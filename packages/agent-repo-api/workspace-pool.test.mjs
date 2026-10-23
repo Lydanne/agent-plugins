@@ -59,3 +59,23 @@ test('operational pool updates preserve registry identity but cannot change repo
  manifest.projects.xgj.workspacePool.maxSize=0;assert.equal(sameRegistryExceptPool(before,JSON.stringify(manifest)),false);
  manifest.projects.xgj.workspacePool.maxSize=2;manifest.projects.xgj.url='other';assert.equal(sameRegistryExceptPool(before,JSON.stringify(manifest)),false);
 });
+
+test('shrinking pool counts occupied high indices before reusing an idle low index',async t=>{
+ const f=await fixture(t);f.plan.maxSize=3;
+ const low=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await allocateWorkspace(f.plan,randomUUID());await allocateWorkspace(f.plan,randomUUID());await releaseWorkspace(f.plan,low);
+ assert.equal(await allocateWorkspace({...f.plan,maxSize:2},randomUUID()),null);
+});
+test('deleted remote branches cannot prove a local commit was published for release',async t=>{
+ const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await writeFile(join(slot.path,'code.txt'),'fix');await commit(slot.path);await poolGit(slot.path,['push','origin','HEAD:refs/heads/'+slot.branch]);
+ await poolGit(f.source,['push','origin','--delete',slot.branch]);
+ assert.equal((await releaseWorkspace(f.plan,slot)).status,'blocked');
+});
+
+test('separate scheduler processes share the same atomic capacity limit',async t=>{
+ const f=await fixture(t),{execFile}=await import('node:child_process'),{promisify}=await import('node:util'),run=promisify(execFile);
+ const script=`import {allocateWorkspace} from ${JSON.stringify(new URL('./workspace-pool.mjs',import.meta.url).href)};process.stdout.write(JSON.stringify(await allocateWorkspace(JSON.parse(process.argv[1]),process.argv[2])));`;
+ const results=await Promise.all(Array.from({length:5},()=>run(process.execPath,['--input-type=module','-e',script,JSON.stringify(f.plan),randomUUID()])));
+ const slots=results.map(r=>JSON.parse(r.stdout)).filter(Boolean);assert.equal(slots.length,2);assert.equal(new Set(slots.map(s=>s.id)).size,2);
+});

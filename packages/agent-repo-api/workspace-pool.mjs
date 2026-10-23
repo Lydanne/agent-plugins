@@ -67,8 +67,9 @@ export async function allocateWorkspace(plan,owner,expected){
    if(slot.status==='preparing'&&!processAlive(slot.preparerPid)){slot.status='blocked';slot.error='Workspace preparation interrupted; inspect preserved directory';}
    if(slot.status==='blocked')return {blocked:true,error:slot.error};
    if(!expected&&slot.status==='idle')slot=undefined;
-   else return structuredClone(slot);
+   else return slot.status==='checking'?null:structuredClone(slot);
   }
+  if(entries.filter(s=>s.status!=='idle').length>=plan.maxSize)return null;
   slot=entries.filter(s=>s.status==='idle').sort((a,b)=>a.index-b.index).find(s=>s.index<plan.maxSize);
   if(!slot){
    if(entries.length>=plan.maxSize)return null;
@@ -89,8 +90,8 @@ async function cleanRepository(path,{published=false}={}){
  if(published){
   const head=await poolGit(path,['rev-parse','HEAD']);
   // Refresh actual remote refs: a successful local commit is not proof of push.
-  await poolGit(path,['fetch','origin']);
-  if(!(await poolGit(path,['branch','-r','--contains',head])).split('\n').some(s=>s.trim().startsWith('origin/')))throw Error('Workspace has unpushed commits; preserved');
+  await poolGit(path,['fetch','--prune','origin']);
+  if(!(await poolGit(path,['branch','-r','--contains',head])).split('\n').some(s=>s.trim().startsWith('origin/')&&!s.includes(' -> ')))throw Error('Workspace has unpushed commits; preserved');
  }
 }
 async function installDependencies(cwd){
@@ -146,7 +147,7 @@ export async function validateWorkspace(plan,lease,{settling=false}={}){
  }
  return s;
 }
-export async function markWorkspace(plan,lease,status){return update(plan,lease,s=>{s.status=status;if(status==='running'){s.workerPid=process.pid;s.workerStartedAt=Date.now();}});}
+export async function markWorkspace(plan,lease,status){return update(plan,lease,s=>{if(!['ready','running','held'].includes(s.status))throw Error('Workspace is not available for execution');s.status=status;if(status==='running'){s.workerPid=process.pid;s.workerStartedAt=Date.now();}});}
 export async function releaseWorkspace(plan,lease){
  // Caller has confirmed no live Worker; assignment fencing prevents stale release.
  await update(plan,lease,s=>{if(s.status==='blocked')throw Error(s.error);s.status='checking';});
@@ -167,3 +168,5 @@ export function sameRegistryExceptPool(before,after){
   return JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
  }catch{return false;}
 }
+
+export const isWorkspaceStatePath=path=>/^worktree\/(?:state\.json(?:\.[a-f0-9-]{36})?|state\.lock\/owner\.json)$/.test(path);

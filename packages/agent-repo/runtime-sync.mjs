@@ -46,7 +46,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
  }
  function syncConfig(binding) {
   const {timeoutMs,branch,remote,preserveLocalMemory,gitEnvironment}=binding.sync;
-  return {enabled:true,root:binding.repo,timeoutMs,branch,remote,preserveLocalMemory,...(gitEnvironment!==undefined?{gitEnvironment:{...gitEnvironment}}:{}),includeUpstream:false,submodules:[]};
+  return {enabled:true,root:binding.repo,timeoutMs,branch,remote,preserveLocalMemory,preserveLocalWorkspaceState:true,...(gitEnvironment!==undefined?{gitEnvironment:{...gitEnvironment}}:{}),includeUpstream:false,submodules:[]};
  }
  async function readRegistry(binding) {
   const head=(await git(binding.repo,['rev-parse','HEAD'])).trim();
