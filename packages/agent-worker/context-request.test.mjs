@@ -165,6 +165,30 @@ test('known values survive awaiting-user persistence and invalid known values ne
  }finally{f.close();}
 });
 
+test('await_user merges updated known values without extending deadlines and rejects invalid retries',async()=>{
+ const f=fixture();try{
+  const job=await ask(f),q=job.contextRequest.questionId;
+  const fields=[{id:'env',label:'环境',type:'single_select',required:true,options:[{label:'生产',value:'prod'},{label:'测试',value:'test'}]},{id:'date',label:'日期',type:'text',required:true}];
+  writeJson(join(f.root,f.id+'.json'),{...job,contextRequest:{...job.contextRequest,fields},questions:job.questions.map(x=>({...x,fields}))});
+  const jobs=createJobs({root:f.root,node:process.execPath,worker:'unused'});
+  await jobs.awaitUser(f.id,f.scope,q,f.provenance,()=>true,{env:'prod'});
+  const saved=readJson(join(f.root,f.id+'.json'));saved.contextRequest.waitingForUserAt-=10000;writeJson(join(f.root,f.id+'.json'),saved);
+  const updated=await jobs.awaitUser(f.id,f.scope,q,f.provenance,()=>true,{date:'2026-10-23'});
+  assert.deepEqual(updated.contextRequest.knownValues,{env:'prod',date:'2026-10-23'});
+  assert.equal(updated.contextRequest.waitingForUserAt,saved.contextRequest.waitingForUserAt);
+  assert.equal(updated.contextRequest.expiresAt,saved.contextRequest.expiresAt);
+  assert.deepEqual(updated.questions.at(-1),updated.contextRequest);
+  assert.equal(updated.status,'awaiting_user');assert.equal(updated.questions.length,1);
+  const before=readFileSync(join(f.root,f.id+'.json'),'utf8'),events=readFileSync(join(f.root,f.id+'.events.jsonl'),'utf8');
+  for(const values of [undefined,{}, {date:'2026-10-23',env:'prod'}])await jobs.awaitUser(f.id,f.scope,q,f.provenance,()=>true,values);
+  assert.equal(readFileSync(join(f.root,f.id+'.json'),'utf8'),before);assert.equal(readFileSync(join(f.root,f.id+'.events.jsonl'),'utf8'),events);
+  for(const values of [{env:'invalid'},{unknown:'x'},null,[]])await assert.rejects(jobs.awaitUser(f.id,f.scope,q,f.provenance,()=>true,values));
+  assert.equal(readFileSync(join(f.root,f.id+'.json'),'utf8'),before);
+  const corrected=await jobs.awaitUser(f.id,f.scope,q,f.provenance,()=>true,{env:'test'});
+  assert.deepEqual(corrected.contextRequest.knownValues,{env:'test',date:'2026-10-23'});
+ }finally{f.close();}
+});
+
 test('trusted card answer values persist in task history and override no original constraints',async()=>{
  const f=fixture();try{
   const job=await ask(f),worker=join(f.root,'fake-values.mjs');

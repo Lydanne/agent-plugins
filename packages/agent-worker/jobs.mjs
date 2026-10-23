@@ -214,8 +214,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const requestFile=join(root,jobId+'.request.json'),request=readJson(requestFile);
     if(requestKeyFor(request.params,scope,job.provenance)!==job.requestKey||request.scope!==scope)throw Error('Original request binding mismatch');
     if(waitingForUser){
-     if(job.status==='awaiting_user')return view(job);
-     const at=Date.now(),question={...job.contextRequest,waitingForUserAt:at,...(knownValues?{knownValues:validateContextAnswers(job.contextRequest,knownValues,{partial:true})}:{})};
+     const merged=knownValues===undefined?job.contextRequest.knownValues:validateContextAnswers(job.contextRequest,{...job.contextRequest.knownValues,...validateContextAnswers(job.contextRequest,knownValues,{partial:true})},{partial:true});
+     if(job.status==='awaiting_user'&&JSON.stringify(merged)===JSON.stringify(job.contextRequest.knownValues))return view(job);
+     const at=Date.now(),question={...job.contextRequest,waitingForUserAt:job.contextRequest.waitingForUserAt??at,...(merged?{knownValues:merged}:{})};
      const updated={...job,status:'awaiting_user',contextRequest:question,progress:'等待用户补充上下文',questions:job.questions.map(q=>q.questionId===questionId?question:q)};
      appendFileSync(join(root,jobId+'.events.jsonl'),JSON.stringify({event:'main.awaiting_user',time:at,questionId})+'\n',{mode:0o600});
      writeJson(join(root,jobId+'.json'),updated);return view(updated);

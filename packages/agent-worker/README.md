@@ -53,7 +53,7 @@ Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → a
 | models | 读取可用的 harness + 模型、用途与 0–6 级参数 | 无需 memory 或来源租约，不创建 job |
 | projects | 读取当前 Agent 的已提交项目登记 | 无项目选择器，不创建 job |
 | list | 查找同一问题的 topic 或用户要求找任务 | 可选 query；数量由 jobListLimit 控制，不传 limit/offset |
-| run | 提交明确任务 | topic、task、context、constraints；按任务选择 modelId、thinkingLevel，默认还要求 memory |
+| run | 提交明确任务 | topic、task、context、constraints；modelId、thinkingLevel 按需覆盖，默认还要求 memory |
 | status / wait | 查询原任务 | 原 jobId；异步模式 wait 只读即时状态 |
 | cancel | 原请求人明确取消 | 原 jobId；不回滚已完成外部操作 |
 | tag | 补充检索标签 | jobId、tags，按需 tagMode |
@@ -110,7 +110,7 @@ Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内
 
 原生配置字段为 `modelProfiles`，以模型 ID 为键。新增项有完整默认值但保持停用，确认模型和参数后再启用；主会话只看到已启用项。ID 在字典中唯一，不依赖列表序号。允许为同一模型保存不同参数预设，它们按 harness + 模型共享底层会话。
 
-Main 每次 `run` 独立选择 `modelId`，再根据难度传入 `thinkingLevel`。工具说明及 `modelId` 枚举包含已配置模型；`action=models` 可只读查看模型目录和实际等级映射。省略 modelId 使用 `defaultModelId`，该配置留空、被停用或已移除时选择第一项已启用配置；省略等级使用 `thinkingLevel` 配置，默认 0。
+Main 遵循当前 Agent 规则及用户明确要求选择模型与等级；未指定时省略 `modelId`、`thinkingLevel`，使用管理员默认配置，不例行查询 models 或询问用户。需要明确覆盖时才传入对应参数。工具说明及 `modelId` 枚举包含已配置模型；`action=models` 可只读查看模型目录和实际等级映射。省略 modelId 使用 `defaultModelId`，该配置留空、被停用或已移除时选择第一项已启用配置；省略等级使用 `thinkingLevel` 配置，默认 0。
 
 | 智慧等级 | 默认推理参数 |
 | --- | --- |
@@ -438,7 +438,7 @@ Main 调用同一个工具：`{"action":"reply","jobId":"原任务 ID","question
 
 ### 结构化提问和 Main 优先补充
 
-`request` 保留旧的 question/reason/progress 字段，可增加 `fields`（最多 6 项）、`allowFreeText`、建议文本 `recommendation` 和请求种类 `requestKind`（context/plugin）。字段 id 必须是字符串；禁用自由文本时必须提供可回答字段。字段类型为 text、number、single_select、multi_select、date、date_range、datetime；选项最多 20 个，日期类必须有 IANA timezone。只提问必需的缺口，推荐不代表用户选择。Main 已知时直接 reply；能在原授权内查询时先查询；仅确实缺少决策或信息时 await_user。await_user.knownValues 记录已明确字段，由宿主校验并持久化，用户只填写剩余字段。reply.answerBasis 可记录简短来源说明。
+`request` 保留旧的 question/reason/progress 字段，可增加 `fields`（最多 6 项）、`allowFreeText`、建议文本 `recommendation` 和请求种类 `requestKind`（context/plugin）。字段 id 必须是字符串；禁用自由文本时必须提供可回答字段。字段类型为 text、number、single_select、multi_select、date、date_range、datetime；选项最多 20 个，日期类必须有 IANA timezone。只提问必需的缺口，推荐不代表用户选择。Main 已知时直接 reply；能在原授权内查询时先查询；仅确实缺少决策或信息时 await_user。await_user.knownValues 记录已明确字段，由宿主校验并持久化，用户只填写剩余字段。reply.answerBasis 可记录简短来源说明。等待用户期间再次 await_user 可合并新增或更正的 knownValues；未提供的字段保留，非法字段拒绝且不改变状态。内容变化时更新原提问卡片，不重置等待起点；相同内容重试保持幂等。
 
 飞书适配器接收原提问者的交互卡片提交后，将答案持久化并交回原 Main FIFO，再通过 reply 续接原 job 和 Worker 会话。只有受信任卡片回执可标记 answerSource=user_card、写入 answerValues；普通 Main 补充标记 main_context，等待用户后的普通回复标记 user_text。Main 与 Worker 原任务授权及约束保持有效，结构化字段进入 mainReplies，不创建新 run。旧问题、过期问题、错误发送者及重复答案遵循现有校验；等待状态不占执行槽位。详细卡片流程见 Feishu README。
 

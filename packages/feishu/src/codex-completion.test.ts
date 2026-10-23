@@ -709,6 +709,29 @@ it('retries a failed question edit on the same message and confirms delivery onl
 });
 
 
+it('updates known fields on the existing question card and retries failed edits without duplicate sends',async()=>{
+ const {readQuestionCard}=await import('./worker-question.js');
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'initial-card',imageKey:'gif'});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,registerService:value=>{service=value;}} as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ await service.start({} as Parameters<typeof service.start>[0]);
+ const question={questionId:'known-update-q',question:'环境与日期？',reason:'范围缺失',progress:'只读',expiresAt:Date.now()+60000,fields:[{id:'env',label:'环境',type:'text',required:true},{id:'date',label:'日期',type:'text',required:true}]};
+ const state={jobId:event.jobId,questionId:question.questionId,provenance:event.provenance,status:'awaiting_user',contextRequest:question};
+ try{
+  await bridge.contextState(state);expect(mocks.edit).toHaveBeenCalledTimes(1);
+  const updated={...state,contextRequest:{...question,knownValues:{env:'prod'}}};
+  mocks.edit.mockRejectedValueOnce(new Error('temporary edit failure'));
+  await expect(bridge.contextState(updated)).rejects.toThrow('temporary edit failure');
+  expect(readQuestionCard(cardStateDir,question.questionId)?.rendered).toBe(false);
+  expect(await bridge.contextState(updated)).toEqual({interactive:true});
+  const saved=readQuestionCard(cardStateDir,question.questionId);
+  expect(saved).toMatchObject({messageId:'initial-card',rendered:true,question:{knownValues:{env:'prod'}}});
+  const rendered=JSON.stringify(mocks.edit.mock.calls.at(-1)?.[0].card);
+  expect(rendered).toContain('prod');expect(rendered).not.toContain('"name":"env"');expect(rendered).toContain('"name":"date"');
+  await bridge.contextState(updated);expect(mocks.edit).toHaveBeenCalledTimes(3);expect(mocks.send).not.toHaveBeenCalled();
+ }finally{await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
 it.each(['fulfilled','wrapped'])('retries a shared card after a definite %s validation rejection',async shape=>{
  const {readQuestionCard}=await import('./worker-question.js');
  const {assertFeishuApiSuccess}=await import('./api-response.js');

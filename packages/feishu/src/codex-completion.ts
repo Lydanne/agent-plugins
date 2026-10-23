@@ -360,11 +360,12 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
    const target=shared?liveTarget:binding.messageId;
    if(existing && (existing.status!=='waiting'||existing.jobId!==event.jobId))return {interactive:false};
    const buzz=(card:QuestionCard)=>urgentQuestion({cfg,stateDir,card,authorize:()=>authorizeReply(p),log:message=>api.logger.warn(message)});
-   if(existing?.rendered && (!target || target===existing.messageId)){await buzz(existing);return {interactive:true};}
+   const questionChanged=existing && JSON.stringify(existing.question.knownValues)!==JSON.stringify(event.contextRequest.knownValues);
+   if(existing?.rendered && !questionChanged && (!target || target===existing.messageId)){await buzz(existing);return {interactive:true};}
    // Legacy records without an ID also represent an unknown send outcome.
    if(existing && !existing.messageId && existing.creationState!=='retryable')return {interactive:false};
    const previousMessageId=existing?.rendered?existing.messageId:undefined;
-   const card:QuestionCard=existing?{...existing,messageId:target??existing.messageId,rendered:false}:{jobId:event.jobId,provenance:p,question:event.contextRequest,messageId:target??binding.messageId,status:'waiting'};
+   const card:QuestionCard=existing?{...existing,question:event.contextRequest,messageId:target??existing.messageId,rendered:false,...(questionChanged?{validationNote:undefined}:{})}:{jobId:event.jobId,provenance:p,question:event.contextRequest,messageId:target??binding.messageId,status:'waiting'};
    if(shared&&!existing&&!target)card.messageId='';
    // Validate locally before reserving a send: render failure cannot create a card.
    const rendered=renderQuestionCard(card);
