@@ -266,10 +266,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const release=await acquireLock(lock);
    try{
     const job=get(jobId,scope),s=this.supplement(jobId,scope,id);
-    if(!s||s.question.expiresAt<=Date.now()||!authorize(job.provenance)||['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Supplement is no longer valid');
+    if(!s||!authorize(job.provenance)||['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Supplement is no longer valid');
     if(typeof answer!=='string'||!answer.trim()||answer.length>16000)throw Error('Invalid supplement');
     if(metadata.answerValues)validateContextAnswers(s.question,metadata.answerValues);
     if(s.status!=='waiting'){if(s.answer!==answer)throw Error('Supplement already answered differently');return s;}
+    if(s.question.expiresAt<=Date.now())throw Error('Supplement is no longer valid');
     const accepted={...s,answer,answerSource:metadata.answerSource,answerValues:metadata.answerValues,answerMessageId:metadata.answerMessageId,status:'accepted',acceptedAt:Date.now()};
     writeJson(join(root,'supplements',id+'.json'),accepted);return accepted;
    }finally{release();}
@@ -277,18 +278,28 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   async processSupplements(jobId,scope,authorize,observe){
    const directory=join(root,'supplements');if(!existsSync(directory))return;
    for(const name of readdirSync(directory)){
-    let s=readJson(join(directory,name));if(s.jobId!==jobId||!['waiting','accepted','dispatched'].includes(s.status))continue;
+    let s=readJson(join(directory,name));if(s.jobId!==jobId)continue;
+    const terminalEvent=()=>({kind:'supplement_unavailable',supplementId:s.supplementId,status:s.status,reason:s.reason??'continuation_unavailable'});
+    if(['blocked','suppressed'].includes(s.status)){await observe(terminalEvent());continue;}
+    if(!['waiting','accepted','dispatched'].includes(s.status))continue;
     await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,answer:s.answer,childJobId:s.childJobId});
     if(s.status!=='accepted')continue;
     const release=await acquireLock(lock);
     try{
      const job=get(jobId,scope);s=readJson(join(directory,name));if(s.status!=='accepted')continue;
-     if(!authorize(job.provenance)||s.question.expiresAt<=Date.now()||['cancelled','failed','timed_out','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){writeJson(join(directory,name),{...s,status:'suppressed'});continue;}
+     const fail=(status,reason)=>{s={...s,status,reason,finishedAt:Date.now()};writeJson(join(directory,name),s);};
+     // Expiry limits admission, not execution of an already accepted answer.
+     if(!authorize(job.provenance)){fail('suppressed','source_invalid');continue;}
+     if(['cancelled','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){fail('suppressed','task_cancelled');continue;}
+     if(['failed','timed_out'].includes(job.status)){fail('blocked','worker_'+job.status);continue;}
      if(['running','queued','unknown'].includes(job.status))continue;
      const request=readJson(join(root,jobId+'.request.json'));
      if(request.scope!==scope||requestKeyFor(request.params,scope,job.provenance)!==job.requestKey)throw Error('Original request binding mismatch');
      const answer='原 questionId='+s.originalQuestionId+'，原问题：'+s.question.question+'\n原请求人的迟到补充，仅针对原问题，不增加授权；保留已完成结果，不重复外部操作。若当前正在等待其他问题，不把本补充当作其他问题的答案；核对仍缺信息后继续独立步骤。\n'+s.answer;
      if(waiting.has(job.status)){
+      // An answer to an older question cannot consume the current question,
+      // including its decision/authorization wait. Retain it for the next boundary.
+      if(job.contextRequest?.questionId!==s.originalQuestionId)continue;
       resumeLocked(job,request,answer,{answerSource:s.answerSource,answerMessageId:s.answerMessageId,supplementId:s.supplementId});
       writeJson(join(directory,name),{...s,status:'dispatched',childJobId:jobId});scheduleLocked();continue;
      }
@@ -297,7 +308,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      // closed if another task has since changed its binding; never start fresh.
      let output;try{output=JSON.parse(job.result?.content?.find(c=>c.type==='text')?.text);}catch{}
      const sessionId=output?.sessionId??job.resumeSessionId??job.sessionId;
-     if(!sessionId){writeJson(join(directory,name),{...s,status:'blocked',reason:'original_session_missing'});continue;}
+     if(!sessionId){fail('blocked','original_session_missing');continue;}
      const childId=s.supplementId,params={...request.params,requestId:'supplement:'+s.supplementId};
      const question={...s.question,answer,answerSource:s.answerSource,answerValues:s.answerValues,answerMessageId:s.answerMessageId,answeredAt:s.acceptedAt};
      const questions=[...(job.questions??[]),question];
@@ -305,7 +316,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      const child={jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance:job.provenance,topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
      if(!existsSync(join(root,childId+'.json'))){writeJson(join(root,childId+'.request.json'),{...request,params,resumeParams});writeJson(join(root,childId+'.json'),child);}
      writeJson(join(directory,name),{...s,status:'dispatched',childJobId:childId});scheduleLocked();
-    }finally{release();}
+    }finally{
+     release();
+     // Durable terminal records retry notification after adapter failure/restart.
+     if(['blocked','suppressed'].includes(s.status))await observe(terminalEvent());
+    }
    }
   },
   async run(params,scope,provenance){

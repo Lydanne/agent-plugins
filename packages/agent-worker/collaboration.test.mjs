@@ -119,13 +119,70 @@ for(const mode of ['fallback','unobservable','revoked','call_conflict'])test('st
  }finally{f.close();}
 });
 
-test('pending supplemental context is resumed even when the current plugin needs Main fallback',async()=>{
+test('pending supplement preserves a different plugin request until Main answers it',async()=>{
  const f=fixture('awaiting_main');try{
   const current={...f.q,questionId:randomUUID(),requestKind:'plugin',pluginCall:{callId:'manual',capability:'unregistered',arguments:{},purpose:'查询'}};
   writeJson(join(f.root,f.id+'.json'),{...f.job,contextRequest:current,questions:[{...f.q,answer:'未知',resumeReason:'user_wait_timeout'},current]});
   const s=await f.jobs.openSupplement(f.id,f.scope,f.q.questionId,()=>true);await f.jobs.submitSupplement(f.id,f.scope,s.supplementId,'补充日期',{},()=>true);
   const kinds=[];const service=createCollaborationService({root:f.root,jobs:f.jobs,bridge:{authorizeReply:()=>true,observe:async e=>kinds.push(e.kind)}});
   service.start();await service.tick();await service.tick();await service.stop();
-  const after=f.jobs.status(f.id,f.scope);assert.equal(after.status,'queued');assert.match(after.questions.at(-1).answer,/原 questionId=/);assert.ok(kinds.includes('supplement_received'));assert.ok(kinds.includes('supplement_dispatched'));
+  const after=f.jobs.status(f.id,f.scope);assert.equal(after.status,'awaiting_main');assert.deepEqual(after.contextRequest,current);assert.equal(after.questions.at(-1).answer,undefined);assert.ok(kinds.includes('supplement_received'));assert.ok(!kinds.includes('supplement_dispatched'));assert.equal(f.jobs.supplement(f.id,f.scope,s.supplementId).status,'accepted');
+ }finally{f.close();}
+});
+
+for(const waitKind of ['decision','authorization'])test('late answer preserves another human wait then resumes with both answers: '+waitKind,async()=>{
+ const f=fixture();try{
+  const current={...f.q,questionId:randomUUID(),question:'确认操作？',waitKind,waitingForUserAt:Date.now()};
+  const parent={...f.job,contextRequest:current,questions:[{...f.q,answer:'未知',resumeReason:'user_wait_timeout'},current]};writeJson(join(f.root,f.id+'.json'),parent);
+  const s=await f.jobs.openSupplement(f.id,f.scope,f.q.questionId,()=>true);await f.jobs.submitSupplement(f.id,f.scope,s.supplementId,'2026-10-23',{answerSource:'user_text'},()=>true);
+  await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});
+  assert.deepEqual(readJson(join(f.root,f.id+'.json')),parent);
+  await f.jobs.reply(f.id,f.scope,current.questionId,'用户的独立回答',p,()=>true);
+  let job=readJson(join(f.root,f.id+'.json'));assert.equal(job.questions.at(-1).answer,'用户的独立回答');
+  writeJson(join(f.root,f.id+'.json'),{...job,status:'completed',finishedAt:Date.now()});
+  await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});
+  const child=readJson(join(f.root,s.supplementId+'.request.json'));
+  assert.equal(child.resumeParams.mainReplies.find(q=>q.questionId===current.questionId).answer,'用户的独立回答');
+  assert.match(child.resumeParams.mainReplies.at(-1).answer,/2026-10-23/);assert.equal(child.params.constraints,f.params.constraints);
+ }finally{f.close();}
+});
+test('expiry only gates new submissions; accepted answers survive expiry and restart',async()=>{
+ const f=fixture('running');try{
+  const parent={...f.job,contextRequest:undefined,questions:[{...f.q,answer:'未知',resumeReason:'user_wait_timeout'}]};writeJson(join(f.root,f.id+'.json'),parent);
+  const s=await f.jobs.openSupplement(f.id,f.scope,f.q.questionId,()=>true),file=join(f.root,'supplements',s.supplementId+'.json');
+  writeJson(file,{...s,question:{...s.question,expiresAt:Date.now()-1}});
+  await assert.rejects(f.jobs.submitSupplement(f.id,f.scope,s.supplementId,'date',{},()=>true),/no longer valid/);
+  writeJson(file,s);await f.jobs.submitSupplement(f.id,f.scope,s.supplementId,'date',{},()=>true);
+  const accepted=readJson(file);writeJson(file,{...accepted,question:{...s.question,expiresAt:Date.now()-1}});
+  await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});assert.equal(readJson(file).status,'accepted');
+  writeJson(join(f.root,f.id+'.json'),{...parent,status:'completed'});
+  const restored=createJobs({root:f.root,node:process.execPath,worker:'unused'});
+  await restored.processSupplements(f.id,f.scope,()=>true,async()=>{});assert.equal(readJson(file).status,'dispatched');
+  const child=readFileSync(join(f.root,s.supplementId+'.json'),'utf8');
+  await restored.processSupplements(f.id,f.scope,()=>true,async()=>{});assert.equal(readFileSync(join(f.root,s.supplementId+'.json'),'utf8'),child);
+ }finally{f.close();}
+});
+for(const [status,reason,outcome] of [['failed','worker_failed','blocked'],['timed_out','worker_timed_out','blocked'],['cancelled','task_cancelled','suppressed'],['completed','original_session_missing','blocked']])test('terminal supplement outcome is durable, observable, and retried: '+reason,async()=>{
+ const f=fixture('running');try{
+  const parent={...f.job,contextRequest:undefined,questions:[{...f.q,answer:'未知',resumeReason:'user_wait_timeout'}]};writeJson(join(f.root,f.id+'.json'),parent);
+  const s=await f.jobs.openSupplement(f.id,f.scope,f.q.questionId,()=>true);await f.jobs.submitSupplement(f.id,f.scope,s.supplementId,'date',{},()=>true);
+  writeJson(join(f.root,f.id+'.json'),{...parent,status,resumeSessionId:undefined});
+  let fail=true;const notices=[];const opts={root:f.root,jobs:f.jobs,bridge:{authorizeReply:()=>true,observe:async e=>{if(e.kind==='supplement_unavailable'&&fail)throw Error('adapter unavailable');notices.push(e);}},logger:{warn(){}}};
+  let service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
+  assert.equal(f.jobs.supplement(f.id,f.scope,s.supplementId).status,outcome);
+  assert.equal(existsSync(join(f.root,s.supplementId+'.json')),false);
+  fail=false;service=createCollaborationService(opts);service.start();await service.tick();await service.tick();await service.stop();
+  const terminal=notices.filter(e=>e.kind==='supplement_unavailable');assert.equal(terminal.length,1);assert.equal(terminal[0].reason,reason);assert.equal(terminal[0].status,outcome);
+  const saved=Object.values(readJson(join(f.root,'collaboration',f.id+'.json')).events).find(e=>e.kind==='supplement_unavailable');assert.equal(saved.reason,reason);
+ }finally{f.close();}
+});
+
+test('legacy suppressed supplement still emits a terminal reason after upgrade',async()=>{
+ const f=fixture('completed');try{
+  const id=randomUUID();mkdirSync(join(f.root,'supplements'));
+  writeJson(join(f.root,'supplements',id+'.json'),{jobId:f.id,supplementId:id,status:'suppressed'});
+  const events=[];await f.jobs.processSupplements(f.id,f.scope,()=>true,async e=>events.push(e));
+  assert.deepEqual(events,[{kind:'supplement_unavailable',supplementId:id,status:'suppressed',reason:'continuation_unavailable'}]);
+  assert.equal(existsSync(join(f.root,id+'.json')),false);
  }finally{f.close();}
 });

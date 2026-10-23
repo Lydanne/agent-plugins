@@ -513,3 +513,5 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 超时卡新增“重新补充”。补充由原任务入口直接受理，绕过 Main 答案 FIFO；当前 `codex exec` 模式不能在运行中注入输入，宿主持久化后等待当前轮结束，再优先续接，仍遵守容量及资源/会话互斥。等待中的 job 原地恢复；已完成的 job 保留旧报告，创建带 parentJobId 的关联执行并固定原 session/model/project/constraints/resourceKeys。会话绑定已经变化时拒绝另起新会话执行。此例外不改变普通 reply 不创建 job 的规则。
 
 宿主通过 AgentWorkerObservation 将自动协作过程加入原 Main 的系统事件队列，后续 Main 轮次读取；最终完成事件也带 collaboration 摘要。过程记录不是新的用户指令。原始约束继续使用自然语言，没有新增业务授权合同；没有绕过 Main 的完成交付。
+
+已受理的迟到补充不会占用或回答另一个 pending question；另一个问题按原 reply/超时策略处理后再接续。问题有效期仅限制首次提交，已受理补充保留至执行或明确停止。原 Worker 失败、超时、取消或缺少原会话时保存终态及原因，以 `supplement_unavailable` 通知 Main 和更新补充卡；通知失败重试，不重放业务。

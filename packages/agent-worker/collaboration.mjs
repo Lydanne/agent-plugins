@@ -37,7 +37,7 @@ export function createCollaborationService({root,jobs,bridge,personCall=localPer
    const observe=async(key,event)=>{
     if(state.events[key])return;
     if(!bridge.observe)throw Error('Main observation unavailable');
-    await bridge.observe({jobId:job.jobId,provenance:p,...event});state.events[key]={kind:event.kind,at:Date.now(),callId:event.callId??event.call?.callId,questionId:event.question?.questionId,supplementId:event.supplementId,childJobId:event.childJobId};save(job.jobId,state);
+    await bridge.observe({jobId:job.jobId,provenance:p,...event});state.events[key]={kind:event.kind,at:Date.now(),callId:event.callId??event.call?.callId,questionId:event.question?.questionId,supplementId:event.supplementId,childJobId:event.childJobId,status:event.status,reason:event.reason};save(job.jobId,state);
    };
    for(const q of job.questions??[])if(q.resumeReason==='user_wait_timeout'&&q.answer!==undefined){
     await observe('timeout:'+q.questionId,{kind:'timeout_continued',question:q});

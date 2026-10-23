@@ -1217,3 +1217,32 @@ it('updates the timeout question with reopen even after the original result was 
   expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe('已交付');
  }finally{workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
+
+it.each([
+ ['worker_failed','blocked','原 Worker 执行失败'],
+ ['worker_timed_out','blocked','原 Worker 执行超时'],
+ ['task_cancelled','suppressed','原任务已取消'],
+ ['original_session_missing','blocked','原 Worker 会话不可用'],
+] as const)('reports unavailable supplements to Main and replaces the waiting card: %s',async(reason,status,label)=>{
+ const {saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{observe:(e:unknown)=>Promise<void>}})[Symbol.for('ada.codex-completion.v1')];
+ await service.start({} as Parameters<typeof service.start>[0]);
+ const card={jobId:event.jobId,provenance:event.provenance,question:{questionId:'failed-supplement',question:'日期',reason:'缺失',progress:'已查',expiresAt:Date.now()-1000},messageId:'supplement-card',status:'accepted' as const,supplementOf:'old-q',note:'2026-10-23',rendered:true};
+ saveQuestionCard(cardStateDir,card);
+ const observation={jobId:event.jobId,provenance:event.provenance,kind:'supplement_unavailable',supplementId:card.question.questionId,status,reason};
+ try{
+  mocks.edit.mockRejectedValueOnce(Error('temporary edit failure'));
+  await expect(bridge.observe(observation)).rejects.toThrow('temporary edit failure');
+  expect(readQuestionCard(cardStateDir,card.question.questionId)).toMatchObject({supplementFailure:{status,reason},rendered:false,note:'2026-10-23'});
+  await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);await service.start({} as Parameters<typeof service.start>[0]);
+  await bridge.observe(observation);
+  expect(readQuestionCard(cardStateDir,card.question.questionId)).toMatchObject({supplementFailure:{status,reason},rendered:true,note:'2026-10-23'});
+  const rendered=JSON.stringify(mocks.edit.mock.calls.at(-1)![0].card);
+  expect(rendered).toContain('补充未执行');expect(rendered).toContain(label);expect(rendered).not.toContain('将在原 Worker 当前轮次结束后接续');
+  expect(mocks.observe).toHaveBeenCalledWith(expect.stringContaining('"reason":"'+reason+'"'),expect.objectContaining({sessionKey:event.provenance.sessionKey}));
+  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.run).not.toHaveBeenCalled();
+  mocks.valid=false;const edits=mocks.edit.mock.calls.length;
+  await expect(bridge.observe(observation)).rejects.toThrow('no longer current');expect(mocks.edit).toHaveBeenCalledTimes(edits);
+ }finally{await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
