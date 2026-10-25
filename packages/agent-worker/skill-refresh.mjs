@@ -29,7 +29,7 @@ export async function refreshSkillSession({previous,current,runTurn,onApplied,si
  const revision=revisionOf(current);
  const response=await runTurn(JSON.stringify({kind:'skill_catalog_refresh',revision,root:current.root,
   catalog:current.catalog,added:plan.added,changed:plan.changed,removed:plan.removed,
-  instruction:'这是技能索引刷新轮次，不是业务任务。只更新本会话技能索引认知，不执行工具、业务操作或旧任务，不修改文件。新列表替代旧工作区索引；旧技能正文不得作为后续任务规则，后续使用时重新读取。不要声称已读取技能正文。仅返回 JSON：{"status":"catalog_applied","revision":"本轮 revision 原值"}。'}),{refresh:true});
+  instruction:'这是技能索引刷新轮次，不是业务任务。只更新本会话技能索引认知，不执行工具、业务操作或旧任务，不修改文件。新列表替代旧工作区索引；旧技能正文不得作为后续任务规则，后续使用时重新读取。不要声称已读取技能正文。仅返回 JSON：{"status":"catalog_applied","revision":"本轮 revision 原值"}。'}),{refresh:true,outputSchema:{type:'object',properties:{status:{type:'string',enum:['catalog_applied']},revision:{type:'string',enum:[revision]}},required:['status','revision'],additionalProperties:false}});
  signal?.throwIfAborted();
  let ack;try{ack=JSON.parse(response);}catch{throw Error('Skill refresh was not acknowledged; user task was not started');}
  if(ack.status!=='catalog_applied'||ack.revision!==revision)throw Error('Skill revision acknowledgement mismatch; user task was not started');

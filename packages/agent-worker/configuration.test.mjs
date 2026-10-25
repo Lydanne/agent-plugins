@@ -397,3 +397,14 @@ test('an unconfigured worker exposes history and rejects new work before admissi
  await assert.rejects(tool.execute('',{action:'run',topic:'unconfigured',task:'read',context:'none',constraints:'read only'}),/MODEL_NOT_CONFIGURED/);
  await assert.rejects(readFile(join(config.cwd,'seen.jsonl')),/ENOENT/);
 });
+
+test('skill acknowledgement schema applies to new and resumed refresh turns only',()=>{
+ const config=resolveConfiguration();
+ for(const threadId of [undefined,'00000000-0000-0000-0000-000000000001']){
+  const args=cliArguments(config,{refresh:true,threadId,outputSchemaPath:'/tmp/schema path.json'});
+  assert.equal(args[args.indexOf('--output-schema')+1],'/tmp/schema path.json');
+  assert.ok(args.includes('read-only'));
+  if(threadId)assert.ok(args.indexOf('--output-schema')>args.indexOf('resume'));
+ }
+ assert.ok(!cliArguments(config,{outputSchemaPath:'/tmp/schema.json'}).includes('--output-schema'));
+});

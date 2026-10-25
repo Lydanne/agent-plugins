@@ -107,7 +107,7 @@ export function executionFingerprint(config,{policyVersion}={}) {
  if(JSON.stringify(value)===JSON.stringify(keys.map(k=>[k,baseline[k]])))return undefined;
  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
-export function cliArguments(config,{refresh=false,threadId}={}) {
+export function cliArguments(config,{refresh=false,threadId,outputSchemaPath}={}) {
  if(config.harness!==undefined&&config.harness!=='codex')throw Error('Unsupported harness');
  const policy=refresh?['--sandbox','read-only']:config.approvalMode==='dangerously-bypass-approvals-and-sandbox'
   ?['--dangerously-bypass-approvals-and-sandbox']:['--sandbox',config.approvalMode];
@@ -115,5 +115,5 @@ export function cliArguments(config,{refresh=false,threadId}={}) {
  return ['exec','--cd',config.cwd,...policy,'-c','developer_instructions='+JSON.stringify(instructions),
   '-c','model_reasoning_effort='+JSON.stringify(config.reasoningEffort),
   ...(config.speed?['-c','service_tier='+JSON.stringify(config.speed)]:[]),'--model',config.model,
-  ...(threadId?['resume',threadId]:[]),'--json','-'];
+  ...(threadId?['resume',threadId]:[]),...(refresh&&outputSchemaPath?['--output-schema',outputSchemaPath]:[]),'--json','-'];
 }

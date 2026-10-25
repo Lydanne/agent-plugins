@@ -23,10 +23,11 @@ import {sourceTaskBridge,hasSourceProvenance,bindSourceTask,taskProvenance,remem
 import {createJobs} from './jobs.mjs';
 import {asyncRunRequested,waitForQueryJob,discoverTopics} from './dispatch-policy.mjs';
 import {fileURLToPath} from 'node:url';
-import {delimiter} from 'node:path';
+import {delimiter,join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {StringDecoder} from 'node:string_decoder';
 import {spawn} from 'node:child_process';
-import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,rename,mkdtemp,rm} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
 let configuration=resolveConfiguration();
 let hostConfiguration=()=>({});
@@ -119,8 +120,18 @@ export async function executeQuery(params,context={},runtime=configuration){
   mainSkillNotifiedRevision=resumeId?entry?.mainSkillNotifiedRevision:undefined;
   const collaborationSkill=await mainSkillNotice(config.mainCapabilitySkill,mainSkillNotifiedRevision,config.projectContext?.agentId);
   const deadline=Date.now()+config.timeoutMs;
-  const runTurn=async(prompt,{refresh=false}={})=>new Promise((resolve,reject)=>{
-  const args=cliArguments(config,{refresh,threadId});
+  const runTurn=async(prompt,{refresh=false,outputSchema}={})=>{
+  let schemaDirectory;
+  try{
+   let outputSchemaPath;
+   if(refresh&&outputSchema){
+    schemaDirectory=await mkdtemp(join(tmpdir(),'agent-worker-skill-ack-'));
+    outputSchemaPath=join(schemaDirectory,'response.schema.json');
+    await writeFile(outputSchemaPath,JSON.stringify(outputSchema),{mode:0o600});
+   }
+   context.signal?.throwIfAborted();
+   return await new Promise((resolve,reject)=>{
+  const args=cliArguments(config,{refresh,threadId,outputSchemaPath});
   const child=spawn(cli,args,{cwd,detached:true,stdio:['pipe','pipe','pipe'],env:{...workerEnvironment(),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})}});
   if(config.workspace&&child.pid)context.onProgress?.({executionPid:child.pid});
   const decoder=new StringDecoder('utf8');
@@ -146,6 +157,8 @@ export async function executeQuery(params,context={},runtime=configuration){
   child.stdin.on('error',()=>{});
   child.stdin.end(prompt);
  });
+  }finally{if(schemaDirectory)await rm(schemaDirectory,{recursive:true,force:true});}
+ };
   if(revisionOf(skillsSnapshot)!==revisionOf(currentSkills))context.onProgress?.({skillsStatus:'refreshing',targetSkillsRevision:revisionOf(currentSkills)});
   try {if(currentSkills)await refreshSkillSession({previous:skillsSnapshot,current:currentSkills,runTurn,signal:context.signal,
     onApplied:async snapshot=>{skillsSnapshot=snapshot;await persistBinding();context.onProgress?.({appliedSkillsRevision:revisionOf(snapshot),skillsStatus:'catalog_applied'});}});}catch(error){skillsRefreshFailed=!context.signal?.aborted;throw error;}

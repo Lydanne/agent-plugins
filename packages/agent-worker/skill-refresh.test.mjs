@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {existsSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {refreshSkillSession,skillRefreshPlan,revisionOf,readSkillVersion,skillTaskContext} from './skill-refresh.mjs';
 import {mkdtemp,mkdir,writeFile,rm,chmod} from 'node:fs/promises';
@@ -18,6 +19,7 @@ test('refreshes before business execution, acknowledges exact pinned version onl
  const order=[],current=v('2');let applied;
  await refreshSkillSession({previous:v('1'),current,runTurn:async(prompt,options)=>{
   order.push('refresh');assert.equal(options.refresh,true);const input=JSON.parse(prompt);
+  assert.deepEqual(options.outputSchema,{type:'object',properties:{status:{type:'string',enum:['catalog_applied']},revision:{type:'string',enum:[input.revision]}},required:['status','revision'],additionalProperties:false});
   assert.deepEqual(input.changed,['skills/a/SKILL.md']);assert.equal(input.task,undefined);
   return JSON.stringify({status:'catalog_applied',revision:input.revision});
  },onApplied:async s=>{applied=s;order.push('persist');}});
@@ -26,7 +28,7 @@ test('refreshes before business execution, acknowledges exact pinned version onl
  assert.equal(skillRefreshPlan(applied,v('3')).needsUpdate,true);
 });
 test('bad acknowledgement and cancellation never advance state; unchanged skips refresh',async()=>{
- for(const result of ['not JSON',JSON.stringify({status:'catalog_applied',revision:'wrong'})]) {
+ for(const result of ['not JSON',JSON.stringify({status:'catalog_applied',revision:'wrong'}),JSON.stringify({status:'catalog_applied',revision:revisionOf(v('1')).slice(1)})]) {
   let saved=false;await assert.rejects(refreshSkillSession({current:v('1'),runTurn:async()=>result,onApplied:async()=>{saved=true;}}));assert.equal(saved,false);
  }
  const controller=new AbortController();let saved=false;
@@ -64,10 +66,16 @@ if(developer.includes('本轮仅确认技能索引，禁止工具调用和业务
 console.log(JSON.stringify({type:'thread.started',thread_id:id}));
 if(prompt.kind==='skill_catalog_refresh'){
  if(!args.includes('read-only'))process.exit(3);
+ if(!args.includes('--output-schema'))process.exit(12);
+ const schemaPath=args[args.indexOf('--output-schema')+1];
+ const schema=JSON.parse(fs.readFileSync(schemaPath,'utf8'));
+ if(schema.properties.revision.enum[0]!==prompt.revision)process.exit(13);
+ fs.appendFileSync(${JSON.stringify(join(root,'schema-paths'))},schemaPath+'\\n');
  if(mode.tool)console.log(JSON.stringify({type:'item.completed',item:{type:'command_execution',exit_code:0}}));
  if(mode.bump)fs.writeFileSync(${JSON.stringify(join(state,'skill-versions',hash(root)+'.json'))},JSON.stringify(mode.bump));
  console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({status:'catalog_applied',revision:mode.bad?'wrong':prompt.revision})}}));
 }else{
+ if(args.includes('--output-schema'))process.exit(14);
  if(!args.includes('resume')||!prompt.skills||prompt.kind!=='business_task')process.exit(4);
  if(prompt.task==='memory-check' && (prompt.memory?.status!=='matched' || prompt.memory.items[0].source!=='memory/fixture.md:1' || !prompt.memoryPolicy))process.exit(5);
  if(!prompt.memory || !prompt.experienceInstructions)process.exit(6);
@@ -116,6 +124,9 @@ if(prompt.kind==='skill_catalog_refresh'){
   await assert.rejects(executeQuery({...params,task:'success'},context,runtime),/Skills changed during refresh/);
   entry=Object.values(JSON.parse(await readFile(file,'utf8'))).find(entry=>entry.topic==='one');assert.equal(entry.skillsSnapshot.skills,hash('4'));
   assert.equal(JSON.parse((await executeQuery({action:'list'},context,runtime)).content[0].text).tasks[0].needsSkillsUpdate,true);
+  const schemaPaths=(await readFile(join(root,'schema-paths'),'utf8')).trim().split('\n');
+  assert.ok(schemaPaths.length>=4);
+  for(const path of schemaPaths)assert.equal(existsSync(path),false,'temporary schema must be removed after success or failure');
   await rm(join(root,'mode')); // concurrent topics share a binding file, not an execution lock
   await Promise.all(['parallel-a','parallel-b','parallel-c'].map(topic=>executeQuery({...params,topic,task:'success'},context,runtime)));
   const bindings=JSON.parse(await readFile(file,'utf8'));
