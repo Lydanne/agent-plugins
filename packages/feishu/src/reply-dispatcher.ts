@@ -1878,6 +1878,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     delivery,
     replyOptions: {
       onModelSelected,
+      // A working card owns the source reply and needs the host's final payload.
+      // New hosts default external channels to message-tool-only delivery, which
+      // bypasses this dispatcher and otherwise leaves its card falsely empty.
+      ...(workingCardEnabled ? { sourceReplyDeliveryMode: "automatic" as const } : {}),
       suppressDefaultToolProgressMessages: workingCardEnabled || undefined,
       suppressToolProgressMessages: workingCardEnabled || undefined,
       allowToolLifecycleWhenProgressHidden: workingCardEnabled || undefined,

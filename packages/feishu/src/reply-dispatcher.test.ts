@@ -441,6 +441,26 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
   }
 
+  it.each([false, true])("delivers the final into the working card when the host defaults to message tools (group=%s)", async (isGroup) => {
+    const { result, options } = useWorkingCard({ isGroup });
+    await options.onReplyStart?.();
+    // Model the host's public mode selection: an explicit channel request takes
+    // precedence over the external-channel message-tool default.
+    const mode = (result.replyOptions as { sourceReplyDeliveryMode?: string }).sourceReplyDeliveryMode ?? "message_tool_only";
+    if (mode === "automatic") {
+      await options.deliver({ text: "查询完成，结果正常。" }, { kind: "final" });
+    }
+    await options.onIdle?.();
+    expect(JSON.stringify(editMessageFeishuMock.mock.calls)).toContain("查询完成，结果正常。");
+    expect(JSON.stringify(editMessageFeishuMock.mock.calls)).not.toContain("未产生可展示的结果");
+    expect(result.getVisibleReplyState().visibleReplySent).toBe(true);
+  });
+
+  it("preserves the host reply mode when a working card is not active", () => {
+    const { result } = useWorkingCard({ suppressPreview: true });
+    expect((result.replyOptions as { sourceReplyDeliveryMode?: string }).sourceReplyDeliveryMode).toBeUndefined();
+  });
+
 
 
   it('exposes only the live working placeholder as the trusted question target',async()=>{

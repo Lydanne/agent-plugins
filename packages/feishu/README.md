@@ -2,6 +2,8 @@
 
 本仓库维护的官方 Feishu 衍生版，插件 ID 为 `feishu-conversation`，通道 ID 仍为 `feishu`。支持飞书/Lark 消息、群历史与引用上下文、接话窗口、工作卡片、后台结果及本地报告转飞书文档。上游来源见 [UPSTREAM.md](https://github.com/Lydanne/agent-plugins/blob/main/UPSTREAM.md)。
 
+工作卡启用并实际接管本轮回复时，通过公开 `sourceReplyDeliveryMode: automatic` 请求宿主把最终回复交给卡片，兼容默认使用消息工具交付的新版宿主，避免正常结束后误报“未产生可展示的结果”。未创建工作卡的回合保留宿主回复模式；此选项不改变发送权限、撤回和后台任务规则。
+
 ## 安装与首次接入
 
 从本仓库构建打包后使用 `openclaw plugins install /absolute/<feishu-package>.tgz`。不要使用 `openclaw plugins install @openclaw/feishu` 来安装此衍生版。完整构建、隔离安装、配置补丁及验收流程见 [OpenClaw 接入指南](https://github.com/Lydanne/agent-plugins/blob/main/docs/openclaw-setup.md)。
