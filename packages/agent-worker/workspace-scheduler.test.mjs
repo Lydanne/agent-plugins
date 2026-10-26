@@ -56,3 +56,28 @@ test('settlement claims survive scheduler instances and gate continuations until
  unblock();await until(()=>first.status(j.jobId,'a').workspaceSettled===true);
  await until(()=>{second.tick();return existsSync(join(f.root,childId+'.input'));});assert.equal(releases,1);
 });
+
+test('blocked settlement backs off and recovers legacy settled records without rerunning the old job',async t=>{
+ const f=fixture(t);let calls=0,available=true;
+ const jobs=f.start({prepareWorkspace:async(runtime,owner)=>available?{...runtime,workspace:{id:'xgj-0',assignmentId:owner,owner},cwd:f.root}:null,
+  settleWorkspace:async()=>{calls++;if(calls===1)return {status:'blocked',releaseFailure:{repository:'wiki',stage:'fetch',code:'FETCH_FAILED',retryable:true}};available=true;return {status:'idle'};}});
+ const original=await jobs.run({...params,useWorkspace:true},'a');
+ await until(()=>{jobs.tick();return existsSync(join(f.root,original.jobId+'.input'));});available=false;f.finish(original.jobId);
+ await until(()=>jobs.status(original.jobId,'a').status==='completed');await delay(70);
+ await until(()=>{jobs.tick();return jobs.status(original.jobId,'a').workspaceRelease==='blocked';});
+ const failed=jobs.status(original.jobId,'a');assert.equal(failed.workspaceSettled,false);assert.equal(failed.workspaceReleaseFailure.repository,'wiki');assert.ok(failed.workspaceReleaseRetryAt>Date.now());
+ for(let i=0;i<10;i++)jobs.tick();await delay(30);assert.equal(calls,1);
+ const next=await jobs.run({...params,topic:'next',useWorkspace:true},'b');assert.equal(next.status,'queued');
+ const file=join(f.root,original.jobId+'.json'),legacy=JSON.parse(readFileSync(file));legacy.workspaceSettled=true;legacy.workspaceReleaseRetryAt=Date.now()-1;writeFileSync(file,JSON.stringify(legacy));
+ await until(()=>{jobs.tick();return jobs.status(original.jobId,'a').workspaceRelease==='idle';});
+ await until(()=>{jobs.tick();return existsSync(join(f.root,next.jobId+'.input'));});
+ assert.equal(calls,2);assert.equal(jobs.status(original.jobId,'a').status,'completed');assert.equal(jobs.status(original.jobId,'a').workspaceReleaseRetryAt,undefined);
+});
+test('settlement exceptions are rate limited instead of retried on every scheduler tick',async t=>{
+ const f=fixture(t);let calls=0;
+ const jobs=f.start({prepareWorkspace:async(runtime,owner)=>({...runtime,workspace:{id:'xgj-0',assignmentId:owner,owner},cwd:f.root}),settleWorkspace:async()=>{calls++;throw Error('private remote detail');}});
+ const j=await jobs.run({...params,useWorkspace:true},'a');await until(()=>{jobs.tick();return existsSync(join(f.root,j.jobId+'.input'));});f.finish(j.jobId);
+ await until(()=>jobs.status(j.jobId,'a').status==='completed');await delay(70);
+ await until(()=>{jobs.tick();return jobs.status(j.jobId,'a').workspaceReleaseRetryAt>Date.now();});
+ for(let i=0;i<10;i++)jobs.tick();await delay(30);assert.equal(calls,1);assert.equal(JSON.stringify(jobs.status(j.jobId,'a')).includes('private remote detail'),false);
+});

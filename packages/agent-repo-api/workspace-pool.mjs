@@ -79,19 +79,33 @@ export async function allocateWorkspace(plan,owner,expected){
    slot={id,index,path,projectId:plan.projectId,dependencies:{}};state.workspaces[id]=slot;
   }
   if(slot.repositories&&JSON.stringify(slot.repositories.map(r=>[r.path,r.url]))!==JSON.stringify(plan.repositories.map(r=>[r.path,r.url])))throw Error('Workspace repository layout changed; inspect preserved directory');
-  Object.assign(slot,{owner,assignmentId:randomUUID(),status:'preparing',preparerPid:process.pid,repositories:plan.repositories,branch:'codex/worker-'+owner.slice(0,36),target:plan.target,createdAt:Date.now()});delete slot.error;
+  Object.assign(slot,{owner,assignmentId:randomUUID(),status:'preparing',preparerPid:process.pid,repositories:plan.repositories,branch:'codex/worker-'+owner.slice(0,36),target:plan.target,createdAt:Date.now()});delete slot.error;delete slot.releaseFailure;
   return {...structuredClone(slot),needsPreparation:true};
  });
 }
 async function update(plan,lease,fn){return transaction(plan.root,state=>{const s=state.workspaces[lease.id];if(!s||s.assignmentId!==lease.assignmentId||s.owner!==lease.owner)throw Error('Workspace assignment changed');fn(s);return structuredClone(s);});}
+const legacyReleaseError='Workspace has uncommitted, unpushed or unverifiable changes; preserved';
+const releaseBlocked=s=>s.status==='blocked'&&(s.releaseFailure||s.error===legacyReleaseError);
+function checkFailure(code,stage,retryable=false){return Object.assign(new Error(code),{releaseFailure:{code,stage,retryable}});}
 async function cleanRepository(path,{published=false}={}){
- if(await poolGit(path,['status','--porcelain=v1','--untracked-files=all','--ignore-submodules=all']))throw Error('Workspace has uncommitted files; preserved');
- for(const name of ['MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply'])if(await exists(resolve(path,await poolGit(path,['rev-parse','--git-path',name]))))throw Error('Workspace has unfinished Git operation');
- if(published){
-  const head=await poolGit(path,['rev-parse','HEAD']);
-  // Refresh actual remote refs: a successful local commit is not proof of push.
-  await poolGit(path,['fetch','--prune','origin']);
-  if(!(await poolGit(path,['branch','-r','--contains',head])).split('\n').some(s=>s.trim().startsWith('origin/')&&!s.includes(' -> ')))throw Error('Workspace has unpushed commits; preserved');
+ let stage='worktree';
+ try{
+  if(await poolGit(path,['status','--porcelain=v1','--untracked-files=all','--ignore-submodules=all']))throw checkFailure('WORKTREE_DIRTY',stage);
+  stage='git-operation';
+  for(const name of ['MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply'])if(await exists(resolve(path,await poolGit(path,['rev-parse','--git-path',name]))))throw checkFailure('GIT_OPERATION_PENDING',stage);
+  if(published){
+   const head=await poolGit(path,['rev-parse','HEAD']);
+   stage='fetch';
+   // Every repository is checked separately. Recursive fetch may contact unrelated
+   // submodules or race another repository's check, without proving HEAD published.
+   await poolGit(path,['fetch','--no-recurse-submodules','--prune','origin']);
+   stage='published-head';
+   if(!(await poolGit(path,['branch','-r','--contains',head])).split('\n').some(s=>s.trim().startsWith('origin/')&&!s.includes(' -> ')))throw checkFailure('HEAD_NOT_ON_ORIGIN',stage);
+  }
+ }catch(error){
+  if(error.releaseFailure)throw error;
+  // Never persist stderr/command lines: remote URLs and helpers can expose credentials.
+  throw checkFailure(stage==='fetch'?(error.killed?'FETCH_TIMEOUT':'FETCH_FAILED'):'GIT_CHECK_FAILED',stage,true);
  }
 }
 async function installDependencies(cwd){
@@ -139,7 +153,7 @@ export async function prepareWorkspace(plan,lease,{install=installDependencies}=
 }
 export async function validateWorkspace(plan,lease,{settling=false}={}){
  const s=await transaction(plan.root,state=>structuredClone(state.workspaces[lease.id]));
- if(!s||s.assignmentId!==lease.assignmentId||s.owner!==lease.owner||!(settling?['ready','running','held','checking']:['ready','running','held']).includes(s.status))throw Error('Workspace assignment is not executable');
+ if(!s||s.assignmentId!==lease.assignmentId||s.owner!==lease.owner||!((settling?['ready','running','held','checking','idle']:['ready','running','held']).includes(s.status)||(settling&&releaseBlocked(s))))throw Error('Workspace assignment is not executable');
  if(await safePath(plan.root,'workspace/'+s.id)!==s.path||await realpath(s.path)!==s.path)throw Error('Workspace path changed');
  for(const repo of s.repositories){const cwd=repo.path==='.'?s.path:await safePath(s.path,repo.path);
   if(await realpath(await poolGit(cwd,['rev-parse','--show-toplevel']))!==cwd||await poolGit(cwd,['remote','get-url','origin'])!==repo.url)throw Error('Workspace repository identity changed');
@@ -150,11 +164,18 @@ export async function validateWorkspace(plan,lease,{settling=false}={}){
 export async function markWorkspace(plan,lease,status){return update(plan,lease,s=>{if(!['ready','running','held'].includes(s.status))throw Error('Workspace is not available for execution');s.status=status;if(status==='running'){s.workerPid=process.pid;s.workerStartedAt=Date.now();}});}
 export async function releaseWorkspace(plan,lease){
  // Caller has confirmed no live Worker; assignment fencing prevents stale release.
- await update(plan,lease,s=>{if(s.status==='blocked')throw Error(s.error);s.status='checking';});
+ // Revalidate identity even when retrying a previously blocked release.
+ lease=await validateWorkspace(plan,lease,{settling:true});
+ if(lease.status==='idle')return lease;
+ await update(plan,lease,s=>{s.status='checking';});
+ let repository='.';
  try{
-  for(const repo of lease.repositories)await cleanRepository(repo.path==='.'?lease.path:join(lease.path,repo.path),{published:true});
-  return await update(plan,lease,s=>{s.status='idle';s.releasedAt=Date.now();});
- }catch{ return update(plan,lease,s=>{s.status='blocked';s.error='Workspace has uncommitted, unpushed or unverifiable changes; preserved';}); }
+  for(const repo of lease.repositories){repository=repo.path;await cleanRepository(repo.path==='.'?lease.path:join(lease.path,repo.path),{published:true});}
+  return await update(plan,lease,s=>{s.status='idle';s.releasedAt=Date.now();delete s.error;delete s.releaseFailure;});
+ }catch(error){
+  const failure={repository,...(error.releaseFailure??{code:'GIT_CHECK_FAILED',stage:'validation',retryable:true}),checkedAt:Date.now()};
+  return update(plan,lease,s=>{s.status='blocked';s.releaseFailure=failure;s.error=`Workspace release blocked: ${failure.repository} (${failure.stage}: ${failure.code}); preserved`;});
+ }
 }
 
 // Pool capacity is operational configuration; changing it does not replace a task's project identity.

@@ -140,7 +140,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   for(const job of all.filter(queued)){
    if(existsSync(join(root,job.jobId+'.cancel'))){Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);}
   }
-  for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&!j.workspaceSettled)){
+  for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&(!j.workspaceSettled||j.workspaceRelease==='blocked')&&(!j.workspaceReleaseRetryAt||j.workspaceReleaseRetryAt<=Date.now()))){
    if(workspaceOperations.has(job.jobId)||!settleWorkspace||all.some(other=>sameWorkspace(job,other)&&settlementActive(other)))continue;
    const processFile=join(root,job.jobId+'.process.json');
    if(existsSync(processFile)&&processAlive(readJson(processFile).pid))continue;
@@ -154,9 +154,16 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    void Promise.resolve().then(()=>settleWorkspace(request.runtime)).then(async result=>{
     const release=await acquireLock(lock);try{
      const current=readJson(join(root,job.jobId+'.json'));if(current.workspaceSettlement?.token!==token)return;
-     for(const related of files().filter(j=>sameWorkspace(j,job)&&['completed','failed','timed_out','cancelled'].includes(j.status))){delete related.workspaceSettlement;writeJson(join(root,related.jobId+'.json'),{...related,workspaceSettled:true,workspaceRelease:result?.status??'preserved'});}
+     for(const related of files().filter(j=>sameWorkspace(j,job)&&['completed','failed','timed_out','cancelled'].includes(j.status))){
+      delete related.workspaceSettlement;
+      const settled=result?.status==='idle',attempts=(related.workspaceReleaseAttempts??0)+1;
+      const updated={...related,workspaceSettled:settled,workspaceRelease:result?.status??'preserved',workspaceReleaseAttempts:attempts};
+      if(settled){delete updated.workspaceReleaseRetryAt;delete updated.workspaceReleaseFailure;}
+      else{updated.workspaceReleaseFailure=result?.releaseFailure??{code:'RELEASE_UNCONFIRMED',stage:'settlement'};updated.workspaceReleaseRetryAt=Date.now()+Math.min(300000,30000*2**Math.min(attempts-1,4));}
+      writeJson(join(root,related.jobId+'.json'),updated);
+     }
     }finally{release();}
-   }).catch(async()=>{const release=await acquireLock(lock);try{const current=readJson(join(root,job.jobId+'.json'));if(current.workspaceSettlement?.token===token){delete current.workspaceSettlement;writeJson(join(root,job.jobId+'.json'),current);}}finally{release();}}).finally(()=>workspaceOperations.delete(job.jobId)).catch(()=>{});
+   }).catch(async()=>{const release=await acquireLock(lock);try{const current=readJson(join(root,job.jobId+'.json'));if(current.workspaceSettlement?.token===token){for(const related of files().filter(j=>sameWorkspace(j,job)&&['completed','failed','timed_out','cancelled'].includes(j.status))){delete related.workspaceSettlement;related.workspaceReleaseRetryAt=Date.now()+300000;related.workspaceReleaseFailure={code:'WORKSPACE_VALIDATION_FAILED',stage:'identity'};writeJson(join(root,related.jobId+'.json'),related);}}}finally{release();}}).finally(()=>workspaceOperations.delete(job.jobId)).catch(()=>{});
   }
   // Old releases use a global admission directory. Never bypass their worker.
   if(legacyBusy())return;

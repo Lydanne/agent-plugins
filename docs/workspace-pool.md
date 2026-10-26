@@ -1,5 +1,13 @@
 # Worker 独立 clone 工作区池
 
+## 释放失败与安全复检
+
+任务结束不等于工作区释放。释放逐仓核对身份、未提交内容、进行中的 Git 操作和实际远端分支覆盖；fetch 不递归子模块，因为每个登记仓库会单独检查。检查失败时保留现场，不 reset、stash、强推或删除文件。
+
+失败记录 `releaseFailure.repository/stage/code/retryable/checkedAt`，不保存可能携带凭据的 Git stderr 或完整命令。只有确认 idle 才写 `workspaceSettled=true`；blocked 仍占容量，但从 30 秒起指数退避、最多每 5 分钟重新检查，通过后释放并继续原排队任务。未提交、未推送和未结束 Git 操作不会因重试而被自动清理。身份核验异常按 5 分钟间隔重试，不绕过 assignment 和进程存活检查。
+
+兼容旧的 `workspaceSettled=true, workspaceRelease=blocked` 记录，仅复检释放状态，不重放业务。旧通用释放错误可复检；初始化失败的 blocked 不因此变成可复用。仍有活动进程、同分配的续接任务或另一释放操作时不释放。
+
 `agent_worker action=run` 可选 `useWorkspace: true`。省略或 false 保持原执行流程；true 必须选择已启用池的项目，不允许回退共享源目录。它选择执行环境，不提供额外业务、Git 发布或合并授权。代码任务仍须在 task/constraints 中明确允许，并遵守项目与 Agent 的角色约束。
 
 ## 配置与目录
