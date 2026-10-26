@@ -84,7 +84,7 @@ test('release failures retain safe stage diagnostics and recover after remote re
  const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
  const {rename}=await import('node:fs/promises');await rename(f.remote,f.remote+'.offline');
  const blocked=await releaseWorkspace(f.plan,slot);
- assert.equal(blocked.status,'blocked');assert.equal(blocked.releaseFailure.repository,'.');assert.equal(blocked.releaseFailure.stage,'fetch');assert.equal(blocked.releaseFailure.code,'FETCH_FAILED');assert.equal(blocked.releaseFailure.retryable,true);
+ assert.equal(blocked.status,'blocked');assert.equal(blocked.releaseFailure.repository,'.');assert.equal(blocked.releaseFailure.stage,'remote-refs');assert.equal(blocked.releaseFailure.code,'REMOTE_REFS_FAILED');assert.equal(blocked.releaseFailure.retryable,true);
  assert.equal(blocked.error.includes(f.remote),false);
  await rename(f.remote+'.offline',f.remote);
  assert.equal((await releaseWorkspace(f.plan,slot)).status,'idle');
@@ -110,4 +110,19 @@ test('release retry refuses changed remote identity rather than treating its ref
  await writeFile(join(slot.path,'code.txt'),'preserve');await releaseWorkspace(f.plan,slot);
  await poolGit(slot.path,['remote','set-url','origin',f.remote+'.other']);
  await assert.rejects(releaseWorkspace(f.plan,slot),/identity/);assert.equal(await readFile(join(slot.path,'code.txt'),'utf8'),'preserve');
+});
+
+test('release fetches only a moved relevant branch, not unrelated remote history',async t=>{
+ const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await writeFile(join(f.source,'code.txt'),'remote advancement');await commit(f.source);await poolGit(f.source,['push']);
+ await poolGit(f.source,['switch','-c','unrelated']);await writeFile(join(f.source,'unrelated.txt'),'unrelated history');const other=await commit(f.source);await poolGit(f.source,['push','origin','HEAD:refs/heads/unrelated']);
+ assert.equal((await releaseWorkspace(f.plan,slot)).status,'idle');
+ await assert.rejects(poolGit(slot.path,['cat-file','-e',other+'^{commit}']));
+});
+test('a rewritten remote cannot validate a stale containing branch',async t=>{
+ const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await writeFile(join(slot.path,'code.txt'),'local change');await commit(slot.path);await poolGit(slot.path,['push','origin','HEAD:refs/heads/'+slot.branch]);
+ // Rewriting a disposable local test remote models a branch changed elsewhere.
+ await poolGit(f.source,['push','--force','origin','main:refs/heads/'+slot.branch]);
+ assert.equal((await releaseWorkspace(f.plan,slot)).releaseFailure.code,'HEAD_NOT_ON_ORIGIN');
 });

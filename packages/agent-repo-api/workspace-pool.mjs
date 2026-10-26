@@ -87,7 +87,7 @@ async function update(plan,lease,fn){return transaction(plan.root,state=>{const 
 const legacyReleaseError='Workspace has uncommitted, unpushed or unverifiable changes; preserved';
 const releaseBlocked=s=>s.status==='blocked'&&(s.releaseFailure||s.error===legacyReleaseError);
 function checkFailure(code,stage,retryable=false){return Object.assign(new Error(code),{releaseFailure:{code,stage,retryable}});}
-async function cleanRepository(path,{published=false}={}){
+async function cleanRepository(path,{published=false,baseBranch}={}){
  let stage='worktree';
  try{
   if(await poolGit(path,['status','--porcelain=v1','--untracked-files=all','--ignore-submodules=all']))throw checkFailure('WORKTREE_DIRTY',stage);
@@ -95,17 +95,29 @@ async function cleanRepository(path,{published=false}={}){
   for(const name of ['MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply'])if(await exists(resolve(path,await poolGit(path,['rev-parse','--git-path',name]))))throw checkFailure('GIT_OPERATION_PENDING',stage);
   if(published){
    const head=await poolGit(path,['rev-parse','HEAD']);
-   stage='fetch';
-   // Every repository is checked separately. Recursive fetch may contact unrelated
-   // submodules or race another repository's check, without proving HEAD published.
-   await poolGit(path,['fetch','--no-recurse-submodules','--prune','origin']);
-   stage='published-head';
-   if(!(await poolGit(path,['branch','-r','--contains',head])).split('\n').some(s=>s.trim().startsWith('origin/')&&!s.includes(' -> ')))throw checkFailure('HEAD_NOT_ON_ORIGIN',stage);
+   stage='remote-refs';
+   const remote=new Map((await poolGit(path,['ls-remote','--heads','origin'])).split('\n').filter(Boolean).map(row=>{const [sha,ref]=row.split(/\s+/);return [ref.replace(/^refs\/heads\//,''),sha];}));
+   if([...remote.values()].includes(head))return;
+   const containing=(await poolGit(path,['for-each-ref','--contains='+head,'--format=%(refname:strip=3) %(objectname)','refs/remotes/origin/'])).split('\n').filter(Boolean).map(row=>row.split(' '));
+   // Local ancestry is evidence only while the current remote tip still matches.
+   if(containing.some(([branch,sha])=>remote.get(branch)===sha))return;
+   const branch=await poolGit(path,['branch','--show-current']);
+   const candidates=[...new Set([branch,baseBranch,...containing.map(([name])=>name)].filter(name=>name&&remote.has(name)))];
+   for(const candidate of candidates){
+    stage='fetch';
+    // Fetch only evidence needed for this HEAD. Whole-repository fetch can pull
+    // large unrelated histories and repeatedly exhaust the release timeout.
+    await poolGit(path,['fetch','--no-tags','--no-recurse-submodules','origin','refs/heads/'+candidate]);
+    stage='published-head';
+    try{await poolGit(path,['merge-base','--is-ancestor',head,'FETCH_HEAD']);return;}catch(error){if(error.code!==1)throw error;}
+   }
+   throw checkFailure('HEAD_NOT_ON_ORIGIN',stage);
+
   }
  }catch(error){
   if(error.releaseFailure)throw error;
   // Never persist stderr/command lines: remote URLs and helpers can expose credentials.
-  throw checkFailure(stage==='fetch'?(error.killed?'FETCH_TIMEOUT':'FETCH_FAILED'):'GIT_CHECK_FAILED',stage,true);
+  throw checkFailure(stage==='fetch'?(error.killed?'FETCH_TIMEOUT':'FETCH_FAILED'):stage==='remote-refs'?(error.killed?'REMOTE_REFS_TIMEOUT':'REMOTE_REFS_FAILED'):'GIT_CHECK_FAILED',stage,true);
  }
 }
 async function installDependencies(cwd){
@@ -129,7 +141,7 @@ export async function prepareWorkspace(plan,lease,{install=installDependencies}=
     if(top!==dest){
      const {readdir}=await import('node:fs/promises');if((await readdir(dest)).length)throw Error('Workspace repository is not independent');
      await poolGit(dirname(dest),['clone','--no-hardlinks','--no-checkout','--',repo.source,dest]);await poolGit(dest,['remote','set-url','origin',repo.url]);
-    }else await cleanRepository(dest,{published:true});
+    }else await cleanRepository(dest,{published:true,baseBranch:repo.baseBranch});
    }
    if(await poolGit(dest,['remote','get-url','origin'])!==repo.url)throw Error('Workspace remote changed');
    // The accepted source snapshot pins the base, not a mutable branch name.
@@ -170,7 +182,7 @@ export async function releaseWorkspace(plan,lease){
  await update(plan,lease,s=>{s.status='checking';});
  let repository='.';
  try{
-  for(const repo of lease.repositories){repository=repo.path;await cleanRepository(repo.path==='.'?lease.path:join(lease.path,repo.path),{published:true});}
+  for(const repo of lease.repositories){repository=repo.path;await cleanRepository(repo.path==='.'?lease.path:join(lease.path,repo.path),{published:true,baseBranch:repo.baseBranch});}
   return await update(plan,lease,s=>{s.status='idle';s.releasedAt=Date.now();delete s.error;delete s.releaseFailure;});
  }catch(error){
   const failure={repository,...(error.releaseFailure??{code:'GIT_CHECK_FAILED',stage:'validation',retryable:true}),checkedAt:Date.now()};
