@@ -70,7 +70,7 @@ export async function executeQuery(params,context={},runtime=configuration){
   const tasks=await Promise.all(Object.values(db).filter(entry=>matchesHistoryFilter(entry,params)).map(async entry=>{
    const {topic,sessionId,updatedAt,cwd:savedCwd,executionPolicyVersion:version,skillsSnapshot,skillsRefreshFailed,configurationFingerprint}=entry;
    let scoped=config,versionCurrent=current,invalid=false;
-   try{const selected=availableModels.find(model=>model.harness===entry.harness&&model.model===entry.model)??availableModels.find(model=>model.id===entry.modelId);scoped=resolveQueueExecution(runtime,{queueId:entry.queueId,modelId:!entry.hermesTemplateId||entry.hermesExplicitModel?selected?.id??entry.modelId:undefined});}catch{invalid=true;}
+   try{const selected=entry.modelId!==undefined?availableModels.find(model=>model.id===entry.modelId):availableModels.find(model=>model.harness===entry.harness&&model.model===entry.model);scoped=resolveQueueExecution(runtime,{queueId:entry.queueId,modelId:!entry.hermesTemplateId||entry.hermesExplicitModel?selected?.id??entry.modelId:undefined});}catch{invalid=true;}
    if(entry.project){
     scoped={...scoped,cwd:savedCwd,skillContextRoot:entry.project.root,projectContext:entry.project,scopedSkillSnapshot:skillsSnapshot,executorInstructions:scoped.executorInstructions.replaceAll(scoped.cwd,savedCwd).replaceAll('{projectDir}',savedCwd),delegationInstructions:scoped.delegationInstructions.replaceAll(scoped.cwd,savedCwd).replaceAll('{projectDir}',savedCwd)};
     try{versionCurrent=await readScopedSkillVersion(scoped);}catch{invalid=true;versionCurrent=undefined;}

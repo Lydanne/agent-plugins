@@ -44,7 +44,8 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='projectRouting')schema.enum=['auto','agent-repo','legacy'];
  if(key==='skillContextRoot')schema.pattern='^(?:$|/|~/)';
  if(key==='hermesTemplates')Object.assign(schema,hermesTemplatesSchema);
- if(key==='taskQueues')Object.assign(schema,taskQueuesSchema);
+ // Preserve absence through host validation so legacy queue settings can migrate.
+ if(key==='taskQueues'){Object.assign(schema,taskQueuesSchema);delete schema.default;}
  if(key==='defaultQueueId')schema.pattern=queueIdPattern;
  if(key==='modelProfiles')Object.assign(schema,modelProfilesSchema);
  if(key==='defaultModelId')schema.pattern='^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$';

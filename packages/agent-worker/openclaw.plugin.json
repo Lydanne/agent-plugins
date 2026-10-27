@@ -291,26 +291,6 @@
       },
       "taskQueues": {
         "type": "object",
-        "default": {
-          "short": {
-            "hermesTemplateId": "codex",
-            "hermesVariables": {},
-            "name": "短任务",
-            "description": "常规查询及短时间执行",
-            "timeoutMs": 1800000,
-            "maxConcurrentJobs": 3,
-            "maxQueuedJobs": 100
-          },
-          "long": {
-            "hermesTemplateId": "codex",
-            "hermesVariables": {},
-            "name": "长任务",
-            "description": "需要较长时间的分析、构建或处理",
-            "timeoutMs": 10800000,
-            "maxConcurrentJobs": 1,
-            "maxQueuedJobs": 100
-          }
-        },
         "minProperties": 1,
         "maxProperties": 50,
         "propertyNames": {

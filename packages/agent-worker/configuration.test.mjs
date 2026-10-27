@@ -16,7 +16,7 @@ const requireManifestText=await readFile(new URL('./openclaw.plugin.json',import
 test('UI defaults match runtime defaults; configured policies and optional integrations are effective',async()=>{
  const manifest=JSON.parse(await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8'));
  for(const [key,value] of Object.entries(defaultConfiguration)) {
-  assert.deepEqual(manifest.configSchema.properties[key].default,value,key);
+  assert.deepEqual(manifest.configSchema.properties[key].default,key==='taskQueues'?undefined:value,key);
   assert.ok(manifest.uiHints[key].label,key);
  }
  const config=resolveConfiguration({cwd:'/tmp/custom-workspace',...singleModel('fixture-model','high'),approvalMode:'workspace-write',businessDataPolicy:'Public identifiers only'});

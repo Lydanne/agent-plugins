@@ -23,3 +23,16 @@ test('host accepts retired level settings before plugin initialization, without 
  }
  for(const bad of [{thinkingLevel:7},{thinkingLevel:'6'},{thinkingProfiles:[]},{unrelatedField:true}])assert.equal(validateJsonSchemaValue({schema,value:bad,applyDefaults:false}).ok,false);
 });
+
+test('host defaults preserve legacy queue timeouts and explicit queues take precedence',()=>{
+ const legacy={timeoutMs:90000,longTimeoutMs:7200000};
+ for(const input of [{},legacy,{...legacy,taskQueues:{build:{name:'Build',timeoutMs:45000,maxConcurrentJobs:2,maxQueuedJobs:7}},defaultQueueId:'build'}]){
+  const expected=resolveConfiguration(input);
+  for(const applyDefaults of [false,true]){
+   const result=validateJsonSchemaValue({schema,value:structuredClone(input),applyDefaults});assert.equal(result.ok,true,JSON.stringify(result));
+   if(!Object.hasOwn(input,'taskQueues'))assert.equal(Object.hasOwn(result.value,'taskQueues'),false);
+   const actual=resolveConfiguration(result.value);assert.deepEqual(actual.taskQueues,expected.taskQueues);assert.equal(actual.defaultQueueId,expected.defaultQueueId);
+  }
+ }
+ assert.equal(Object.hasOwn(schema.properties.taskQueues,'default'),false);
+});
