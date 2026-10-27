@@ -1,3 +1,4 @@
+import {traceHostErrorDelivery} from "./host-error-delivery-diagnostic.js";
 import {sendMediaFeishu} from "./media.js";
 import {recordOutboundMentions,recordEditedMentions,nativeMentionIds,type FeishuMentionScope} from './recent-outbound-mentions.js';
 import {prepareFeishuDocumentDelivery,documentCardText,documentLinkCard,findLocalFileReferences} from "./document-delivery.js";
@@ -507,6 +508,7 @@ export async function sendMessageFeishu(
     mentions,
     accountId,
   } = params;
+  const traceHostError = traceHostErrorDelivery({text,to,accountId,replyToMessageId});
   const { client, receiveId, receiveIdType } = resolveFeishuSendTarget({ cfg, to, accountId });
   const document=await prepareFeishuDocumentDelivery({cfg,accountId,to,text});
   let messageText = document?.text ?? text;
@@ -532,6 +534,7 @@ export async function sendMessageFeishu(
     directErrorPrefix: "Feishu send failed",
     replyErrorPrefix: "Feishu reply failed",
   });
+  traceHostError?.(result.messageId);
   const sentContent = JSON.parse(content);
   recordOutboundMentions({...params,accountId:resolveFeishuRuntimeAccount(params).accountId,
     replyToMessageId:result.receipt.replyToId,replyInThread:!!result.receipt.replyToId && replyInThread},result.messageId,sentContent);

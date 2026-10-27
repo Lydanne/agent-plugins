@@ -641,3 +641,7 @@ Main 返回的 `isError`、`isStatusNotice` 及宿主标准失败文案（含 `c
 Main 接收 AgentWorkerObservation 过程记录，包含超时续接、结构化本地查询和补充接收/派发。具体字段与时序见 [Main/Worker 协作协议](../../docs/main-worker-collaboration.md)。
 
 补充无法接续时，`supplement_unavailable` 将原补充卡更新为“补充未执行”并说明失败、超时、取消或会话缺失原因，保留用户补充。卡片更新失败保留待更新状态，由 Worker 持久化过程事件重试；过了问题提交期限仍可更新已受理补充的结果。来源失效时不再向原渠道发送。
+
+## 宿主拦截错误发送诊断
+
+发送形如 `Your message could not be sent: … (blocked by plugin)` 的宿主拦截提示时，输出 `feishu: host-error-delivery` 的 attempt/acknowledged 关联记录，包含进程、调用文件位置、正文与目标的哈希、回复绑定状态及成功后的平台消息 ID。日志不记录提示正文、账号或收件人原值、凭证及完整文件路径。诊断不拦截、不重试、不改变发送结果；日志失败也不能使已发送消息被重发。此记录用于区分新拦截与历史通知重复发送，本身不代表已修复发送来源。
