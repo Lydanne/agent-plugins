@@ -26,6 +26,18 @@ import {ColleagueProfiles} from "./colleague-profile.js";
 import {buildDepartmentReplyStyleContext} from "./department-reply-style.js";
 import {renderSection} from "./context-sections.js";
 
+// Shared across plugin service generations. Serialize before reading presentation
+// state, so a delayed history edit cannot overwrite another caller's send claim.
+const questionTurnsSymbol=Symbol.for('ada.feishu-question-presentation.v1');
+const questionTurnsGlobal=globalThis as typeof globalThis & {[questionTurnsSymbol]?:Map<string,Promise<unknown>>};
+const questionTurns=questionTurnsGlobal[questionTurnsSymbol]??=new Map<string,Promise<unknown>>();
+async function serializeQuestion<T>(key:string,run:()=>Promise<T>):Promise<T>{
+ const previous=questionTurns.get(key)??Promise.resolve();
+ const next=previous.catch(()=>{}).then(run);
+ questionTurns.set(key,next);
+ try{return await next;}finally{if(questionTurns.get(key)===next)questionTurns.delete(key);}
+}
+
 type Provenance = Parameters<typeof isCompletionSourceCurrent>[0] & {requestMessageIds: string[]; sessionId?: string; rootId?: string; replyInThread?: boolean};
 export type CompletionEvent = {type: "agent_worker.completed" | "codex_query.completed" | "agent_worker.context_request"; eventId: string; jobId: string; topic: string;
  contextRequest?: Question;
@@ -290,7 +302,11 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
   const cfg=runtime.config.current();const storePath=runtime.agent.session.resolveStorePath(cfg.session?.store,{agentId});
   return !p.sessionId||runtime.agent.session.getSessionEntry({storePath,agentId,sessionKey:p.sessionKey,readConsistency:"latest"})?.sessionId===p.sessionId;
  };
- const continueQuestion=async(card:QuestionCard):Promise<QuestionCard>=>{
+ const continueQuestion=(input:QuestionCard):Promise<QuestionCard>=>serializeQuestion(JSON.stringify([runtime.state.resolveStateDir(),input.jobId,input.question.questionId,'create']),async()=>{
+  let card=readQuestionCard(runtime.state.resolveStateDir(),input.question.questionId)??input;
+  if(card.jobId!==input.jobId||!authorizeReply(card.provenance))throw Error('Original task authorization is no longer current');
+  // A settled receipt may now be a later question's history; never rebind it.
+  if(card.workingMessageId&&!card.workingBindingPending)return card;
   const p=card.provenance,cfg=runtime.config.current() as ClawdbotConfig,stateDir=runtime.state.resolveStateDir();
   const working=new FeishuWorkingCard({cfg,accountId:p.accountId,to:'chat:'+p.chatId,replyToMessageId:card.messageId||readAsyncTaskCard(stateDir,card.jobId,p)?.messageId,replyInThread:p.replyInThread??false,requester:{openId:p.senderId,name:'',key:''},log:message=>api.logger.warn(message)});
   if(!card.workingMessageId){
@@ -303,12 +319,21 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
     if(working.placeholderCreationState()==='not_sent'){card={...card,workingAttempted:false};saveQuestionCard(stateDir,card);}
     throw Error('Unable to create continuation card');
    }
-   if(!continueAsyncTaskCard(stateDir,p,card.jobId,card.question.questionId,held))throw Error('Continuation binding rejected');
-   card={...card,workingMessageId:held.messageId};saveQuestionCard(stateDir,card);
+   // Retain the receipt before binding: recovery must never send another GIF.
+   card={...card,workingMessageId:held.messageId,workingImageKey:held.imageKey,workingBindingPending:true};saveQuestionCard(stateDir,card);
   }
+  const binding=readAsyncTaskCard(stateDir,card.jobId,p);
+  if(binding?.messageId!==card.workingMessageId && !continueAsyncTaskCard(stateDir,p,card.jobId,card.question.questionId,{messageId:card.workingMessageId!,imageKey:card.workingImageKey})){
+   // A terminal result or another continuation won while the send was in flight.
+   // Close only this known, unbound placeholder; never overwrite the winner.
+   await editMessageFeishu({cfg,accountId:p.accountId,messageId:card.workingMessageId!,card:workingResultCard('任务状态已更新，请查看任务的最新回复。')});
+   saveQuestionCard(stateDir,{...card,workingBindingPending:false});
+   throw Error('Continuation binding rejected; unused placeholder closed');
+  }
+  card={...card,workingBindingPending:false};saveQuestionCard(stateDir,card);
   return card;
- };
- const contextState:NonNullable<Bridge["contextState"]>=async event=>{
+ });
+ const contextState:NonNullable<Bridge["contextState"]>=event=>serializeQuestion(JSON.stringify([runtime.state.resolveStateDir(),event.jobId,event.questionId,'context']),async()=>{
   const p=event.provenance;if(!authorizeReply(p))return;
   const stateDir=runtime.state.resolveStateDir();
   const active=sourceTaskBridge.leases.get(JSON.stringify([p.accountId,p.sessionKey]));
@@ -320,6 +345,8 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
   }
   if(!binding)return;
   let existing=readQuestionCard(stateDir,event.questionId);
+  // A known send receipt survives failed binding/cleanup, including terminal jobs.
+  if(existing?.workingBindingPending){existing=await continueQuestion(existing);binding=readAsyncTaskCard(stateDir,event.jobId,p)!;}
   const replyState=event.status==='resumed'?workerQuestionBridge.read?.({jobId:event.jobId,questionId:event.questionId,provenance:p}):undefined;
   const answered=replyState?.question;
   if(event.status==='resumed'&&answered?.resumeReason==='user_wait_timeout'&&answered.answer!==undefined&&existing){
@@ -413,7 +440,7 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
   if(!authorizeReply(p))return;
   await editMessageFeishu({cfg,accountId:p.accountId,messageId:binding.messageId,card:result.card});
   acceptAsyncCardProgress(stateDir,binding,progress);
- };
+ });
  const acceptSavedSupplement=async(card:QuestionCard)=>{
   if(!isSavedQuestionAnswer(card)||!authorizeReply(card.provenance)||!workerQuestionBridge.acceptSubmission)throw Error('Supplement adapter unavailable');
   const outcome=await workerQuestionBridge.acceptSubmission({jobId:card.jobId,questionId:card.question.questionId,provenance:card.provenance});
@@ -467,7 +494,7 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
  let recovery:Promise<void>|undefined;
  const restoreContextCards=async()=>{
   for(const card of listQuestionCards(runtime.state.resolveStateDir())){
-   if(card.status!=='accepted'||!['main_context','user_wait_timeout'].includes(card.answerSource??'')||(card.workingMessageId&&card.rendered)||!authorizeReply(card.provenance)||card.question.expiresAt<=Date.now())continue;
+   if(card.status!=='accepted'||!['main_context','user_wait_timeout'].includes(card.answerSource??'')||(card.workingMessageId&&card.rendered&&!card.workingBindingPending)||!authorizeReply(card.provenance)||card.question.expiresAt<=Date.now())continue;
    try{await contextState({jobId:card.jobId,questionId:card.question.questionId,provenance:card.provenance,status:'resumed'});}
    catch{api.logger.warn('Main continuation recovery failed; saved answer retained');}
   }
