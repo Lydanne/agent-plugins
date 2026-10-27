@@ -1,7 +1,7 @@
 {
   "id": "agent-worker",
   "name": "本地智能体执行器 / Local agent worker",
-  "description": "按 harness + 模型配置执行器，为每次任务选择模型和 0–6 智慧等级。 / Agent worker with model selection and per-task thinking levels 0–6.",
+  "description": "按独立队列与 Hermes CLI 模板执行任务。 / Agent worker with independent queues and Hermes CLI templates.",
   "contracts": {
     "tools": [
       "agent_worker"
@@ -158,13 +158,6 @@
         "maxLength": 40000,
         "description": "资源锁示例 / Resource key example"
       },
-      "thinkingLevel": {
-        "type": "integer",
-        "default": 0,
-        "minimum": 0,
-        "maximum": 6,
-        "description": "默认智慧等级 / Default thinking level"
-      },
       "skillContextRoot": {
         "type": "string",
         "default": "",
@@ -265,180 +258,6 @@
                 "default",
                 "fast"
               ]
-            },
-            "thinkingProfiles": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "0": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                },
-                "1": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                },
-                "2": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                },
-                "3": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                },
-                "4": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                },
-                "5": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                },
-                "6": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "reasoningEffort": {
-                      "type": "string",
-                      "enum": [
-                        "minimal",
-                        "low",
-                        "medium",
-                        "high",
-                        "xhigh",
-                        "max"
-                      ]
-                    },
-                    "speed": {
-                      "type": "string",
-                      "enum": [
-                        "default",
-                        "fast"
-                      ]
-                    }
-                  }
-                }
-              }
             }
           }
         },
@@ -467,6 +286,8 @@
         "type": "object",
         "default": {
           "short": {
+            "hermesTemplateId": "codex",
+            "hermesVariables": {},
             "name": "短任务",
             "description": "常规查询及短时间执行",
             "timeoutMs": 1800000,
@@ -474,6 +295,8 @@
             "maxQueuedJobs": 100
           },
           "long": {
+            "hermesTemplateId": "codex",
+            "hermesVariables": {},
             "name": "长任务",
             "description": "需要较长时间的分析、构建或处理",
             "timeoutMs": 10800000,
@@ -503,6 +326,21 @@
             "maxQueuedJobs": 100
           },
           "properties": {
+            "hermesTemplateId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+            },
+            "hermesVariables": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 40000
+              }
+            },
             "name": {
               "type": "string",
               "pattern": "\\S",
@@ -537,6 +375,142 @@
         "maxLength": 40000,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
         "description": "默认任务队列 / Default queue ID"
+      },
+      "hermesTemplates": {
+        "type": "object",
+        "default": {
+          "codex": {
+            "name": "Codex CLI",
+            "description": "Codex exec JSONL，支持新建、恢复会话和只读技能刷新",
+            "adapter": "codex-jsonl",
+            "command": "{{cli}}",
+            "args": [
+              "exec",
+              "--cd",
+              "{{cwd}}",
+              "{{policyArgs}}",
+              "-c",
+              "developer_instructions={{json:instructions}}",
+              "-c",
+              "model_reasoning_effort={{json:reasoningEffort}}",
+              "{{speedArgs}}",
+              "--model",
+              "{{model}}",
+              "{{resumeArgs}}",
+              "{{schemaArgs}}",
+              "--json",
+              "-"
+            ],
+            "resumeArgs": [
+              "resume",
+              "{{sessionId}}"
+            ],
+            "stdin": "{{prompt}}",
+            "variables": {}
+          }
+        },
+        "minProperties": 1,
+        "maxProperties": 50,
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "adapter",
+            "command",
+            "args",
+            "resumeArgs",
+            "stdin",
+            "variables"
+          ],
+          "default": {
+            "name": "Codex CLI",
+            "description": "Codex exec JSONL，支持新建、恢复会话和只读技能刷新",
+            "adapter": "codex-jsonl",
+            "command": "{{cli}}",
+            "args": [
+              "exec",
+              "--cd",
+              "{{cwd}}",
+              "{{policyArgs}}",
+              "-c",
+              "developer_instructions={{json:instructions}}",
+              "-c",
+              "model_reasoning_effort={{json:reasoningEffort}}",
+              "{{speedArgs}}",
+              "--model",
+              "{{model}}",
+              "{{resumeArgs}}",
+              "{{schemaArgs}}",
+              "--json",
+              "-"
+            ],
+            "resumeArgs": [
+              "resume",
+              "{{sessionId}}"
+            ],
+            "stdin": "{{prompt}}",
+            "variables": {}
+          },
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 160
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "adapter": {
+              "type": "string",
+              "enum": [
+                "codex-jsonl"
+              ]
+            },
+            "command": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 40000
+            },
+            "args": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "maxLength": 40000
+              }
+            },
+            "resumeArgs": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "maxLength": 40000
+              }
+            },
+            "stdin": {
+              "type": "string",
+              "maxLength": 40000
+            },
+            "variables": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 40000
+              }
+            }
+          }
+        },
+        "description": "Hermes 模板 / Hermes templates"
       }
     }
   },
@@ -624,10 +598,6 @@
       "label": "资源锁示例 / Resource key example",
       "help": "未配置时保留当前行为。 / Unset values preserve existing behavior."
     },
-    "thinkingLevel": {
-      "label": "默认智慧等级 / Default thinking level",
-      "help": "0 使用所选模型默认推理参数；1–6 映射 minimal、low、medium、high、xhigh、max，具体值可在每个模型中覆盖。等级变化不创建新会话。 / 0 uses model defaults; 1–6 map minimal through max."
-    },
     "skillContextRoot": {
       "label": "技能上下文根目录 / Skill context root",
       "help": "新版 Agent Repo API 自动确定角色根和项目 cwd；此字段仅供旧 provider 兼容及独立部署使用。 / The Agent Repo API resolves root and cwd; this setting remains for legacy providers and standalone deployments."
@@ -672,79 +642,11 @@
     },
     "modelProfiles.*.reasoningEffort": {
       "label": "默认推理强度 / Default effort",
-      "help": "智慧等级 0 使用此值；默认 low。 / Level 0 uses this value, defaulting to low."
+      "help": "直接使用此参数，默认 low；不再按数字等级映射。 / Direct reasoning parameter, defaulting to low."
     },
     "modelProfiles.*.speed": {
       "label": "默认速度 / Default speed",
       "help": "未设置时沿用 CLI 默认速度。 / Optional CLI speed override."
-    },
-    "modelProfiles.*.thinkingProfiles": {
-      "label": "智慧等级参数覆盖 / Thinking-level overrides",
-      "help": "0 使用模型默认参数，1–6 对应 minimal、low、medium、high、xhigh、max。只覆盖参数，不切换模型。 / Override effort and speed per level.",
-      "advanced": true
-    },
-    "modelProfiles.*.thinkingProfiles.0": {
-      "label": "等级 0 / Level 0"
-    },
-    "modelProfiles.*.thinkingProfiles.0.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.0.speed": {
-      "label": "速度 / Speed"
-    },
-    "modelProfiles.*.thinkingProfiles.1": {
-      "label": "等级 1 / Level 1"
-    },
-    "modelProfiles.*.thinkingProfiles.1.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.1.speed": {
-      "label": "速度 / Speed"
-    },
-    "modelProfiles.*.thinkingProfiles.2": {
-      "label": "等级 2 / Level 2"
-    },
-    "modelProfiles.*.thinkingProfiles.2.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.2.speed": {
-      "label": "速度 / Speed"
-    },
-    "modelProfiles.*.thinkingProfiles.3": {
-      "label": "等级 3 / Level 3"
-    },
-    "modelProfiles.*.thinkingProfiles.3.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.3.speed": {
-      "label": "速度 / Speed"
-    },
-    "modelProfiles.*.thinkingProfiles.4": {
-      "label": "等级 4 / Level 4"
-    },
-    "modelProfiles.*.thinkingProfiles.4.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.4.speed": {
-      "label": "速度 / Speed"
-    },
-    "modelProfiles.*.thinkingProfiles.5": {
-      "label": "等级 5 / Level 5"
-    },
-    "modelProfiles.*.thinkingProfiles.5.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.5.speed": {
-      "label": "速度 / Speed"
-    },
-    "modelProfiles.*.thinkingProfiles.6": {
-      "label": "等级 6 / Level 6"
-    },
-    "modelProfiles.*.thinkingProfiles.6.reasoningEffort": {
-      "label": "推理强度 / Reasoning effort"
-    },
-    "modelProfiles.*.thinkingProfiles.6.speed": {
-      "label": "速度 / Speed"
     },
     "maxConcurrentLongJobs": {
       "label": "每 Agent 长任务并发数",
@@ -783,12 +685,48 @@
     },
     "taskQueues.*.maxQueuedJobs": {
       "label": "每 Agent 最大排队数"
+    },
+    "hermesTemplates": {
+      "label": "Hermes 模板 / Hermes templates",
+      "help": "按 ID 管理 CLI 模板。内置 Codex CLI 范本；command 是可执行程序，args 是参数数组，支持 {{变量}} 和 {{json:变量}}。队列通过 hermesTemplateId 绑定，用 hermesVariables 覆盖默认变量。"
+    },
+    "hermesTemplates.*.name": {
+      "label": "模板名称"
+    },
+    "hermesTemplates.*.description": {
+      "label": "用途"
+    },
+    "hermesTemplates.*.adapter": {
+      "label": "输出协议"
+    },
+    "hermesTemplates.*.command": {
+      "label": "CLI 可执行命令"
+    },
+    "hermesTemplates.*.args": {
+      "label": "CLI 参数模板"
+    },
+    "hermesTemplates.*.resumeArgs": {
+      "label": "恢复会话参数"
+    },
+    "hermesTemplates.*.stdin": {
+      "label": "标准输入模板"
+    },
+    "hermesTemplates.*.variables": {
+      "label": "默认变量"
+    },
+    "taskQueues.*.hermesTemplateId": {
+      "label": "Hermes 模板 ID",
+      "help": "默认 codex，引用已配置模板。"
+    },
+    "taskQueues.*.hermesVariables": {
+      "label": "模板变量",
+      "help": "覆盖模型、推理参数、CLI 路径或模板声明的自定义变量；不设置智慧等级。"
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/0062750a8d99de0d6511/index.js",
+    "entry": "dist/control-ui/1799bed8e18fad5ed757/index.js",
     "styles": [
-      "dist/control-ui/0062750a8d99de0d6511/index.css"
+      "dist/control-ui/1799bed8e18fad5ed757/index.css"
     ]
   },
   "skills": [

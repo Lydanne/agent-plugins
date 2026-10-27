@@ -96,7 +96,7 @@ sequenceDiagram
 | memory | 沿用现有配置要求，由 Main 提交真实检索结果；宿主不伪造检索 | `{status:"no_match",queries:["通知"],items:[]}` |
 | responsibility | 可选，简述本次职责 | `核对调用链和发送回执` |
 | requestId | 可省略，宿主按可信来源版本、topic 和项目选择器生成；显式值保留旧合同 | 明确重新执行：`order-123-rerun-2` |
-| modelId / thinkingLevel | 有明确覆盖需求时传；否则宿主应用默认配置 | `thinkingLevel: 3`，不意味着自动换模型 |
+| queueId / modelId | queueId 选择队列及 Hermes CLI 模板；modelId 仅在明确需要覆盖模型参数时传 | 省略使用默认队列；智慧等级已移除，推理参数由模板/模型直接配置 |
 | resourceKeys | 写操作明确提供稳定对象键；恢复和补充自动继承 | `["production:order:ORDER-DEMO-123"]` |
 
 来源身份、消息版本、账号、时间戳、jobId/questionId、项目解析和执行配置校验归宿主负责。不能由模型伪造。topic 的业务判断仍在 Main；不同正文不能通过自动 requestId 当成无声重试。跨消息核对旧任务使用 jobId，明确跨消息重试须保留原 requestId。

@@ -53,7 +53,7 @@ Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → a
 | models | 读取可用的 harness + 模型、用途与 0–6 级参数 | 无需 memory 或来源租约，不创建 job |
 | projects | 读取当前 Agent 的已提交项目登记 | 无项目选择器，不创建 job |
 | list | 查找同一问题的 topic 或用户要求找任务 | 可选 query；数量由 jobListLimit 控制，不传 limit/offset |
-| run | 提交明确任务 | topic、task、context、constraints；modelId、thinkingLevel 按需覆盖，默认还要求 memory |
+| run | 提交明确任务 | topic、task、context、constraints；queueId、modelId 按需选择，默认还要求 memory |
 | status / wait | 查询原任务 | 原 jobId；异步模式 wait 只读即时状态 |
 | cancel | 原请求人明确取消 | 原 jobId；不回滚已完成外部操作 |
 | tag | 补充检索标签 | jobId、tags，按需 tagMode |
@@ -104,58 +104,68 @@ Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内
 - `feishu_group_history` 已迁移到 Feishu 插件，由 Main 按需读取当前群并提供必要的任务上下文；agent-worker 不再注册群历史工具。
 - 默认执行职责禁止 Git 写入、push 或 PR；管理员可替换 executorInstructions 用于开发，但每轮仍须满足角色政策、constraints 和当前授权。业务导出和数据修复需明确授权。
 
-## 模型与智慧等级
+## Hermes CLI 模板与队列绑定
 
-管理员在 OpenClaw **设置 → 插件 → agent-worker → 设置 → 模型配置**中使用原生“添加条目”，输入唯一模型 ID（例如 `quick`、`deep`），即可逐项配置多个模型。无需独立配置页或手写整段 JSON。每项包含启用开关、显示名称、用途、harness、模型名、推理强度、速度，以及可展开的 0–6 级覆盖；CLI 命令可继承全局设置。当前 harness 仅支持 `codex`，模型及参数须由部署方确认当前账号和 CLI 支持。
+管理员在插件设置的 **Hermes 模板**中按稳定 ID 添加或复制 CLI 模板，在 **任务队列**中配置 `hermesTemplateId` 与 `hermesVariables`。默认内置 `codex` 范本，short 和 long 默认均绑定它。无需为了修改参数而改源码。
 
-原生配置字段为 `modelProfiles`，以模型 ID 为键。新增项有完整默认值但保持停用，确认模型和参数后再启用；主会话只看到已启用项。ID 在字典中唯一，不依赖列表序号。允许为同一模型保存不同参数预设，它们按 harness + 模型共享底层会话。
+模板包含 `name`、`description`、`adapter`、`command`、`args`、`resumeArgs`、`stdin`、`variables`。command 是单个可执行程序（可用绝对路径或 PATH 命令），args 是逐项参数数组；不通过 shell 执行，也不做命令字符串分词。可以把 command 改成受控包装器；当前输出适配器为 **codex-jsonl**，要求输出 Codex 兼容事件。其他 CLI 的输出协议需新增适配器，不能只换名字就认为兼容。
 
-Main 遵循当前 Agent 规则及用户明确要求选择模型与等级；未指定时省略 `modelId`、`thinkingLevel`，使用管理员默认配置，不例行查询 models 或询问用户。需要明确覆盖时才传入对应参数。工具说明及 `modelId` 枚举包含已配置模型；`action=models` 可只读查看模型目录和实际等级映射。省略 modelId 使用 `defaultModelId`，该配置留空、被停用或已移除时选择第一项已启用配置；省略等级使用 `thinkingLevel` 配置，默认 0。
-
-| 智慧等级 | 默认推理参数 |
-| --- | --- |
-| 0 | 所选模型的默认 `reasoningEffort`；未设置时使用 `low`，不表示关闭思考 |
-| 1 / 2 / 3 | `minimal` / `low` / `medium` |
-| 4 / 5 / 6 | `high` / `xhigh` / `max` |
-
-每个模型可用自己的 `thinkingProfiles` 覆盖 0–6 任一级的 `reasoningEffort` 和 `speed`；未覆盖的级别按上表解析。某模型不支持某个推理参数时，应由管理员为对应等级配置其实际支持的值。档位不能改变 harness、模型或 CLI。不同模型可使用不同 CLI 路径，并继承全局的目录、沙箱和职责策略。
-
-原生表单对应以下配置结构，模型名需按实际可用项替换：
+Codex 范本结构如下，参数依据 [Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode) 与本机 CLI 帮助核对：
 
 ```json
 {
-  "modelProfiles": {
-    "quick": {
-      "enabled": true,
-      "name": "常规模型",
-      "description": "常规查询和轻量任务",
-      "harness": "codex",
-      "model": "your-fast-model",
-      "reasoningEffort": "low",
-      "speed": "fast",
-      "thinkingProfiles": {
-        "6": { "reasoningEffort": "high", "speed": "default" }
-      }
-    },
-    "deep": {
-      "enabled": true,
-      "name": "分析模型",
-      "description": "复杂排查与跨模块分析",
-      "harness": "codex",
-      "model": "your-analysis-model",
-      "reasoningEffort": "medium"
+  "hermesTemplates": {
+    "codex": {
+      "name": "Codex CLI",
+      "adapter": "codex-jsonl",
+      "command": "{{cli}}",
+      "args": [
+        "exec", "--cd", "{{cwd}}", "{{policyArgs}}",
+        "-c", "developer_instructions={{json:instructions}}",
+        "-c", "model_reasoning_effort={{json:reasoningEffort}}",
+        "{{speedArgs}}", "--model", "{{model}}",
+        "{{resumeArgs}}", "{{schemaArgs}}", "--json", "-"
+      ],
+      "resumeArgs": ["resume", "{{sessionId}}"],
+      "stdin": "{{prompt}}",
+      "variables": {}
     }
   },
-  "defaultModelId": "quick",
-  "thinkingLevel": 0
+  "defaultQueueId": "short",
+  "taskQueues": {
+    "short": {
+      "name": "短任务", "timeoutMs": 1800000,
+      "maxConcurrentJobs": 3, "maxQueuedJobs": 100,
+      "hermesTemplateId": "codex",
+      "hermesVariables": {"model": "gpt-6.1-sol", "reasoningEffort": "low"}
+    },
+    "long": {
+      "name": "长任务", "timeoutMs": 10800000,
+      "maxConcurrentJobs": 1, "maxQueuedJobs": 100,
+      "hermesTemplateId": "codex",
+      "hermesVariables": {"model": "gpt-6.1-sol", "reasoningEffort": "high"}
+    }
+  }
 }
 ```
 
-run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。模型选择与智慧等级参与请求去重；重复投递保留原参数和 requestId，查询已有任务用原 jobId，不能通过换模型或等级重做状态未知的业务。`reply` 不接受 modelId/thinkingLevel，始终续接原任务的冻结配置和会话。
+`{{name}}` 原样替换单个字符串参数，空格、引号、分号和换行不会被拆成额外参数；`{{json:name}}` 用 JSON 字符串编码，可用于 Codex 的 TOML 字符串配置。变量值不递归解释，也不执行 shell/JavaScript。未声明的变量、拼错的占位符、无效模板引用在执行前拒绝。
 
-会话按可信聊天 + 项目/仓库 + topic + harness + 模型分别保留。改变等级或速度继续复用当前模型的会话；切换模型使用另一会话，再切回来可恢复原模型的上下文。模型 ID 改名不改变会话身份。不同模型的任务可并行，同一模型的同 topic 仍串行；业务 resourceKeys 跨模型继续串行。任务历史、会话列表及详情携带模型信息，界面按模型分别展示。
+| 变量 | 来源与用途 |
+| --- | --- |
+| cli、model、reasoningEffort、speed、codexHome | 默认继承全局 CLI 和所选模型的直接参数；模板 variables 可设置默认值，队列 hermesVariables 再覆盖。cli/codexHome 支持 ~/。 |
+| cwd、instructions、prompt | 宿主解析后的实际执行目录、职责文本和完整本轮输入；队列不能覆盖。prompt 通过 stdin 传递。 |
+| sessionId、schemaPath | 宿主保存的会话 ID、临时输出 schema 路径；队列不能覆盖。 |
+| policyArgs、speedArgs、resumeArgs、schemaArgs | 宿主生成的数组片段，只能以完整占位符作为一个 args 项展开。恢复参数由模板 resumeArgs 定义，技能刷新强制 read-only。 |
+| 自定义变量 | 先在模板 variables 中声明字符串默认值，再由队列覆盖，例如 profile、endpoint；需要在 args 中引用才生效。 |
 
-模型配置统一使用 `modelProfiles`。默认提供 `default`（Codex / `gpt-6.1-sol` / `low`），可直接编辑或按实际可用模型重新配置；新增条目默认停用。没有启用项时目录为空，新任务在创建前返回 `MODEL_NOT_CONFIGURED`，历史查看及已受理任务的状态、回复和取消仍可使用。旧 `models` 数组及顶层 `model`、`reasoningEffort` 已删除，不再回退或自动转换，升级时须删除旧字段并重新配置原生模型项。
+`policyArgs`、`resumeArgs`、`schemaArgs` 是 codex-jsonl 范本的必需片段，stdin 固定传入 prompt。这保留只读技能刷新、输出校验和原会话恢复。模板及队列参数仅由管理员配置，不接受业务任务直接传命令或自定义变量。
+
+原 `modelProfiles` 仍可保存可用模型的直接参数，`modelId` 是可选显式覆盖：选定后以该模型的 model、reasoningEffort、speed（及显式 CLI）优先于队列变量；省略时使用“全局基线 → 模板默认变量 → 队列覆盖”的顺序。没有启用模型时仍拒绝新任务，历史查询和续接不受影响。
+
+**智慧等级已移除**：新工具参数、配置表单、模型目录和任务详情不再提供 thinkingLevel/0–6；旧 thinkingProfiles 不再参与新任务计算。模型推理参数直接配置为 CLI 支持的值。升级持久配置时移除顶层 thinkingLevel、thinkingProfiles 及 modelProfiles 下的 thinkingProfiles，再按需要设置模板/队列变量；运行时兼容读取旧字段并忽略，但新版宿主 schema 不再接受这些字段。旧请求哈希仍能校验，已受理任务保存的 model、reasoningEffort、CLI 及会话继续使用原快照。
+
+受理时冻结 Hermes 模板正文和变量；模板修改或删除不改变排队任务或 reply。新的任务按模板及有效变量隔离会话，改变命令或参数不会错误复用旧会话。相同队列配置下的同一 topic 仍串行，业务资源锁跨队列/模型继续有效。不要通过更换配置重跑状态未知的业务任务。
 
 ## 本机配置与数据
 
@@ -173,8 +183,8 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 | --- | --- |
 | `cwd`、`cli`、`node` | 执行工作目录、Codex 命令、后台 Node 命令，默认 `~/.openclaw/workspace`、`codex`、`node`；程序可使用绝对路径或 PATH 中的命令名。 |
 | `state`、`codexHome`、`pathPrefix` | 任务存储、Codex 登录/配置目录和执行 PATH 前缀。 |
-| `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及 0–6 级覆盖。无启用项时不能提交新任务。 |
-| `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
+| `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及直接推理参数。无启用项时不能提交新任务。 |
+| `hermesTemplates` | 按 ID 管理 CLI 命令和参数模板；默认 codex。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
 | `taskQueues`、`defaultQueueId` | 按 ID 添加的队列配置与默认队列；默认 short 和 long。 |
 | `timeoutMs` | 短任务执行总时限，默认 1800000 毫秒（30 分钟）；新任务累计各执行轮次，排队及等待补充时间不计入。 |
@@ -213,7 +223,7 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 }
 ```
 
-已受理任务把完整配置快照写入私有请求文件，后台 worker 和重启后排队派发继续使用该快照。新配置不改变旧任务。同一 harness + 模型的执行目录、CLI、Codex 用户目录、沙箱、职责或数据策略变化时，下次真实 run 创建新执行会话并保留旧 ID；仅改变智慧等级或速度继续复用该模型会话。模型切换分别保留绑定。相同请求的去重仍优先，配置变化不代表授权重新执行业务。
+已受理任务把完整配置快照写入私有请求文件，后台 worker 和重启后排队派发继续使用该快照。新配置不改变旧任务。同一 harness + 模型的执行目录、CLI、Codex 用户目录、沙箱、职责或数据策略变化时，下次真实 run 创建新执行会话并保留旧 ID；Hermes 模板或有效变量变化时使用独立执行会话。模型切换分别保留绑定。相同请求的去重仍优先，配置变化不代表授权重新执行业务。
 
 修改 `state` 会选择另一套任务存储，不自动迁移旧数据。技能刷新启用时，Feishu 的 `workspaceSync.executorStateDir` 应与本插件 `state` 相同，`workspaceSync.skillDirectories` 应与本插件 `skillDirectories` 相同。来源和完成通知的版本化进程内协议保持兼容；异步交付目前仍需要 Feishu 适配器。
 
@@ -432,7 +442,7 @@ Worker 管理列表、会话列表及任务详情显示总用时：从任务受�
 
 对外工具已更名为 `agent_worker`；插件 ID 已迁移为 `agent-worker`；原状态目录和可信桥接协议保持兼容，旧后台任务继续查询和取消。工具白名单需将 `codex_query` 换成 `agent_worker`。新完成事件为 `agent_worker.completed`，飞书适配器仍兼容旧事件。
 
-`run` 可传整数 `thinkingLevel`（0–6），省略时使用管理员默认等级。配置方式和各等级映射见上文“模型与智慧等级”；档位仅覆盖所选模型的推理强度与速度，不能改变 harness、模型或 CLI。已受理任务保留原配置快照。实际支持的参数和 fast 服务取决于本地 Codex 和账号；CLI 拒绝时任务如实失败，不降档或自动重跑。
+`run` 使用 queueId 选择队列及 Hermes 模板，推理强度和速度直接配置在模型或模板变量中。实际支持的值由本机 CLI 与账号决定；拒绝时如实失败，不自动降级或重跑。
 
 Codex 原始参数与服务档位定义：[官方配置参考](https://developers.openai.com/codex/config-reference/)。
 

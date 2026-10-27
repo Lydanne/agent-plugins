@@ -19,7 +19,7 @@ export function compatibleLegacyBinding(entry,runtime) {
  return !!runtime.executionScope&&entry?.cwd===runtime.cwd&&snapshot?.root===current?.root&&snapshot?.repository===current?.repository&&snapshot?.projectId===current?.projectId;
 }
 export function modelFields(runtime) {
- return runtime?.modelSessionScope?{modelId:runtime.modelId,modelName:runtime.modelName,harness:runtime.harness,model:runtime.model,modelSessionScope:runtime.modelSessionScope,thinkingLevel:runtime.thinkingLevel}:{};
+ return runtime?.modelSessionScope?{modelId:runtime.modelId,modelName:runtime.modelName,harness:runtime.harness,model:runtime.model,modelSessionScope:runtime.modelSessionScope,...(runtime.hermesTemplateId?{hermesTemplateId:runtime.hermesTemplateId,hermesRevision:runtime.hermesRevision,hermesExplicitModel:runtime.hermesExplicitModel,queueId:runtime.queueId}:{})}:{};
 }
 export function projectFields(runtime) {
  return runtime?.projectContext?{projectId:runtime.projectContext.projectId,repository:runtime.projectContext.repository,cwd:runtime.cwd,...(runtime.workspace?{workspace:runtime.workspace}:{}),...(runtime.workspacePool?{useWorkspace:true}:{}),project:runtime.projectContext,executionScope:runtime.executionScope}:{};

@@ -23,16 +23,16 @@ function fixture(capacity=2,queued=100){
 async function until(check){for(let n=0;n<200;n++){if(check())return;await new Promise(r=>setTimeout(r,10));}throw Error('Fixture did not reach expected state');}
 async function cleanup(f){f.jobs.stop();for(const file of (await import('node:fs')).readdirSync(f.root).filter(x=>/^[0-9a-f-]{36}\.json$/.test(x)))f.release(file.slice(0,-5));await new Promise(r=>setTimeout(r,100));rmSync(f.root,{recursive:true,force:true});}
 
-test('different models run concurrently while levels of one model share the same session queue',async()=>{
+test('different execution sessions run concurrently while requests for one session stay serialized',async()=>{
  const f=fixture();
- const getRuntime=params=>({modelId:params.modelId,harness:'codex',model:'fixture-'+params.modelId,modelSessionScope:createHash('sha256').update(params.modelId).digest('hex'),thinkingLevel:params.thinkingLevel});
+ const getRuntime=params=>({modelId:params.modelId,harness:'codex',model:'fixture-'+params.modelId,modelSessionScope:createHash('sha256').update(params.modelId).digest('hex')});
  f.jobs=createJobs({...f.options,getRuntime});
  try{
-  const quick=await f.jobs.run({...params,modelId:'quick',thinkingLevel:1},'models');
-  const higher=await f.jobs.run({...params,modelId:'quick',thinkingLevel:6},'models');
-  const deep=await f.jobs.run({...params,modelId:'deep',thinkingLevel:6},'models');
+  const quick=await f.jobs.run({...params,modelId:'quick'},'models');
+  const higher=await f.jobs.run({...params,modelId:'quick',requestId:'followup'},'models');
+  const deep=await f.jobs.run({...params,modelId:'deep',requestId:'followup'},'models');
   assert.equal(quick.status,'running');assert.equal(deep.status,'running');assert.equal(higher.status,'queued');assert.equal(higher.waitingReason,'session_busy');
-  assert.equal(higher.modelId,'quick');assert.equal(higher.thinkingLevel,6);
+  assert.equal(higher.modelId,'quick');assert.equal(higher.thinkingLevel,undefined);
   await until(()=>existsSync(join(f.root,quick.jobId+'.started'))&&existsSync(join(f.root,deep.jobId+'.started')));
   f.release(quick.jobId);await until(()=>f.jobs.status(quick.jobId,'models').status==='completed');f.jobs.tick();
   await until(()=>existsSync(join(f.root,higher.jobId+'.started')));

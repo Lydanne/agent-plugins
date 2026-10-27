@@ -20,16 +20,16 @@ test('project filter isolates same-topic task counts and records without broaden
  assert.equal((await inspector.list('other',{projectId:'a'})).total,0);assert.equal((await inspector.list('chat',{projectId:'empty'})).total,0);
 }));
 async function fixture(fn){const state=await mkdtemp(join(tmpdir(),'codex-inspect-'));try{await mkdir(join(state,'jobs'));await fn(state);}finally{await rm(state,{recursive:true,force:true});}}
-test('model sessions group levels together and keep detail records separate, including job deep links',()=>fixture(async state=>{
+test('execution sessions keep history records separate and expose Hermes metadata without levels',()=>fixture(async state=>{
  const scope='model-chat',project={projectId:'a'},executionScope=hash('project-a');
- const rows=[0,1,2].map((index)=>({jobId:[id,id2,'33333333-3333-4333-8333-333333333333'][index],scope:hash(scope),topic:'same',projectId:'a',project,repository:'projects/a',executionScope,modelSessionScope:hash(index===1?'deep':'quick'),modelId:index===1?'deep':'quick',harness:'codex',model:index===1?'fixture-deep':'fixture-quick',thinkingLevel:index===2?6:0,status:'completed',createdAt:index+1}));
+ const rows=[0,1,2].map((index)=>({jobId:[id,id2,'33333333-3333-4333-8333-333333333333'][index],scope:hash(scope),topic:'same',projectId:'a',project,repository:'projects/a',executionScope,modelSessionScope:hash(index===1?'deep':'quick'),modelId:index===1?'deep':'quick',harness:'codex',model:index===1?'fixture-deep':'fixture-quick',queueId:'short',hermesTemplateId:'codex',hermesRevision:'fixture',status:'completed',createdAt:index+1}));
  for(const row of rows)await writeFile(join(state,'jobs',row.jobId+'.json'),JSON.stringify(row));
  const inspector=createSessionInspector({state,jobs:{status:jobId=>rows.find(job=>job.jobId===jobId)}});
  const listing=await inspector.list(scope);assert.equal(listing.total,2);
  assert.equal(listing.sessions.find(row=>row.modelId==='quick').taskCount,2);assert.equal(listing.sessions.find(row=>row.modelId==='deep').taskCount,1);
  assert.equal((await inspector.list(scope,{query:'fixture-deep'})).total,1);
  const detail=await inspector.detail(scope,{topic:'same',executionScope,modelSessionScope:hash('quick')});
- assert.equal(detail.total,2);assert.equal(detail.session.modelId,'quick');assert.equal(detail.records[0].model,'fixture-quick');assert.equal(detail.records[0].thinkingLevel,6);
+ assert.equal(detail.total,2);assert.equal(detail.session.modelId,'quick');assert.equal(detail.records[0].model,'fixture-quick');assert.equal(detail.records[0].thinkingLevel,undefined);assert.equal(detail.records[0].hermesTemplateId,'codex');assert.equal(detail.records[0].queueId,'short');
  const linked=await inspector.detail(scope,{topic:'same',jobId:id2});assert.equal(linked.total,1);assert.equal(linked.session.modelId,'deep');assert.equal(linked.records[0].jobId,id2);
  await assert.rejects(inspector.detail(scope,{topic:'same'}),/model session scope/);
  await assert.rejects(inspector.detail(scope,{topic:'same',modelSessionScope:hash('quick'),jobId:id2}));

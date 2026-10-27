@@ -1,3 +1,4 @@
+import {defaultHermesTemplates,hermesTemplatesSchema,validateHermesTemplates,bindHermes,hermesCommand} from './hermes-templates.mjs';
 import {defaultTaskQueues,taskQueuesSchema,resolveTaskQueues,queueIdPattern} from './task-queues.mjs';
 import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
@@ -12,7 +13,7 @@ export const defaultConfiguration = {
  state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
  node:'node', cli:'codex',
  codexHome:'~/.codex', pathPrefix:'',
- modelProfiles:{default:{enabled:true,harness:'codex',model:'gpt-6.1-sol',reasoningEffort:'low'}}, defaultModelId:'default', thinkingLevel:0, skillContextRoot:'', projectRouting:'auto',
+ modelProfiles:{default:{enabled:true,harness:'codex',model:'gpt-6.1-sol',reasoningEffort:'low'}}, defaultModelId:'default', hermesTemplates:defaultHermesTemplates, skillContextRoot:'', projectRouting:'auto',
  approvalMode:'dangerously-bypass-approvals-and-sandbox',
  taskQueues:defaultTaskQueues, defaultQueueId:'short', timeoutMs:1800000, longTimeoutMs:10800000, skillsEnabled:true, skillDirectories:['skills','.agents/skills'],
  executorInstructions, businessDataPolicy,
@@ -27,12 +28,10 @@ const modelIdPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
 const effortSchema = {type:'string',enum:['minimal','low','medium','high','xhigh','max']};
 const speedSchema = {type:'string',enum:['default','fast']};
 const commandSchema = {type:'string',pattern:'\\S',maxLength:40000};
-const levelProfilesSchema = properties=>({type:'object',additionalProperties:false,properties:Object.fromEntries(Array.from({length:7},(_,level)=>[String(level),{type:'object',additionalProperties:false,properties}]))});
 // Native dictionary keys are stable model IDs; newly added entries start disabled.
 const profileSchema={type:'object',default:{enabled:false,harness:'codex',model:'gpt-6.1-sol',reasoningEffort:'low'},required:['enabled','harness','model'],additionalProperties:false,properties:{
  enabled:{type:'boolean',default:false},name:{type:'string',maxLength:160},description:{type:'string',maxLength:2000},
  harness:{type:'string',enum:['codex']},model:commandSchema,cli:commandSchema,reasoningEffort:{...effortSchema,default:'low'},speed:speedSchema,
- thinkingProfiles:levelProfilesSchema({reasoningEffort:effortSchema,speed:speedSchema}),
 }};
 const modelProfilesSchema={type:'object',propertyNames:{type:'string',pattern:modelIdPattern},additionalProperties:profileSchema};
 export const configurationProperties = Object.fromEntries(Object.entries(defaultConfiguration).map(([key,value])=>{
@@ -44,11 +43,11 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='reportDirectory')schema.pattern=relativePathPattern;
  if(key==='projectRouting')schema.enum=['auto','agent-repo','legacy'];
  if(key==='skillContextRoot')schema.pattern='^(?:$|/|~/)';
+ if(key==='hermesTemplates')Object.assign(schema,hermesTemplatesSchema);
  if(key==='taskQueues')Object.assign(schema,taskQueuesSchema);
  if(key==='defaultQueueId')schema.pattern=queueIdPattern;
  if(key==='modelProfiles')Object.assign(schema,modelProfilesSchema);
  if(key==='defaultModelId')schema.pattern='^(?:$|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$';
- if(key==='thinkingLevel')Object.assign(schema,{minimum:0,maximum:6});
  if(key==='approvalMode')schema.enum=['dangerously-bypass-approvals-and-sandbox','read-only','workspace-write'];
  if(['timeoutMs','longTimeoutMs'].includes(key))Object.assign(schema,{minimum:1000,maximum:86400000});
  return [key,schema];
@@ -66,10 +65,12 @@ const expandHome=value=>typeof value==='string'&&value.startsWith('~/')?join(hom
 export function resolveConfiguration(input={}) {
  const config={...defaultConfiguration,...input,...resolveTaskQueues(input)};
  // Model and effort are execution outputs, never operator-level fallback settings.
- delete config.models;delete config.model;delete config.reasoningEffort;
+ delete config.models;delete config.model;delete config.reasoningEffort;delete config.thinkingLevel;delete config.thinkingProfiles;
  for(const key of ['state','cwd','codexHome','skillContextRoot','node','cli'])config[key]=expandHome(config[key]);
  if(typeof config.pathPrefix==='string')config.pathPrefix=config.pathPrefix.split(delimiter).map(expandHome).join(delimiter);
  if(config.modelProfiles&&typeof config.modelProfiles==='object'&&!Array.isArray(config.modelProfiles))config.modelProfiles=Object.fromEntries(Object.entries(config.modelProfiles).map(([id,profile])=>[id,profile&&typeof profile==='object'&&!Array.isArray(profile)?{reasoningEffort:'low',...profile,...(Object.hasOwn(profile,'cli')?{cli:expandHome(profile.cli)}:{})}:profile]));
+ if(config.modelProfiles&&typeof config.modelProfiles==='object')for(const profile of Object.values(config.modelProfiles))if(profile&&typeof profile==='object')delete profile.thinkingProfiles;
+ validateHermesTemplates(config.hermesTemplates,config.harness?undefined:config.taskQueues);
  for(const [key,schema] of Object.entries(configurationProperties))if(!validValue(config[key],schema))throw Error('Invalid '+key);
  const entries=modelEntries(config),baseline=entries.find(model=>model.id===config.defaultModelId)??entries[0];
  if(baseline){config.model=baseline.model;config.reasoningEffort=baseline.reasoningEffort;}
@@ -80,28 +81,31 @@ export function resolveConfiguration(input={}) {
 function modelEntries(config) {
  return Object.entries(config.modelProfiles).filter(([,profile])=>profile.enabled).map(([id,profile])=>({...profile,id}));
 }
-// Level 0 inherits the operator's baseline; it never disables reasoning.
+// The second argument remains reserved for old internal callers; numbered levels no longer select parameters.
 export function resolveExecution(input={},level,modelId) {
- const config=resolveConfiguration(input);
- const thinkingLevel=level===undefined?config.thinkingLevel:level;
- if(!Number.isInteger(thinkingLevel)||thinkingLevel<0||thinkingLevel>6)throw Error('Invalid thinkingLevel: expected integer 0–6');
- const models=modelEntries(config);
+ if(level!==undefined&&level!==0)throw Error('thinkingLevel has been removed; configure Hermes variables instead');
+ const config=resolveConfiguration(input),models=modelEntries(config);
  if(!models.length)throw Error('No enabled model profiles: configure and enable a model in OpenClaw settings');
  const selectedId=modelId===undefined?(models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:models[0].id):modelId;
  const selected=models.find(model=>model.id===selectedId);
  if(!selected)throw Error('Invalid modelId: choose a configured model');
- const profile=selected.thinkingProfiles?.[String(thinkingLevel)]??{};
- const reasoningEffort=thinkingLevel===0?(selected.reasoningEffort):['minimal','low','medium','high','xhigh','max'][thinkingLevel-1];
- const execution={...config,cli:selected.cli??config.cli,model:selected.model,reasoningEffort,...(selected.speed?{speed:selected.speed}:{}),...profile,thinkingLevel,harness:selected.harness,modelId:selected.id,modelName:selected.name||selected.id};
+ const execution={...config,cli:selected.cli??config.cli,modelCli:selected.cli,model:selected.model,reasoningEffort:selected.reasoningEffort,...(selected.speed?{speed:selected.speed}:{}),harness:selected.harness,modelId:selected.id,modelName:selected.name||selected.id};
  return {...execution,modelSessionScope:createHash('sha256').update(JSON.stringify([execution.harness,execution.model])).digest('hex')};
+}
+export function resolveQueueExecution(input={},params={}){
+ if(params.thinkingLevel!==undefined)throw Error('thinkingLevel has been removed; configure Hermes variables instead');
+ const config=resolveExecution(input,undefined,params.modelId),queueId=params.queueId??params.taskClass??config.defaultQueueId;
+ if(!Object.hasOwn(config.taskQueues,queueId))throw Error('Unknown task queue: '+queueId);
+ return {...bindHermes(config,config.taskQueues[queueId],{explicitModel:params.modelId!==undefined}),queueId};
 }
 export function modelCatalog(input={}) {
  const config=resolveConfiguration(input),models=modelEntries(config);
- return {defaultModelId:models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:(models[0]?.id??''),defaultThinkingLevel:config.thinkingLevel,models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,levels:Array.from({length:7},(_,thinkingLevel)=>{const execution=resolveExecution(config,thinkingLevel,model.id);return {thinkingLevel,reasoningEffort:execution.reasoningEffort,...(execution.speed?{speed:execution.speed}:{})};})}))};
+ return {defaultModelId:models.some(model=>model.id===config.defaultModelId)?config.defaultModelId:(models[0]?.id??''),models:models.map(model=>({id:model.id,name:model.name||model.id,description:model.description??'',harness:model.harness,model:model.model,reasoningEffort:model.reasoningEffort,...(model.speed?{speed:model.speed}:{})}))};
 }
 export function executionFingerprint(config,{policyVersion}={}) {
  const keys=['cwd','cli','codexHome','model',...(config.modelSessionScope?['harness']:['reasoningEffort']),'approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];
  const value=keys.map(k=>[k,config[k]]);
+ if(config.hermesExecution)value.push(['hermesExecution',config.hermesExecution]);
  if(config.scopedSkillSnapshot?.projectRegistration)value.push(['projectRegistration',config.scopedSkillSnapshot.projectRegistration]);
  if(config.skillContextRoot)value.push(['skillContextRoot',config.skillContextRoot]);
  if(config.speed&&!config.modelSessionScope)value.push(['speed',config.speed]);
@@ -110,13 +114,7 @@ export function executionFingerprint(config,{policyVersion}={}) {
  if(JSON.stringify(value)===JSON.stringify(keys.map(k=>[k,baseline[k]])))return undefined;
  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
-export function cliArguments(config,{refresh=false,threadId,outputSchemaPath}={}) {
+export function cliArguments(config,options={}) {
  if(config.harness!==undefined&&config.harness!=='codex')throw Error('Unsupported harness');
- const policy=refresh?['--sandbox','read-only']:config.approvalMode==='dangerously-bypass-approvals-and-sandbox'
-  ?['--dangerously-bypass-approvals-and-sandbox']:['--sandbox',config.approvalMode];
- const instructions=config.executorInstructions.replaceAll('{projectDir}',config.cwd).replaceAll(defaultConfiguration.cwd,config.cwd);
- return ['exec','--cd',config.cwd,...policy,'-c','developer_instructions='+JSON.stringify(instructions),
-  '-c','model_reasoning_effort='+JSON.stringify(config.reasoningEffort),
-  ...(config.speed?['-c','service_tier='+JSON.stringify(config.speed)]:[]),'--model',config.model,
-  ...(threadId?['resume',threadId]:[]),...(refresh&&outputSchemaPath?['--output-schema',outputSchemaPath]:[]),'--json','-'];
+ return hermesCommand(config,options).args;
 }
