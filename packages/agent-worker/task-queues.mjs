@@ -1,10 +1,11 @@
 import {hermesVariablesSchema,validateHermesVariables} from './hermes-templates.mjs';
 export const queueIdPattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$';
+export const defaultModelVariables={model:'gpt-6.1-sol',reasoningEffort:'low',speed:''};
 export const defaultTaskQueues={
- short:{hermesTemplateId:'codex',hermesVariables:{},name:'短任务',description:'常规查询及短时间执行',timeoutMs:1800000,maxConcurrentJobs:3,maxQueuedJobs:100},
- long:{hermesTemplateId:'codex',hermesVariables:{},name:'长任务',description:'需要较长时间的分析、构建或处理',timeoutMs:10800000,maxConcurrentJobs:1,maxQueuedJobs:100},
+ short:{hermesTemplateId:'codex',hermesVariables:{...defaultModelVariables},name:'短任务',description:'常规查询及短时间执行',timeoutMs:1800000,maxConcurrentJobs:3,maxQueuedJobs:100},
+ long:{hermesTemplateId:'codex',hermesVariables:{...defaultModelVariables},name:'长任务',description:'需要较长时间的分析、构建或处理',timeoutMs:10800000,maxConcurrentJobs:1,maxQueuedJobs:100},
 };
-export const taskQueuesSchema={type:'object',propertyNames:{type:'string',pattern:queueIdPattern},additionalProperties:{type:'object',required:['name','timeoutMs','maxConcurrentJobs','maxQueuedJobs'],additionalProperties:false,default:{name:'新队列',timeoutMs:1800000,maxConcurrentJobs:1,maxQueuedJobs:100},properties:{hermesTemplateId:{type:'string',pattern:queueIdPattern},hermesVariables:hermesVariablesSchema,name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},timeoutMs:{type:'integer',minimum:1000,maximum:86400000},maxConcurrentJobs:{type:'integer',minimum:1,maximum:10},maxQueuedJobs:{type:'integer',minimum:1,maximum:1000}}}};
+export const taskQueuesSchema={type:'object',propertyNames:{type:'string',pattern:queueIdPattern},additionalProperties:{type:'object',required:['name','timeoutMs','maxConcurrentJobs','maxQueuedJobs'],additionalProperties:false,default:{name:'新队列',timeoutMs:1800000,maxConcurrentJobs:1,maxQueuedJobs:100},properties:{hermesTemplateId:{type:'string',pattern:queueIdPattern},hermesVariables:{...hermesVariablesSchema,properties:{model:{type:'string',pattern:'\\S',default:'gpt-6.1-sol'},reasoningEffort:{type:'string',enum:['minimal','low','medium','high','xhigh','max'],default:'low'},speed:{type:'string',enum:['','default','fast'],default:''}}},name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},timeoutMs:{type:'integer',minimum:1000,maximum:86400000},maxConcurrentJobs:{type:'integer',minimum:1,maximum:10},maxQueuedJobs:{type:'integer',minimum:1,maximum:1000}}}};
 export function resolveTaskQueues(config={}){
  const queues=config.taskQueues===undefined?{
   short:{...defaultTaskQueues.short,timeoutMs:config.timeoutMs??1800000,maxConcurrentJobs:config.maxConcurrentJobs??3,maxQueuedJobs:config.maxQueuedJobs??100},
@@ -19,7 +20,7 @@ export function resolveTaskQueues(config={}){
  }
  const defaultQueueId=config.defaultQueueId===undefined?'short':config.defaultQueueId;
  if(typeof defaultQueueId!=='string'||!Object.hasOwn(queues,defaultQueueId))throw Error('defaultQueueId must name a configured queue');
- return {taskQueues:structuredClone(queues),defaultQueueId};
+ return {taskQueues:Object.fromEntries(Object.entries(queues).map(([id,q])=>[id,{...structuredClone(q),hermesVariables:{...defaultModelVariables,...q.hermesVariables}}])),defaultQueueId};
 }
 export function requestedQueueId(params){
  if(params.taskClass!==undefined&&!['short','long'].includes(params.taskClass))throw Error('Invalid taskClass');

@@ -70,7 +70,7 @@ test('pre-Hermes admitted requests execute and resume with the original model pa
  const calls=(await readFile(join(root,'calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
  assert.ok(calls[0].args.includes('model_reasoning_effort="high"'));assert.ok(calls[1].args.includes(waiting.resumeSessionId));
  assert.equal(readJson(join(config.state,'jobs',waiting.jobId+'.request.json')).params.thinkingLevel,6);
- const current=resolveConfiguration({...legacy,harness:undefined});
+ const {thinkingLevel,...newConfig}=legacy;const current=resolveConfiguration({...newConfig,harness:undefined});
  assert.equal(decode(await executeQuery({action:'list'},{sessionKey:scope},current)).tasks[0].needsMigration,true);
 });
 
@@ -103,18 +103,11 @@ test('in-flight Hermes v1 snapshots retain their old fingerprint when resuming',
  assert.equal(done.sessionId,waiting.sessionId);assert.equal(done.reused,true);
 });
 
-test('history matches explicit model IDs before same-model parameter presets',async t=>{
- const {config}=await fixture(t),context={sessionKey:'model-preset-history'};
- config.modelProfiles={quick:{enabled:true,harness:'codex',model:'same-model',reasoningEffort:'low'},deep:{enabled:true,harness:'codex',model:'same-model',reasoningEffort:'high'}};
- config.defaultModelId='quick';
- const selected={...params,modelId:'deep'};
- const first=decode(await executeQuery(selected,context,config));
+test('history compares queue execution parameters without a second model selector',async t=>{
+ const {config}=await fixture(t),context={sessionKey:'queue-preset-history'};
+ const first=decode(await executeQuery(params,context,config));
  assert.equal(decode(await executeQuery({action:'list'},context,config)).tasks[0].needsMigration,false);
- const next=decode(await executeQuery(selected,context,config));assert.equal(next.reused,true);assert.equal(next.sessionId,first.sessionId);
- const changed={...config,modelProfiles:{...config.modelProfiles,deep:{...config.modelProfiles.deep,reasoningEffort:'max'}}};
+ const next=decode(await executeQuery(params,context,config));assert.equal(next.sessionId,first.sessionId);
+ const changed={...config,taskQueues:{...config.taskQueues,custom:{...config.taskQueues.custom,hermesVariables:{...config.taskQueues.custom.hermesVariables,reasoningEffort:'max'}}}};
  assert.equal(decode(await executeQuery({action:'list'},context,changed)).tasks[0].needsMigration,true);
- // A removed/disabled ID must not silently match a different ID with identical parameters.
- for(const modelProfiles of [{replacement:config.modelProfiles.deep},{replacement:config.modelProfiles.deep,deep:{...config.modelProfiles.deep,enabled:false}}]){
-  assert.equal(decode(await executeQuery({action:'list'},context,{...config,modelProfiles})).tasks[0].needsMigration,true);
- }
 });

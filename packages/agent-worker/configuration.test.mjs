@@ -4,13 +4,12 @@ import {mkdtemp,writeFile,readFile,chmod,rm,symlink} from 'node:fs/promises';
 import {tmpdir,homedir} from 'node:os';
 import {join,delimiter} from 'node:path';
 import {createHash} from 'node:crypto';
-import {defaultConfiguration,resolveConfiguration,executionFingerprint,cliArguments,resolveExecution,resolveQueueExecution,modelCatalog} from './configuration.mjs';
+import {defaultConfiguration,resolveConfiguration,executionFingerprint,cliArguments,resolveExecution,resolveQueueExecution} from './configuration.mjs';
 import plugin,{executeQuery,buildTaskPrompt,delegationDescription,memorySchema} from './index.mjs';
 import {createJobs,readJson} from './jobs.mjs';
 import {fileURLToPath} from 'node:url';
 import {bindingKey} from './project-binding.mjs';
-const profilesOf=models=>Object.fromEntries(models.map(({id,...model})=>[id,{enabled:true,...model}]));
-const singleModel=(model,reasoningEffort='low')=>({modelProfiles:profilesOf([{id:'default',harness:'codex',model,reasoningEffort}])});
+const singleModel=(model,reasoningEffort='low')=>({taskQueues:Object.fromEntries(Object.entries(defaultConfiguration.taskQueues).map(([id,q])=>[id,{...q,hermesVariables:{model,reasoningEffort,speed:''}}]))});
 const requireManifestText=await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8');
 
 test('UI defaults match runtime defaults; configured policies and optional integrations are effective',async()=>{
@@ -49,14 +48,14 @@ test('portable published paths resolve at runtime without writing a build-machin
  assert.equal(config.node,'node');assert.equal(config.cli,'codex');assert.equal(config.pathPrefix,'');
  assert.ok(!JSON.stringify(manifest).includes(homedir()));
  assert.ok(!delegationDescription(config).includes('{projectDir}'));
- const input={state:'/fixture/private state',cwd:'/fixture/business workspace',codexHome:'/fixture/codex',skillContextRoot:'~/fixture-agent',node:'~/bin/node',cli:'~/bin/codex',pathPrefix:['~/bin','/fixture/bin'].join(delimiter),modelProfiles:profilesOf([{id:'custom',harness:'codex',model:'fixture-model',cli:'~/bin/model-codex'}])};
+ const input={state:'/fixture/private state',cwd:'/fixture/business workspace',codexHome:'/fixture/codex',skillContextRoot:'~/fixture-agent',node:'~/bin/node',cli:'~/bin/codex',pathPrefix:['~/bin','/fixture/bin'].join(delimiter),...singleModel('fixture-model')};
  const custom=resolveConfiguration(input);
  assert.equal(custom.state,input.state);assert.equal(custom.cwd,input.cwd);assert.equal(custom.codexHome,input.codexHome);
  assert.equal(custom.skillContextRoot,join(homedir(),'fixture-agent'));
  assert.equal(custom.node,join(homedir(),'bin/node'));assert.equal(custom.cli,join(homedir(),'bin/codex'));
  assert.equal(custom.pathPrefix,[join(homedir(),'bin'),'/fixture/bin'].join(delimiter));
- assert.equal(resolveExecution(custom).cli,join(homedir(),'bin/model-codex'));
- assert.equal(input.modelProfiles.custom.cli,'~/bin/model-codex');
+ assert.equal(resolveExecution(custom).cli,join(homedir(),'bin/codex'));
+
  const args=cliArguments(custom),instructions=JSON.parse(args.find(value=>value.startsWith('developer_instructions=')).slice('developer_instructions='.length));
  assert.ok(instructions.includes(custom.cwd));assert.ok(!instructions.includes('{projectDir}'));
  assert.ok(delegationDescription(custom).includes(custom.cwd));
@@ -166,14 +165,10 @@ test('registration and manifest expose only delegation without inactive history 
 });
 
 
-test('numbered levels are removed while direct model parameters remain configurable',()=>{
- const config=resolveConfiguration({...singleModel('baseline-model','medium'),thinkingLevel:6});
- assert.equal(config.thinkingLevel,undefined);assert.equal(resolveExecution(config).reasoningEffort,'medium');
- assert.throws(()=>resolveExecution(config,6),/removed/);
- const old=resolveConfiguration({modelProfiles:profilesOf([{id:'old',harness:'codex',model:'old-model',thinkingProfiles:{'6':{reasoningEffort:'max'}}}])});
- assert.equal(old.modelProfiles.old.thinkingProfiles,undefined);assert.equal(resolveExecution(old).reasoningEffort,'low');
- const custom=resolveExecution({...config,modelProfiles:profilesOf([{id:'custom',harness:'codex',cli:'/fixture/custom-codex',model:'other-model',reasoningEffort:'high',speed:'fast'}])});
- assert.ok(cliArguments(custom).includes('service_tier="fast"'));assert.ok(cliArguments(custom).includes('model_reasoning_effort="high"'));
+test('retired selectors are rejected instead of silently overriding queues',()=>{
+ for(const key of ['modelProfiles','defaultModelId','thinkingLevel','thinkingProfiles'])assert.throws(()=>resolveConfiguration({[key]:{}}),/removed/);
+ assert.throws(()=>resolveQueueExecution({}, {modelId:'old'}),/removed/);
+ assert.throws(()=>resolveExecution({},6),/removed/);
 });
 
 test('queue Hermes variables reach the CLI and changes retain separate sessions',async t=>{
@@ -252,146 +247,6 @@ test('v5 frozen default fingerprint remains compatible without treating new runs
  assert.notEqual(executionFingerprint({...legacy,model:'changed'},{policyVersion:5}),undefined);
 });
 
-const modelOptions=()=>[
- {id:'quick',name:'快速模型',description:'常规查询和轻量任务',harness:'codex',model:'fixture-quick',reasoningEffort:'low',speed:'fast'},
- {id:'deep',name:'分析模型',description:'复杂排查',harness:'codex',model:'fixture-deep',reasoningEffort:'medium'},
-];
-
-test('model catalog exposes direct parameters without numbered levels',()=>{
- const config=resolveConfiguration({modelProfiles:profilesOf(modelOptions()),defaultModelId:'deep'}),catalog=modelCatalog(config);
- assert.equal(catalog.defaultModelId,'deep');assert.equal(catalog.defaultThinkingLevel,undefined);
- assert.deepEqual(catalog.models.map(model=>model.id),['quick','deep']);assert.equal(catalog.models[0].levels,undefined);
- assert.equal(catalog.models[0].reasoningEffort,'low');assert.equal(resolveExecution(config).model,'fixture-deep');
- assert.equal(resolveExecution(config,undefined,'quick').model,'fixture-quick');
- assert.deepEqual(modelCatalog({modelProfiles:{}}).models,[]);
- assert.throws(()=>resolveExecution({modelProfiles:{}}),/No enabled model profiles/);
- for(const id of ['missing','',null,42])assert.throws(()=>resolveExecution(config,undefined,id),/modelId/);
-});
-
-test('model choices preserve separate Hermes sessions and policy changes migrate only that model',async t=>{
- const config={...await fixture(t),modelProfiles:profilesOf(modelOptions())},context={sessionKey:'model-session-fixture'},params={action:'run',topic:'same',task:'read',context:'none',constraints:'read only'};
- const decode=response=>JSON.parse(response.content[0].text),run=extra=>executeQuery({...params,...extra},context,config).then(decode);
- const quick=await run({modelId:'quick'}),deep=await run({modelId:'deep'});
- assert.equal(quick.model,'fixture-quick');assert.equal(quick.reasoningEffort,'low');assert.equal(deep.reasoningEffort,'medium');
- assert.notEqual(quick.sessionId,deep.sessionId);
- const higher=await run({modelId:'quick'});
- assert.equal(higher.sessionId,quick.sessionId);assert.equal(higher.reused,true);assert.equal(higher.reasoningEffort,'low');assert.equal(higher.speed,'fast');
- assert.equal((await run({modelId:'deep'})).sessionId,deep.sessionId);
- const renamed={...config,modelProfiles:profilesOf([{...modelOptions()[0],id:'renamed'},modelOptions()[1]])};
- assert.equal(decode(await executeQuery({...params,modelId:'renamed'},context,renamed)).sessionId,quick.sessionId);
- const listed=decode(await executeQuery({action:'list'},context,renamed));
- assert.equal(listed.tasks.length,2);assert.ok(listed.tasks.every(task=>!task.needsMigration));
- const removed=decode(await executeQuery({action:'list'},context,{...config,modelProfiles:profilesOf([modelOptions()[1]])}));
- assert.equal(removed.tasks.find(task=>task.model==='fixture-quick').needsMigration,true);
- const changed={...config,executorInstructions:'changed read-only policy'},migrated=decode(await executeQuery({...params,modelId:'quick'},context,changed));
- assert.notEqual(migrated.sessionId,quick.sessionId);assert.equal(migrated.migratedFrom,quick.sessionId);
- assert.equal((await run({modelId:'deep'})).sessionId,deep.sessionId);
- const calls=(await readFile(join(config.cwd,'seen.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
- assert.ok(calls[0].args.includes('model_reasoning_effort="low"'));assert.ok(calls[0].args.includes('fixture-quick'));
- assert.ok(calls[1].args.includes('fixture-deep'));assert.ok(calls[2].args.includes('service_tier="fast"'));
- const selected=resolveExecution(config,0,'quick');
- assert.notEqual(bindingKey('same',{...selected,executionScope:'project-a'}),bindingKey('same',{...selected,executionScope:'project-b'}));
-});
-
-test('queued model selections stay frozen after removal and accepted retries do not resolve a new model',async t=>{
- let config={...await fixture(t),modelProfiles:profilesOf(modelOptions())};
- const jobs=createJobs({root:join(config.state,'jobs'),node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:params=>resolveExecution(config,undefined,params?.modelId),getLimits:()=>({maxConcurrentJobs:1,maxQueuedJobs:10}),logger:console});
- const params={topic:'frozen-model',task:'slow',context:'none',constraints:'read only',modelId:'quick',waitSeconds:0};
- const first=await jobs.run(params,'model-snapshot'),queued=await jobs.run({...params,task:'read',requestId:'queued'},'model-snapshot');
- assert.equal(queued.status,'queued');
- config={...config,modelProfiles:profilesOf([modelOptions()[1]])};
- const request=readJson(join(config.state,'jobs',queued.jobId+'.request.json'));
- assert.equal(request.runtime.modelId,'quick');assert.equal(request.runtime.model,'fixture-quick');assert.equal(request.runtime.thinkingLevel,undefined);
- const completed=await jobs.wait(first.jobId,'model-snapshot',5);assert.equal(completed.status,'completed');
- jobs.tick();const next=await jobs.wait(queued.jobId,'model-snapshot',5);assert.equal(next.status,'completed');
- const result=JSON.parse(next.result.content[0].text);assert.equal(result.model,'fixture-quick');assert.equal(result.reasoningEffort,'low');
- assert.equal((await jobs.run(params,'model-snapshot')).jobId,first.jobId);
- await assert.rejects(jobs.run({...params,requestId:'new'},'model-snapshot'),/modelId/);
-});
-
-test('tool advertises configured models and rejects changing a continuation selection',async t=>{
- const config={...await fixture(t),modelProfiles:profilesOf(modelOptions()),defaultModelId:'deep'},factories=[];
- plugin.register({pluginConfig:config,logger:console,registerService:()=>{},registerTool:factory=>factories.push(factory)});
- const tool=factories[0]({sessionKey:'model-tool-fixture'});
- assert.deepEqual(tool.parameters.properties.modelId.enum,['quick','deep']);
- assert.ok(tool.description.includes('复杂排查'));assert.ok(!tool.description.includes('0–6'));assert.equal(tool.parameters.properties.thinkingLevel,undefined);
- await assert.rejects(tool.execute('',{action:'run',thinkingLevel:6}),/THINKING_LEVEL_REMOVED/);
- const catalog=JSON.parse((await tool.execute('',{action:'models'})).content[0].text);
- assert.equal(catalog.defaultModelId,'deep');assert.ok(!JSON.stringify(catalog).includes(config.cwd));
- await assert.rejects(tool.execute('',{action:'reply',modelId:'quick'}),/MODEL_SELECTION_INVALID/);
- await assert.rejects(tool.execute('',{action:'run',topic:'invalid',task:'read',context:'none',constraints:'read only',modelId:'missing'}),/MODEL_SELECTION_INVALID/);
-});
-
-
-test('reply resumes the frozen model parameters after the operator removes that model',async t=>{
- let config={...await fixture(t),modelProfiles:profilesOf(modelOptions())};
- const jobs=createJobs({root:join(config.state,'jobs'),node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:params=>resolveExecution(config,undefined,params?.modelId),logger:console});
- const scope='model-reply',params={topic:'paused-model',task:'ask',context:'none',constraints:'read only',modelId:'quick',waitSeconds:5};
- const waiting=await jobs.run(params,scope);assert.equal(waiting.status,'awaiting_main');
- config={...config,modelProfiles:{}};
- await jobs.reply(waiting.jobId,scope,waiting.contextRequest.questionId,'fixture answer');
- const done=await jobs.wait(waiting.jobId,scope,5);assert.equal(done.status,'completed');
- const result=JSON.parse(done.result.content[0].text);
- assert.equal(result.sessionId,waiting.resumeSessionId);assert.equal(result.modelId,'quick');assert.equal(result.model,'fixture-quick');assert.equal(result.thinkingLevel,undefined);assert.equal(result.reasoningEffort,'low');assert.equal(result.speed,'fast');
-});
-
-
-test('native model dictionary has no legacy options or implicit fallback',()=>{
- const manifest=JSON.parse(requireManifestText),schema=manifest.configSchema.properties.modelProfiles;
- const seed=schema.additionalProperties.default;
- for(const key of ['models','model','reasoningEffort']){
-  assert.ok(!Object.hasOwn(manifest.configSchema.properties,key));
-  assert.ok(!Object.hasOwn(manifest.uiHints,key));
- }
- const config={model:'removed-model',reasoningEffort:'max',models:modelOptions(),modelProfiles:{draft:{...seed},second:{...seed}}};
- assert.deepEqual(modelCatalog(config).models,[]);
- assert.equal(modelCatalog(config).defaultModelId,'');
- assert.throws(()=>resolveExecution(config),/No enabled model profiles/);
- assert.equal(manifest.uiHints['modelProfiles.*.thinkingProfiles.6.reasoningEffort'],undefined);
-});
-
-test('native model dictionary selects enabled IDs with direct parameters and safe default fallback',()=>{
- const modelProfiles={quick:{enabled:true,harness:'codex',model:'fixture-quick',name:'Quick',cli:'~/bin/codex',reasoningEffort:'low'},deep:{enabled:true,harness:'codex',model:'fixture-deep',reasoningEffort:'high',speed:'fast'}};
- const input={modelProfiles,defaultModelId:'deep'};
- const execution=resolveExecution(input);
- assert.equal(execution.modelId,'deep');assert.equal(execution.model,'fixture-deep');
- assert.equal(execution.reasoningEffort,'high');assert.equal(execution.speed,'fast');
- assert.equal(resolveExecution(input,0,'quick').cli,join(homedir(),'bin/codex'));
- assert.equal(input.modelProfiles.quick.cli,'~/bin/codex');
- assert.deepEqual(modelCatalog(input).models.map(model=>model.id),['quick','deep']);
- const disabled={...input,modelProfiles:{...modelProfiles,deep:{...modelProfiles.deep,enabled:false}}};
- assert.equal(modelCatalog(disabled).defaultModelId,'quick');
- assert.equal(resolveExecution(disabled).modelId,'quick');
- assert.throws(()=>resolveExecution(disabled,0,'deep'),/modelId/);
- assert.equal(resolveExecution({...input,defaultModelId:'deleted'}).modelId,'quick');
- assert.deepEqual(modelCatalog({...input,modelProfiles:{}}).models,[]);
-});
-
-test('native dictionary rejects malformed keys, incomplete seeds and unsupported execution fields',()=>{
- const seed={enabled:false,harness:'codex',model:'fixture-model'};
- for(const modelProfiles of [null,[],{'bad id':seed},{draft:{enabled:true,harness:'codex'}},{draft:{...seed,model:''}},{draft:{...seed,enabled:'true'}},{draft:{...seed,id:'duplicate'}},{draft:{...seed,harness:'unknown'}}])assert.throws(()=>resolveConfiguration({modelProfiles}),/modelProfiles/);
-});
-
-test('native parameter presets for the same model preserve model session identity',()=>{
- const modelProfiles={regular:{enabled:true,harness:'codex',model:'same',reasoningEffort:'low'},analysis:{enabled:true,harness:'codex',model:'same',reasoningEffort:'high'}};
- const regular=resolveExecution({modelProfiles},0,'regular'),analysis=resolveExecution({modelProfiles},0,'analysis');
- assert.equal(regular.modelSessionScope,analysis.modelSessionScope);
- assert.equal(executionFingerprint(regular),executionFingerprint(analysis));
- assert.equal(regular.reasoningEffort,'low');assert.equal(analysis.reasoningEffort,'high');
-});
-
-
-test('an unconfigured worker exposes history and rejects new work before admission',async t=>{
- const config={...await fixture(t),modelProfiles:{}},factories=[];
- plugin.register({pluginConfig:config,logger:console,registerService:()=>{},registerTool:factory=>factories.push(factory)});
- const tool=factories[0]({sessionKey:'unconfigured-models'});
- assert.ok(!Object.hasOwn(tool.parameters.properties.modelId,'enum'));
- assert.deepEqual(JSON.parse((await tool.execute('',{action:'models'})).content[0].text).models,[]);
- assert.equal(JSON.parse((await tool.execute('',{action:'list'})).content[0].text).tasks.length,0);
- await assert.rejects(tool.execute('',{action:'run',topic:'unconfigured',task:'read',context:'none',constraints:'read only'}),/MODEL_NOT_CONFIGURED/);
- await assert.rejects(readFile(join(config.cwd,'seen.jsonl')),/ENOENT/);
-});
-
 test('skill acknowledgement schema applies to new and resumed refresh turns only',()=>{
  const config=resolveConfiguration();
  for(const threadId of [undefined,'00000000-0000-0000-0000-000000000001']){
@@ -421,6 +276,6 @@ test('configurable queue catalog validates IDs, defaults, limits and legacy migr
  plugin.register({pluginConfig:{...await fixture(t),taskQueues:config.taskQueues,defaultQueueId:config.defaultQueueId},logger:console,registerService:()=>{},registerTool:f=>factories.push(f)});
  const tool=factories[0]({sessionKey:'queue-catalog'});
  const result=JSON.parse((await tool.execute('',{action:'queues'})).content[0].text);
- assert.equal(result.defaultQueueId,'build');assert.deepEqual(result.queues.find(q=>q.id==='build'),{id:'build',...custom});
+ assert.equal(result.defaultQueueId,'build');assert.equal(result.queues.find(q=>q.id==='build').hermesVariables.model,'gpt-6.1-sol');
  await assert.rejects(tool.execute('',{action:'reply',queueId:'build'}),/QUEUE_SELECTION_INVALID/);
 });

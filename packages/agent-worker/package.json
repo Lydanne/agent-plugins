@@ -68,7 +68,8 @@
     "task-service/deletion.mjs",
     "adapters/automation.mjs",
     "adapters/automation-policy.mjs",
-    "adapters/automation-source.mjs"
+    "adapters/automation-source.mjs",
+    "migrate-model-config.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

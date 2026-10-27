@@ -50,10 +50,9 @@ Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → a
 
 | action | 何时使用 | 必要输入 |
 | --- | --- | --- |
-| models | 读取可用的 harness + 模型、用途与 0–6 级参数 | 无需 memory 或来源租约，不创建 job |
 | projects | 读取当前 Agent 的已提交项目登记 | 无项目选择器，不创建 job |
 | list | 查找同一问题的 topic 或用户要求找任务 | 可选 query；数量由 jobListLimit 控制，不传 limit/offset |
-| run | 提交明确任务 | topic、task、context、constraints；queueId、modelId 按需选择，默认还要求 memory |
+| run | 提交明确任务 | topic、task、context、constraints；queueId 按需选择，默认还要求 memory |
 | status / wait | 查询原任务 | 原 jobId；异步模式 wait 只读即时状态 |
 | cancel | 原请求人明确取消 | 原 jobId；不回滚已完成外部操作 |
 | tag | 补充检索标签 | jobId、tags，按需 tagMode |
@@ -161,9 +160,9 @@ Codex 范本结构如下，参数依据 [Codex 非交互模式](https://learn.ch
 
 `policyArgs`、`resumeArgs`、`schemaArgs` 是 codex-jsonl 范本的必需片段，stdin 固定传入 prompt。这保留只读技能刷新、输出校验和原会话恢复。模板及队列参数仅由管理员配置，不接受业务任务直接传命令或自定义变量。
 
-原 `modelProfiles` 仍可保存可用模型的直接参数，`modelId` 是可选显式覆盖：选定后以该模型的 model、reasoningEffort、speed（及显式 CLI）优先于队列变量；省略时使用“全局基线 → 模板默认变量 → 队列覆盖”的顺序。没有启用模型时仍拒绝新任务，历史查询和续接不受影响。
+模型参数统一在 `taskQueues.<id>.hermesVariables` 配置：`model`、`reasoningEffort`、`speed`（空字符串沿用 CLI 默认）。省略时固定使用 gpt-6.1-sol / low / CLI 默认速度；`action=queues` 返回补齐后的有效值。Hermes 模板只定义调用协议与非模型自定义变量，模板中配置这三个参数会被拒绝。任务只选择 queueId，不能用 modelId 覆盖参数。
 
-**智慧等级已移除**：新工具参数、模型目录和任务详情不再提供 thinkingLevel/0–6；配置表单仅将旧字段列为已废弃的高级兼容项；旧 thinkingProfiles 不再参与新任务计算。模型推理参数直接配置为 CLI 支持的值。宿主 schema 保留顶层 thinkingLevel、thinkingProfiles 及 modelProfiles 下的 thinkingProfiles 作为已废弃兼容字段，不设置默认值；升级可直接读取旧配置，运行时忽略这些字段。可以随后删除旧字段并按需要设置模板/队列变量。旧请求哈希仍能校验，已受理任务保存的 model、reasoningEffort、CLI 及会话继续使用原快照。
+`modelProfiles`、`defaultModelId`、`thinkingLevel` 和 `thinkingProfiles` 已从配置表单和 schema 删除。升级前备份配置，执行 `node packages/agent-worker/migrate-model-config.mjs OLD_JSON NEW_JSON` 生成新的配置文件，再通过宿主配置接口验证、应用和安全重载。工具不会原地覆盖或执行任务：按旧基线 → 模板 → 队列顺序保留实际模型参数，再清理旧字段；多个启用 profile 或零启用 profile 会拒绝自动迁移，需先明确映射到队列。旧请求哈希及已受理任务的执行快照保持兼容；不能通过配置迁移重新执行业务。
 
 受理时冻结 Hermes 模板正文和变量；模板修改或删除不改变排队任务或 reply。新的任务按模板 ID、实际命令、参数及有效变量隔离会话；修改模板名称或描述、调整变量字典的键顺序不切换会话。改变命令或参数不会错误复用旧会话。此前已受理快照保留原指纹算法，继续使用原会话；旧算法的历史会话在下一次新任务时迁移一次。相同队列配置下的同一 topic 仍串行，业务资源锁跨队列/模型继续有效。不要通过更换配置重跑状态未知的业务任务。
 
@@ -183,7 +182,6 @@ Codex 范本结构如下，参数依据 [Codex 非交互模式](https://learn.ch
 | --- | --- |
 | `cwd`、`cli`、`node` | 执行工作目录、Codex 命令、后台 Node 命令，默认 `~/.openclaw/workspace`、`codex`、`node`；程序可使用绝对路径或 PATH 中的命令名。 |
 | `state`、`codexHome`、`pathPrefix` | 任务存储、Codex 登录/配置目录和执行 PATH 前缀。 |
-| `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及直接推理参数。无启用项时不能提交新任务。 |
 | `hermesTemplates` | 按 ID 管理 CLI 命令和参数模板；默认 codex。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
 | `taskQueues`、`defaultQueueId` | 按 ID 添加的队列配置与默认队列；默认 short 和 long。 |

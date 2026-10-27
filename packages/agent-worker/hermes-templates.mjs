@@ -11,7 +11,7 @@ export const defaultHermesTemplates={codex:{
  resumeArgs:['resume','{{sessionId}}'],stdin:'{{prompt}}',variables:{},
 }};
 const argsSchema={type:'array',maxItems:200,items:stringSchema};
-export const hermesTemplatesSchema={type:'object',propertyNames:{type:'string',pattern:hermesIdPattern},additionalProperties:{type:'object',additionalProperties:false,required:['name','adapter','command','args','resumeArgs','stdin','variables'],default:defaultHermesTemplates.codex,properties:{name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},adapter:{type:'string',enum:['codex-jsonl']},command:{type:'string',pattern:'\\S',maxLength:40000},args:argsSchema,resumeArgs:argsSchema,stdin:stringSchema,variables:hermesVariablesSchema}}};
+export const hermesTemplatesSchema={type:'object',propertyNames:{type:'string',pattern:hermesIdPattern},additionalProperties:{type:'object',additionalProperties:false,required:['name','adapter','command','args','resumeArgs','stdin','variables'],default:defaultHermesTemplates.codex,properties:{name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},adapter:{type:'string',enum:['codex-jsonl']},command:{type:'string',pattern:'\\S',maxLength:40000},args:argsSchema,resumeArgs:argsSchema,stdin:stringSchema,variables:{...hermesVariablesSchema,propertyNames:{type:'string',pattern:'^(?!(?:model|reasoningEffort|speed)$)[A-Za-z][A-Za-z0-9_]{0,63}$'}}}}};
 const reserved=new Set(['cwd','prompt','instructions','sessionId','schemaPath','policyArgs','speedArgs','resumeArgs','schemaArgs']);
 const scalars=['cli','model','reasoningEffort','speed','codexHome','cwd','prompt','instructions','sessionId','schemaPath'];
 const arrays=['policyArgs','speedArgs','resumeArgs','schemaArgs'];
@@ -59,16 +59,15 @@ export function hermesExecutionIdentity(execution){
  return {templateId:execution.templateId,adapter:template.adapter,command:template.command,args:template.args,resumeArgs:template.resumeArgs,stdin:template.stdin,
   variables:Object.fromEntries(Object.entries(variables).sort(([a],[b])=>a.localeCompare(b)))};
 }
-export function bindHermes(config,queue,{explicitModel=false}={}){
+export function bindHermes(config,queue){
  const id=queue.hermesTemplateId??'codex',template=config.hermesTemplates[id];
  if(!template)throw Error('Unknown Hermes template: '+id);
  const variables={cli:config.cli,model:config.model,reasoningEffort:config.reasoningEffort,speed:config.speed??'',codexHome:config.codexHome,...template.variables,...queue.hermesVariables};
- if(explicitModel)Object.assign(variables,{model:config.model,reasoningEffort:config.reasoningEffort,speed:config.speed??'',...(config.modelCli?{cli:config.modelCli}:{})});
  for(const key of ['cli','codexHome'])if(variables[key]?.startsWith('~/'))variables[key]=join(homedir(),variables[key].slice(2));
  for(const key of ['cli','model','reasoningEffort','codexHome'])if(typeof variables[key]!=='string'||!variables[key].trim())throw Error('Missing Hermes variable: '+key);
  const hermesExecution=structuredClone({templateId:id,template,variables});
  const hermesRevision=createHash('sha256').update(JSON.stringify(hermesExecutionIdentity(hermesExecution))).digest('hex');
- return {...config,hermesExecution,hermesIdentityVersion:2,hermesExplicitModel:explicitModel,hermesTemplateId:id,hermesRevision,cli:variables.cli,model:variables.model,reasoningEffort:variables.reasoningEffort,speed:variables.speed||undefined,codexHome:variables.codexHome,
+ return {...config,hermesExecution,hermesIdentityVersion:2,hermesTemplateId:id,hermesRevision,cli:variables.cli,model:variables.model,reasoningEffort:variables.reasoningEffort,speed:variables.speed||undefined,codexHome:variables.codexHome,
   modelSessionScope:createHash('sha256').update(JSON.stringify(['hermes',id,hermesRevision])).digest('hex')};
 }
 export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,prompt=''}={}){
