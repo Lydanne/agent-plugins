@@ -1,3 +1,4 @@
+import {automationDefaults,automationSchema} from './adapters/automation-policy.mjs';
 import {defaultHermesTemplates,hermesTemplatesSchema,validateHermesTemplates,bindHermes,hermesCommand,hermesExecutionIdentity} from './hermes-templates.mjs';
 import {defaultTaskQueues,taskQueuesSchema,resolveTaskQueues,queueIdPattern} from './task-queues.mjs';
 import {createHash} from 'node:crypto';
@@ -10,7 +11,7 @@ export const businessDataPolicy = "当前为内部客服排查：本任务相关
 
 // Keep published defaults portable; expand home paths only when resolving runtime configuration.
 export const defaultConfiguration = {
- state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
+ automation:automationDefaults, state:'~/.openclaw/codex-query-sessions', cwd:'~/.openclaw/workspace',
  node:'node', cli:'codex',
  codexHome:'~/.codex', pathPrefix:'',
  modelProfiles:{default:{enabled:true,harness:'codex',model:'gpt-6.1-sol',reasoningEffort:'low'}}, defaultModelId:'default', hermesTemplates:defaultHermesTemplates, skillContextRoot:'', projectRouting:'auto',
@@ -43,6 +44,7 @@ export const configurationProperties = Object.fromEntries(Object.entries(default
  if(key==='reportDirectory')schema.pattern=relativePathPattern;
  if(key==='projectRouting')schema.enum=['auto','agent-repo','legacy'];
  if(key==='skillContextRoot')schema.pattern='^(?:$|/|~/)';
+ if(key==='automation')Object.assign(schema,automationSchema);
  if(key==='hermesTemplates')Object.assign(schema,hermesTemplatesSchema);
  // Preserve absence through host validation so legacy queue settings can migrate.
  if(key==='taskQueues'){Object.assign(schema,taskQueuesSchema);delete schema.default;}
@@ -65,6 +67,7 @@ function validValue(value,schema) {
 const expandHome=value=>typeof value==='string'&&value.startsWith('~/')?join(homedir(),value.slice(2)):value;
 export function resolveConfiguration(input={}) {
  const config={...defaultConfiguration,...input,...resolveTaskQueues(input)};
+ if(input.automation&&(input.automation.enabled||input.automation.callers?.length)){const id=config.automation.queueId;if(!config.taskQueues[id])config.taskQueues[id]={...config.taskQueues[config.defaultQueueId],name:'自动化任务',maxConcurrentJobs:1};if(config.taskQueues[id].maxConcurrentJobs!==1)throw Error('Automation queue concurrency must equal 1');}
  // Model and effort are execution outputs, never operator-level fallback settings.
  delete config.models;delete config.model;delete config.reasoningEffort;delete config.thinkingLevel;delete config.thinkingProfiles;
  for(const key of ['state','cwd','codexHome','skillContextRoot','node','cli'])config[key]=expandHome(config[key]);

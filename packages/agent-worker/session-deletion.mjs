@@ -1,3 +1,4 @@
+import {automationDeletionBlocked} from './task-service/deletion.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import {existsSync,mkdirSync,readdirSync,readFileSync,renameSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -45,6 +46,7 @@ export function createSessionDeletion({state}){
   const selectBindings=bindings=>Object.fromEntries(Object.entries(bindings).filter(([,entry])=>bindingKey(entry.topic,entry)===key));
   const check=()=>{
    const bindings=readBindings(),selected=selectBindings(bindings),jobs=readJobs();
+   if(automationDeletionBlocked(state,jobs))throw Error('自动化任务仍在执行、未知或待核验，不能删除。');
    if(!jobs.length&&!Object.keys(selected).length)throw Error('会话不存在或已经删除，请刷新列表。');
    if(projectId!==undefined&&[...Object.values(selected),...jobs].some(entry=>(entry.projectId??entry.project?.projectId)!==projectId))throw Error('会话项目不匹配，请刷新列表。');
    const supplements=sessionSupplements(root,jobs),result=sessionDeletionState(selected,jobs,supplements,sessionSubmissionState(scope,jobs,supplements));if(!result.canDelete)throw Error(result.deleteReason);

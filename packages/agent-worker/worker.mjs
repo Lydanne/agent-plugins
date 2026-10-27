@@ -1,3 +1,4 @@
+import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {checkJobWorkspace,holdJobWorkspace} from './workspace-runtime.mjs';
 import {jobSourceAttachments} from './source-attachments.mjs';
 import {randomUUID} from 'node:crypto';
@@ -22,6 +23,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
  },pollMs);
  try {
   // A cancelled queued job must never start a subprocess or a business operation.
+  validateAutomationSource(job.provenance,scope);
   checkCancellation();controller.signal.throwIfAborted();
   const usedMs=(job.executionRounds??[]).reduce((total,round)=>total+Math.max(0,(round.finishedAt??round.startedAt)-round.startedAt),0);
   const remainingMs=job.timeoutMs===undefined?undefined:job.timeoutMs-usedMs;
@@ -42,7 +44,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
    if(count>=(kind==='plugin'?50:5))throw Error(kind==='plugin'?'Plugin request limit reached':'Context question limit reached');
    if(typeof output.sessionId!=='string')throw Error('Context request has no Worker session');
    const question={...output.contextRequest,questionId:randomUUID(),createdAt:Date.now(),expiresAt:Date.now()+24*60*60*1000};
-   job.questions=[...(job.questions??[]),question];job.contextRequest=question;job.resumeSessionId=output.sessionId;job.status='awaiting_main';job.progress=question.question;await holdJobWorkspace(runtime??{});
+   job.questions=[...(job.questions??[]),question];job.contextRequest=question;job.resumeSessionId=output.sessionId;job.status='awaiting_main';job.progress=question.question;await holdJobWorkspace(runtime??{});if(job.provenance?.automation){checkCancellation();controller.signal.throwIfAborted();}
    if(job.notification)job.notification={state:'pending',eventKey:question.questionId,createdAt:Date.now()};
    recordEvent({event:'worker.context_request',time:Date.now(),...question});
   }else {job.status='completed';delete job.contextRequest;}

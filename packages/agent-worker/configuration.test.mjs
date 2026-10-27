@@ -124,7 +124,7 @@ test('detached workers consume persisted configuration even after the scheduling
 test('registration uses configured storage',async t=>{
  const config=await fixture(t),factories=[],services=[];
  plugin.register({pluginConfig:config,logger:console,registerService:s=>services.push(s),registerTool:f=>factories.push(f)});
- assert.equal(factories.length,1);assert.deepEqual(services.map(service=>service.id),['agent-worker-diagnostics','agent-worker-scheduled-status','agent-worker-scheduler','agent-worker-questions','agent-worker-collaboration','agent-worker-completion']);
+ assert.equal(factories.length,1);assert.deepEqual(services.map(service=>service.id),['agent-worker-automation','agent-worker-diagnostics','agent-worker-scheduled-status','agent-worker-scheduler','agent-worker-questions','agent-worker-collaboration','agent-worker-completion']);
  const tool=factories[0]({sessionKey:'plain-conversation'});
  const response=await tool.execute('',{action:'run',topic:'registered',task:'read',context:'none',constraints:'read only',waitSeconds:5});
  assert.equal(JSON.parse(response.content[0].text).status,'completed');
@@ -153,7 +153,7 @@ test('memory feature combinations advertise the actual admission and native tool
 
 test('registration and manifest expose only delegation without inactive history configuration',()=>{
  const manifest=JSON.parse(requireManifestText);
- assert.deepEqual(manifest.contracts.tools,['agent_worker']);
+ assert.deepEqual(manifest.contracts.tools,['agent_worker','agent_task_result']);
  for(const key of ['memoryRoot','memoryToolName','memoryEnabled','memorySemanticEnabled','memoryEmbeddingTimeoutMs','larkCli','openclawHome','larkPathPrefix','historyEnabled','historyLimit','historyTimeoutMs']) {
   assert.ok(!(key in defaultConfiguration));
   assert.ok(!(key in manifest.configSchema.properties));

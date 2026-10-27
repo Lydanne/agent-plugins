@@ -4,7 +4,8 @@
   "description": "按独立队列与 Hermes CLI 模板执行任务。 / Agent worker with independent queues and Hermes CLI templates.",
   "contracts": {
     "tools": [
-      "agent_worker"
+      "agent_worker",
+      "agent_task_result"
     ]
   },
   "activation": {
@@ -495,6 +496,69 @@
         },
         "description": "Hermes 模板 / Hermes templates"
       },
+      "automation": {
+        "type": "object",
+        "default": {
+          "enabled": false,
+          "callers": [],
+          "agents": [],
+          "projects": [],
+          "queueId": "automation",
+          "timeoutMs": 3600000
+        },
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "callers",
+          "agents",
+          "projects",
+          "queueId",
+          "timeoutMs"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "callers": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]{0,159}$",
+              "maxLength": 160
+            }
+          },
+          "agents": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]{0,159}$",
+              "maxLength": 160
+            }
+          },
+          "projects": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]{0,159}$",
+              "maxLength": 160
+            }
+          },
+          "queueId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+            "maxLength": 64
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 86400000
+          }
+        },
+        "description": "自动化任务 / Automation tasks"
+      },
       "thinkingLevel": {
         "type": "integer",
         "minimum": 0,
@@ -717,6 +781,10 @@
     "taskQueues.*.hermesVariables": {
       "label": "模板变量",
       "help": "覆盖模型、推理参数、CLI 路径或模板声明的自定义变量；不设置智慧等级。"
+    },
+    "automation": {
+      "label": "自动化任务 / Automation tasks",
+      "help": "默认关闭。仅允许登记的已认证本机 Gateway 身份、Agent 和项目；同一 Gateway 身份的工作流共享信任范围。停止接纳后保留查询和已接纳任务收尾。"
     },
     "thinkingLevel": {
       "label": "旧等级配置（已废弃）",

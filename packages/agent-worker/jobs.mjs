@@ -1,3 +1,4 @@
+import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {resolveTaskQueues,requestedQueueId,queueFields} from './task-queues.mjs';
 import {processAlive} from './dist/workspace-pool.mjs';
 import {attachmentIdentity,attachmentSupplement} from './source-attachments.mjs';
@@ -32,7 +33,7 @@ const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不�
 const waitPolicy={optional:'可选补充未取得时注明缺失并继续。',required:'必要业务参数未知时跳过依赖步骤，交付未完成项。',decision:'用户未明确决策时跳过对应操作，不代选。',authorization:'外部授权未确认完成时跳过依赖授权的操作，不把超时当授权成功。'};
 export function taskClassOf(job){return job.queueId??job.taskClass??'short';}
 const agentOf=job=>job.agentId??job.provenance?.agentId??job.project?.agentId??'__legacy__';
-const sameQueue=(a,b)=>agentOf(a)===agentOf(b)&&taskClassOf(a)===taskClassOf(b);
+const sameQueue=(a,b)=>(a.provenance?.automation&&b.provenance?.automation||agentOf(a)===agentOf(b))&&taskClassOf(a)===taskClassOf(b);
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
 export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger}) {
@@ -264,11 +265,16 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    writeJson(join(root,jobId+'.tags.json'),{tags:updated});
    const {result,reports,taskReport,...summary}=view({...j,tags:updated});return summary;
   },
+  executionActive(jobId,scope){get(jobId,scope);const file=join(root,jobId+'.process.json');return existsSync(file)&&processAlive(readJson(file).pid);},
+  findAutomation(taskId,scope){const found=(existsSync(root)?files():[]).filter(j=>j.scope===scopeKey(scope)&&j.provenance?.automation?.version===1&&j.provenance.automation.taskId===taskId);if(found.length>1)throw Error('Multiple automation jobs');return found[0]?view(get(found[0].jobId,scope)):null;},
+  async failAutomationContext(jobId,scope,taskId,questionId,code){const release=await acquireLock(lock);try{const j=get(jobId,scope);if(j.provenance?.automation?.version!==1||j.provenance.automation.taskId!==taskId||!waiting.has(j.status)||j.contextRequest?.questionId!==questionId)throw Error('Automation context binding mismatch');terminalJob({...j,scope:scopeKey(scope),status:'failed',error:code,finishedAt:Date.now()});return view(get(jobId,scope));}finally{release();}},
   status:(jobId,scope)=>view(get(jobId,scope)),wait,
   cancel(jobId,scope,requester){const j=get(jobId,scope);
    if(hasSourceProvenance(j.provenance) && (!requester?.senderId || requester.senderId!==j.provenance.senderId || requester.accountId!==j.provenance.accountId))throw Error('Only the task requester can cancel this job');
    if(!hasSourceProvenance(j.provenance) && scope.includes(':feishu:'))throw Error('Job requester is unknown; administrator inspection required');
    const stored=readJson(join(root,jobId+'.json'));
+   const processFile=join(root,jobId+'.process.json');
+   if(j.provenance?.automation&&existsSync(processFile)&&processAlive(readJson(processFile).pid)){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});return {...view(j),status:'cancelling'};}
    if(waiting.has(stored.status)){terminalJob({...stored,status:'cancelled',finishedAt:Date.now(),notification:stored.notification?{state:'pending',eventKey:randomUUID()}:undefined});return view(get(jobId,scope));}
    if(active.has(stored.status)||stored.status==='unknown'){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});return {...view(j),status:j.status==='unknown'?'unknown':'cancelling',note:'Cancellation requested; business operations already accepted externally are not rolled back.'};}return view(j);},
   awaitUser(jobId,scope,questionId,requester,authorize,knownValues){return this.reply(jobId,scope,questionId,undefined,requester,authorize,true,knownValues);},
@@ -412,6 +418,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    }
   },
   async run(params,scope,provenance){
+   validateAutomationSource(provenance,scope);
    requestedQueueId(params);
    const automaticRequestId=params.requestId===undefined;
    if(automaticRequestId)params={...params,requestId:getRequestId(params,provenance)};
@@ -454,7 +461,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(prior){jobId=prior.jobId;}
     else{
      // Retries of accepted jobs succeed even when the waiting queue is full.
-     const running=all.filter(occupied),candidate={...queueFields(taskClass),queueConfig,agentId:provenance?.agentId??runtime?.projectContext?.agentId,scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,modelSessionScope:runtime?.modelSessionScope,resourceKeys};
+     const running=all.filter(occupied),candidate={...queueFields(taskClass),queueConfig,provenance,agentId:provenance?.agentId??runtime?.projectContext?.agentId,scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,modelSessionScope:runtime?.modelSessionScope,resourceKeys};
      const canStart=!runtime?.workspacePool&&!legacyBusy()&&!atCapacity(running,candidate)&&!running.some(job=>conflict(job,candidate))&&!all.some(job=>waiting.has(job.status)&&sameSession(job,candidate));
      if(!canStart&&all.filter(job=>queued(job)&&sameQueue(job,candidate)).length>=limits(candidate).maxQueuedJobs)return {status:'queue_full',...queueFields(taskClass),agentId:agentOf(candidate),accepted:false,message:'Waiting queue is full; no job was created.'};
      jobId=randomUUID();

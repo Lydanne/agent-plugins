@@ -559,3 +559,50 @@ AgentRepo 日志页可手动开启实时调试，默认关闭。agent-worker 在
 ### 技能确认的结构化回执
 
 技能刷新轮次通过 Codex `exec` / `exec resume --output-schema` 约束 JSON 回执，status 和完整 revision 使用本轮固定枚举，避免自由抄写长版本串时漏字。宿主仍逐字比较回执版本、禁止刷新轮次工具调用，并在业务执行前重新读取已发布版本；不接受截断、近似版本或刷新期间的新版本。Schema 使用私有临时文件，子进程结束后清理，不应用于业务轮次。部署的 Codex CLI 必须支持两个命令的 `--output-schema`；不支持时失败，不降级跳过确认。
+
+## 通用自动化任务（默认关闭）
+
+自动化复用 Worker 调度与工作区池，业务规则仍放在项目技能。RPC 为
+`agent-worker.automation.submit/get/cancel/rerun`，版本为 1。客户端模块为
+`automation-client.mjs`；调用方提供已认证 Gateway RPC 函数即可复用提交、等待、取消与重新执行。
+不再从聊天历史解析机器结果。
+
+配置 `automation` 的完整对象：
+
+```json
+{"enabled":false,"callers":["local-gateway-operator"],"agents":["main"],"projects":["example"],"queueId":"automation","timeoutMs":3600000}
+```
+
+Agent、项目和调用方均须匹配当前部署。`local-gateway-operator` 表示宿主认证且确认直连本机的
+Gateway 操作者，**不是独立 Runner 凭据**；同一身份下的工作流共享信任范围。会话名称、runId、
+workflow 只是审计数据，不能授予权限。当前接口不支持远程 Runner。自然语言 constraints 不是 OS 沙箱。
+新队列复制当前默认队列的有效配置并固定并发 1；已有队列不被覆盖，共用池也不保证飞书永不等待。
+关闭 enabled 停止新接纳与 rerun，保留已接纳任务收尾、get 和 cancel；不要删除调用方登记来代替停止接纳。
+
+提交字段：version、agentId、projectId、repository（可省略为项目根）、workflow、requestKey、task、
+context、constraints、useWorkspace、可选 attempt。禁止任意 cwd 和调用方指定 provenance。
+业务键在调用方、Agent、项目和业务请求键范围去重；workflow 仅作审计；相同键不同输入返回 REQUEST_CONFLICT。
+显式 rerun 提供 taskId 与稳定 operationId，前序任务必须终结并完成工作区结算，unknown 不可重跑。
+
+任务及 attempts/events/results 存于私有状态目录 `automation/automation.sqlite`，与 Worker JSON 分离。
+服务生成固定会话；当前外部插件不能直接为原生 Main 引擎调用 createSessionEntry，客户端用公开
+sessions.create 创建指定会话，服务读取并固定 sessionId。会话替换不会自动接管。
+Main 使用公开 runWithWorkAdmission、runEmbeddedAgent、带外 toolBindings；没有 owner 身份或飞书路由注入。
+核验轮次的 agent_task_result 接受 `{outcome:"succeeded"|"blocked",result:{...}}`，重复相同结果幂等，
+冲突拒绝。知识任务的 merged/no-change/blocked 是 result 中的业务值，服务不识别知识 PR。
+
+自动补充只恢复原 job/question。必要信息缺失返回 REQUIRED_CONTEXT_UNAVAILABLE，授权缺失返回
+AUTHORIZATION_REQUIRED；没有新证据的重复缺口停止。工作区由既有 scheduler 结算，不手工置空闲。
+CI 默认 15 秒查询、一小时等待；等待超时保留 taskId 且不取消。显式取消返回 cancelling，确认
+停止后才 cancelled，已发生的外部操作不会回滚。崩溃后优先对账主 job，无法确认的 Main 接纳窗口
+进入 unknown，不重派；完成 Worker 只能进入受限核验，核验最多三次。
+
+查询包含阶段、Worker 原始状态、等待原因、核验尝试、报告引用、前序任务和结果，不返回原始任务正文
+或凭据。管理中心禁止删除未结束、未知、待核验或未结算的自动化 Worker 会话；去重账本不随聊天删除。
+Main 会话在活跃任务期间持有公开 work admission，生命周期删除必须等待任务收尾。重载释放持有权，
+新实例对账后重新取得；不要回退到不认识活跃自动化任务的旧插件。
+
+验收：`node scripts/automation-host-probe.mjs` 在随机本地端口、独立配置及状态目录启动真实 Gateway，
+使用本地确定性模型与只读 Worker 替身验证来源、Main、工具绑定及结果。测试不使用生产模型凭据，
+也不代表真实 CI 或知识 PR 交付验收。部署独立进行：先检查活跃任务和备份状态，完成安全重载、
+通用只读 CI 与知识完整链路验收后再开放新受理；不自动补跑历史失败任务或处理旧飞书卡片。
