@@ -4,7 +4,7 @@ const jobTerminal=new Set(['completed','failed','cancelled','timed_out']);
 const wrap=data=>({content:[{type:'text',text:JSON.stringify(data)}]});
 /** Durable coordinator. The adapter owns host admission; jobs remains the only execution scheduler. */
 export function createTaskService({store,jobs,main,invoke,policy,logger=console}){
- let running=false,timer,stopping=false,active;
+ let running=false,timer,scheduled,stopping=false,active;
  const patch=(id,p)=>store.update(id,()=>p);
  const view=t=>({version:1,taskId:t.taskId,createdAt:t.createdAt,updatedAt:t.updatedAt,deadline:t.deadline,state:t.state,phase:t.phase,sessionKey:t.sessionKey,sessionId:t.sessionId,jobId:t.jobId,workerStatus:t.workerStatus,result:t.result,error:t.error,predecessorTaskId:t.predecessorTaskId,generation:t.generation,settled:t.settled===true,artifacts:t.artifacts??[],waitingReason:t.waitingReason,verificationAttempts:t.verificationAttempts??0,diagnostics:{unknownCount:store.list().filter(x=>x.owner===t.owner&&x.state==='unknown').length,resultReady:!!t.result},attempts:store.attempts(t.taskId)});
  const fail=(t,code,settled=false)=>patch(t.taskId,{state:settled?'failed':'cancelling',phase:settled?'finished':'stopping',error:{code},settled});
@@ -107,7 +107,7 @@ export function createTaskService({store,jobs,main,invoke,policy,logger=console}
   cancel(owner,id){const t=store.owned(id,owner);if(terminalStates.has(t.state))return view(t);const next=patch(id,{state:'cancelling',phase:'stopping',error:null,cancelRequestedAt:t.cancelRequestedAt??Date.now()});if(active?.taskId===id)active.controller.abort();return view(next);},
   rerun(owner,id,key){if(!policy.enabled)throw fault('AUTOMATION_DISABLED');const prior=store.owned(id,owner);if(!policy.agents.includes(prior.request.agentId)||!policy.projects.includes(prior.request.projectId))throw fault('TASK_SCOPE_DENIED');return view(store.rerun(owner,id,key));},
   protects:scope=>store.list().some(t=>t.sessionKey===scope&&(!terminalStates.has(t.state)||!t.settled)),
-  async start(){stopping=false;for(const t of store.list())if(t.sessionId&&(!terminalStates.has(t.state)||!t.settled)){try{await main.protect?.(t);}catch{patch(t.taskId,{state:'unknown',error:{code:'SESSION_RECONCILIATION_FAILED'}});}}timer=setInterval(()=>void tick(),1000);timer.unref();void tick();},
-  async stop(){stopping=true;clearInterval(timer);active?.controller.abort();main.releaseAll?.();while(running)await new Promise(r=>setTimeout(r,20));}
+  async start(scheduler){stopping=false;for(const t of store.list())if(t.sessionId&&(!terminalStates.has(t.state)||!t.settled)){try{await main.protect?.(t);}catch{patch(t.taskId,{state:'unknown',error:{code:'SESSION_RECONCILIATION_FAILED'}});}}if(scheduler){scheduled=scheduler.schedule({id:"automation-reconcile",delayMs:0,everyMs:1000,run:tick});}else{timer=setInterval(()=>void tick(),1000);timer.unref();void tick();}},
+  async stop(){stopping=true;scheduled?.cancel();clearInterval(timer);active?.controller.abort();main.releaseAll?.();while(running)await new Promise(r=>setTimeout(r,20));}
  };
 }

@@ -36,6 +36,8 @@ try{let ready=false;for(let i=0;i<20;i++){try{await rpc('health',{});ready=true;
  // Hot reload must preserve the durable task and its single existing worker.
  await run(['plugins','reload','automation-probe','--json']);
  assert.equal((await client.get(held.taskId)).jobId,held.jobId);
+ const afterReload=await client.submit({...input,requestKey:'after-hot-reload'});
+ const reloadedResult=await client.wait(afterReload.taskId,{timeoutMs:90000,intervalMs:1000});assert.equal(reloadedResult.state,'completed','new Main turns after hot reload use host scheduler admission');
  const stopped=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await stopped;child=launch();
  for(let i=0;i<20;i++){try{await rpc('health',{});break;}catch{}await new Promise(r=>setTimeout(r,500));}
  assert.equal((await client.get(held.taskId)).jobId,held.jobId,'Gateway restart retains original worker');

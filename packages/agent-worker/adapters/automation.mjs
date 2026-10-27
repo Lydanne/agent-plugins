@@ -39,6 +39,6 @@ export function registerAutomation(api,{configuration,jobs,invoke}){
   }catch(e){respond(false,undefined,{code:e.code??'AUTOMATION_UNAVAILABLE',message:e.code??'AUTOMATION_UNAVAILABLE'});}
  },{scope:action==='get'?'operator.read':'operator.write'});
  if(capable)api.registerTool(context=>context.toolBindings?.agentWorkerAutomation?{name:'agent_task_result',description:'核验阶段提交当前宿主绑定任务的最终业务结果。succeeded 只用于已核验成功，blocked 表示业务未完成。',parameters:{type:'object',properties:{outcome:{type:'string',enum:['succeeded','blocked']},result:{type:'object',additionalProperties:true}},required:['outcome','result'],additionalProperties:false},execute:(_id,p)=>service.result(p,context)}:null);
- api.registerService({id:'agent-worker-automation',start:()=>service.start(),stop:()=>service.stop()});
+ api.registerService({apiVersion:2,id:'agent-worker-automation',start:ctx=>service.start(ctx.scheduler),stop:()=>service.stop()});
  return service;
 }
