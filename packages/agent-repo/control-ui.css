@@ -573,4 +573,17 @@
 
 .ar-worker-elapsed{font-variant-numeric:tabular-nums;min-width:130px}
 
-.ar-workspace-pool{border:1px solid var(--border-color,#8885);border-radius:8px;padding:12px;margin:12px 0;overflow-wrap:anywhere}.ar-workspace-pool form{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0}.ar-workspace-pool label{display:flex;gap:8px;align-items:center}.ar-workspace-pool input[type=number]{width:5em}.ar-workspace-pool details{padding:8px 0;border-top:1px solid #8883}.ar-workspace-pool p{font-size:13px;line-height:1.5}
+/* Workspace settings stay compact until explicitly opened. */
+.ar-project-actions{display:flex;align-items:center;flex-wrap:wrap;gap:16px}
+.ar-workspace-pool{display:inline-flex}
+.ar-panel .ar-project-heading .ar-workspace-pool>button{border:1px solid #8883;border-radius:6px;padding:4px 10px;font-size:12px;color:inherit;white-space:nowrap}
+.ar-workspace-dialog{width:min(720px,calc(100vw - 40px));overflow-wrap:anywhere}
+.ar-panel .ar-workspace-dialog button{font:inherit;border:1px solid #8883;border-radius:7px;padding:5px 12px;color:inherit}
+.ar-workspace-content form{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin:20px 0}
+.ar-workspace-content label{display:flex;gap:8px;align-items:center;white-space:nowrap}
+.ar-panel .ar-workspace-content input[type=number]{width:5em;margin:0;padding:7px 9px}
+.ar-panel .ar-workspace-content input[type=checkbox]{width:auto;margin:0}
+.ar-workspace-content details{padding:12px 0;border-top:1px solid #8883}
+.ar-workspace-content p{font-size:13px;line-height:1.6}
+.ar-workspace-content input:focus-visible{outline:2px solid #5685ad;outline-offset:2px}
+@media(max-width:560px){.ar-workspace-dialog{width:calc(100vw - 20px)}.ar-workspace-content form{align-items:flex-start;flex-direction:column}}

@@ -246,9 +246,9 @@ export function mountProjects(container,initial){
   }else if(!detail)body.append(element('p',loading?'正在读取当前项目内容…':'当前项目内容尚未读取，请重试或选择其他 Tab。','ar-muted'));
   if(detail){
    const heading=element('div',undefined,'ar-project-heading');heading.append(element('h2',safe(detail.name)));
-   const worker=button('查看 Worker 项目任务 ↗',jump);worker.disabled=!selected.sessionKey||!canOpenWorkerProject();worker.title=!selected.sessionKey?'先选择该 Agent 的会话':!canOpenWorkerProject()?'需要加载配套 Agent Worker UI':'打开当前会话中此项目的 Worker 任务';heading.append(worker);body.append(heading);
+   const worker=button('查看 Worker 项目任务 ↗',jump);worker.disabled=!selected.sessionKey||!canOpenWorkerProject();worker.title=!selected.sessionKey?'先选择该 Agent 的会话':!canOpenWorkerProject()?'需要加载配套 Agent Worker UI':'打开当前会话中此项目的 Worker 任务';const projectActions=element('div',undefined,'ar-project-actions');projectActions.append(worker);heading.append(projectActions);body.append(heading);
    body.append(element('code',safe(detail.cwd),'ar-path'));
-   if(context.presented&&!context.signal.aborted)workspaceView=mountWorkspacePool(body,{projectId,invoke,canWrite:()=>context.host.connection.canWrite===true,safe});
+   if(context.presented&&!context.signal.aborted)workspaceView=mountWorkspacePool(projectActions,{projectId,invoke,canWrite:()=>context.host.connection.canWrite===true,safe});
    const scope=element('select');scope.setAttribute('aria-label','当前仓库范围');for(const row of detail.scopes){const option=element('option',safe(row.label));option.value=row.repository;scope.append(option);}scope.value=repository;scope.onchange=()=>{repository=scope.value;refresh({scanList:false});};body.append(scope);
    body.append(element('p',safe('当前范围 · '+detail.repository+' · 共 '+detail.effectiveSkillCount+' 个候选技能'),'ar-meta'));
    const inherited=element('p',undefined,'ar-meta'),role=detail.sources.find(source=>source.source==='agent');inherited.append(element('span',!role||role.state==='unavailable'?'继承的技能暂不可读取 · ':'继承 '+role.skills.length+' 个技能 · '));const viewRole=button('查看 Agent Repo',()=>chooseTab(''));viewRole.className='ar-text-action';inherited.append(viewRole);body.append(inherited);if(role?.warning)body.append(element('p',safe(role.warning),'ar-warning'));if(role?.state==='dirty')body.append(element('p','继承的技能有未提交变化，当前使用已提交版本。','ar-warning'));
