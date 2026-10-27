@@ -291,8 +291,6 @@
       },
       "taskQueues": {
         "type": "object",
-        "minProperties": 1,
-        "maxProperties": 50,
         "propertyNames": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
@@ -396,8 +394,6 @@
             "variables": {}
           }
         },
-        "minProperties": 1,
-        "maxProperties": 50,
         "propertyNames": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"

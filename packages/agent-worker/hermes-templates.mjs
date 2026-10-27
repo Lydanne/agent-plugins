@@ -11,7 +11,7 @@ export const defaultHermesTemplates={codex:{
  resumeArgs:['resume','{{sessionId}}'],stdin:'{{prompt}}',variables:{},
 }};
 const argsSchema={type:'array',maxItems:200,items:stringSchema};
-export const hermesTemplatesSchema={type:'object',minProperties:1,maxProperties:50,propertyNames:{type:'string',pattern:hermesIdPattern},additionalProperties:{type:'object',additionalProperties:false,required:['name','adapter','command','args','resumeArgs','stdin','variables'],default:defaultHermesTemplates.codex,properties:{name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},adapter:{type:'string',enum:['codex-jsonl']},command:{type:'string',pattern:'\\S',maxLength:40000},args:argsSchema,resumeArgs:argsSchema,stdin:stringSchema,variables:hermesVariablesSchema}}};
+export const hermesTemplatesSchema={type:'object',propertyNames:{type:'string',pattern:hermesIdPattern},additionalProperties:{type:'object',additionalProperties:false,required:['name','adapter','command','args','resumeArgs','stdin','variables'],default:defaultHermesTemplates.codex,properties:{name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},adapter:{type:'string',enum:['codex-jsonl']},command:{type:'string',pattern:'\\S',maxLength:40000},args:argsSchema,resumeArgs:argsSchema,stdin:stringSchema,variables:hermesVariablesSchema}}};
 const reserved=new Set(['cwd','prompt','instructions','sessionId','schemaPath','policyArgs','speedArgs','resumeArgs','schemaArgs']);
 const scalars=['cli','model','reasoningEffort','speed','codexHome','cwd','prompt','instructions','sessionId','schemaPath'];
 const arrays=['policyArgs','speedArgs','resumeArgs','schemaArgs'];
