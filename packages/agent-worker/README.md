@@ -176,13 +176,15 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 | `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及 0–6 级覆盖。无启用项时不能提交新任务。 |
 | `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
-| `timeoutMs` | 每个 job 的刷新与业务执行总时限，默认 600000 毫秒；排队时间不计入。 |
+| `timeoutMs` | 短任务执行总时限，默认 1800000 毫秒（30 分钟）；新任务累计各执行轮次，排队及等待补充时间不计入。 |
+| `longTimeoutMs` | 长任务执行总时限，默认 10800000 毫秒（3 小时）。 |
 | `executorInstructions`、`businessDataPolicy` | 完整替换执行器职责与业务数据展示规则；默认限制业务写入范围并禁止 Git 写操作；`{projectDir}` 在执行和委派提示中替换为当前 `cwd`。 |
 | `delegationInstructions`、`asyncInstructions` | 完整替换主会话使用工具及异步委派的提示。任务来源、参数校验、取消和去重协议仍由实现保证。 |
 | `skillsEnabled`、`skillDirectories` | 默认启用技能刷新，目录为 `skills`、`.agents/skills`。独立于 Feishu 使用时可关闭；启用时要求匹配的版本发布端。 |
 | `memoryRequired` | 默认要求新任务提供记忆交接；关闭后允许省略 `memory`。主会话使用 OpenClaw 原生记忆工具检索，或如实报告 unavailable。 |
 | `reportDirectory`、`resourceKeyExample` | 报告根目录默认 `.tmp/codex-query`，每个 job 有独立子目录；资源键提示默认保留 Demo 示例，可替换业务命名。 |
-| `asyncCompletion`、`jobListLimit`、`maxConcurrentJobs`、`maxQueuedJobs` | 原有异步与调度配置，默认 false、10、3、100。 |
+| `asyncCompletion`、`jobListLimit`、`maxConcurrentJobs`、`maxQueuedJobs` | 异步与短任务调度配置，默认 false、10、3、100。 |
+| `maxConcurrentLongJobs`、`maxQueuedLongJobs` | 每 Agent 长任务并发与排队上限，默认 1、100。 |
 
 例如迁移到其他工作区，并使用只读执行：
 
@@ -382,7 +384,11 @@ main 完成轮次按 `provenance.senderId` 读取原提问者的当前账号画�
 `action: 'tag'` 携带 jobId 和 tags 可补充标签；tagMode 默认 merge，replace 替换，replace + 空数组清空。飞书仅允许原请求人修改自己任务的标签。元数据独立持久化，后台心跳不会覆盖修改；status/wait/list 读回最新标签。补标签不启动业务任务。
 
 
-并发配置为 `plugins.entries.agent-worker.config.maxConcurrentJobs`（默认 3，1–10）与 `maxQueuedJobs`（默认 100，1–1000）。降低上限不取消已有任务，暂停新的派发直到低于上限。`queued` 状态返回全局 queuePosition（受理次序，不是预计开始时间）及 waitingReason：session_busy、resource_busy、capacity、legacy_executor 或 awaiting_dispatch，不泄露其他聊天的任务内容。
+`run.taskClass` 为 `short`（默认）或 `long`。每个可信 Agent 各有两个独立队列：短任务默认并发 3 个、执行 30 分钟；长任务默认并发 1 个、执行 3 小时。短队列配置 `maxConcurrentJobs` / `maxQueuedJobs`，长队列配置 `maxConcurrentLongJobs` / `maxQueuedLongJobs`；并发范围 1–10，排队范围 1–1000，排队均默认 100。Agent 身份来自宿主，不接受模型指定。一个队列满额不阻塞另一个队列或其他 Agent。
+
+降低容量不会取消已有任务。`queued.queuePosition` 是当前 Agent、当前类型队列内的受理位置，不是预计开始时间；`waitingReason` 保留 session_busy、resource_busy、capacity、legacy_executor、waiting_workspace 或 awaiting_dispatch。同一执行会话、资源锁及有限 workspace 池仍受原有互斥保护。长短任务不能用来绕过同一业务记录的写入锁。
+
+任务类型及超时配置在受理时保存；reply、重启恢复及迟到补充继承原类型。省略类型与显式 short 的幂等键相同，long 纳入请求身份；不能通过改变同一请求的类型重复执行。旧任务无类型时归入短队列并保留执行配置；没有可信 Agent 身份的旧占用保守计入各 Agent 的短任务容量。已有任务不自动重跑或升级为长任务。
 
 导出或修复涉及同一业务用户/记录时，Ada 在 `run.resourceKeys` 传稳定资源键，例如 `['demo:production:user:oExample']`。最多 20 项、每项 1–160 字符；资源键按完整字符串精确匹配，相同键跨聊天/topic 串行。标签仅用于搜索；resourceKeys 才参与调度。资源键不能授予业务权限，不自动猜测业务范围；遗漏资源键时只有会话串行保障。请求重试沿用原 job 的资源键，不扩大或重启原业务操作。
 

@@ -143,3 +143,64 @@ console.log(JSON.stringify(await jobs.run(${JSON.stringify(params)},'group')));`
   assert.deepEqual(readFileSync(join(f.root,'launches'),'utf8').trim().split('\n'),[a.jobId]);
  }finally{await cleanup(f);}
 });
+
+
+test('short and long queues have independent per-Agent admission, capacity and positions',async()=>{
+ const f=fixture(3,1);
+ f.jobs=createJobs({...f.options,getRuntime:()=>({}),getLimits:()=>({maxConcurrentJobs:3,maxQueuedJobs:1,maxConcurrentLongJobs:1,maxQueuedLongJobs:1})});
+ const run=(topic,taskClass='short',agentId='ada')=>f.jobs.run({...params,topic,taskClass},agentId,{agentId});
+ try{
+  for(let n=0;n<3;n++)assert.equal((await run('short-'+n)).status,'running');
+  const short=await run('short-wait');assert.equal(short.status,'queued');assert.equal(short.queuePosition,1);
+  assert.equal((await run('short-full')).status,'queue_full');
+  const long=await run('long','long');assert.equal(long.status,'running');assert.equal(long.timeoutMs,10800000);
+  const waitingLong=await run('long-wait','long');assert.equal(waitingLong.status,'queued');assert.equal(waitingLong.queuePosition,1);
+  assert.equal((await run('long-full','long')).status,'queue_full');
+  assert.equal((await run('short-other','short','other')).status,'running');
+  assert.equal((await run('long-other','long','other')).status,'running');
+  assert.equal(short.timeoutMs,1800000);
+  await until(()=>existsSync(join(f.root,long.jobId+'.started')));
+  f.release(long.jobId);await until(()=>f.jobs.status(long.jobId,'ada').status==='completed');
+  const restarted=createJobs(f.options);restarted.tick();
+  assert.equal(restarted.status(waitingLong.jobId,'ada').status,'running');
+  assert.equal(restarted.status(short.jobId,'ada').status,'queued');
+ }finally{await cleanup(f);}
+});
+
+test('task classes preserve locks, idempotency and admitted timeout snapshots',async()=>{
+ const f=fixture();let timeoutMs=1800000,longTimeoutMs=10800000;
+ f.jobs=createJobs({...f.options,getRuntime:()=>({timeoutMs,longTimeoutMs})});
+ try{
+  const p={...params,requestId:'stable',resourceKeys:['record']},who={agentId:'ada'};
+  const short=await f.jobs.run(p,'ada',who);
+  assert.equal((await f.jobs.run({...p,taskClass:'short'},'ada',who)).jobId,short.jobId);
+  await assert.rejects(f.jobs.run({...p,taskClass:'long'},'ada',who),/different task/);
+  const long=await f.jobs.run({...p,topic:'long',requestId:'long',taskClass:'long'},'ada',who);
+  assert.equal(long.waitingReason,'resource_busy');
+  const session=await f.jobs.run({...p,requestId:'same-session-long',taskClass:'long',resourceKeys:[]},'ada',who);
+  assert.equal(session.waitingReason,'session_busy');
+  timeoutMs=1000;longTimeoutMs=2000;
+  const retry=await f.jobs.run({...p,topic:'long',requestId:'long',taskClass:'long'},'ada',who);
+  assert.equal(retry.jobId,long.jobId);assert.equal(retry.timeoutMs,10800000);
+  assert.equal(readJson(join(f.root,long.jobId+'.request.json')).runtime.timeoutMs,10800000);
+  await assert.rejects(f.jobs.run({...params,taskClass:'invalid'},'ada',who),/Invalid taskClass/);
+ }finally{await cleanup(f);}
+});
+
+
+test('legacy tasks retain their snapshot and unknown long jobs occupy only their own queue',async()=>{
+ const f=fixture(1);
+ try{
+  const old=await f.jobs.run(params,'legacy');
+  await until(()=>existsSync(join(f.root,old.jobId+'.started')));
+  f.release(old.jobId);await until(()=>f.jobs.status(old.jobId,'legacy').status==='completed');
+  const stored=readJson(join(f.root,old.jobId+'.json'));delete stored.taskClass;delete stored.agentId;
+  writeJson(join(f.root,old.jobId+'.json'),stored);
+  assert.equal((await f.jobs.run({...params,taskClass:'short'},'legacy')).jobId,old.jobId);
+  const id=randomUUID();writeJson(join(f.root,id+'.json'),{jobId:id,scope:createHash('sha256').update('ada').digest('hex'),topic:'unknown',agentId:'ada',taskClass:'long',status:'unknown',heartbeatAt:0});
+  const long=await f.jobs.run({...params,topic:'long',taskClass:'long'},'ada',{agentId:'ada'});
+  assert.equal(long.status,'queued');assert.equal(long.waitingReason,'capacity');
+  assert.equal((await f.jobs.run({...params,topic:'short'},'ada',{agentId:'ada'})).status,'running');
+  assert.equal((await f.jobs.run({...params,topic:'other-long',taskClass:'long'},'other',{agentId:'other'})).status,'running');
+ }finally{await cleanup(f);}
+});

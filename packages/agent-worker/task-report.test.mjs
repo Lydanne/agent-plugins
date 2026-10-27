@@ -80,3 +80,22 @@ test('rejects empty, missing and out-of-scope reports and captures a 60KB primar
  const invalid={jobId:randomUUID(),status:'completed',result:response({result:'未落盘',reportPaths:[outside]})};
  finalizeJobReport({job:invalid,params,runtime:{cwd}});assert.equal(invalid.taskReport.storage.producer,'host');
 }));
+
+
+test('resumed tasks retain the execution budget and exclude time awaiting input',()=>fixture(async cwd=>{
+ const root=join(cwd,'jobs');mkdirSync(root);const id=randomUUID();
+ const rounds=[{startedAt:100,finishedAt:1600},{startedAt:100000,finishedAt:101000}];
+ writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',timeoutMs:10000,executionRounds:rounds,resumeSessionId:'original'});
+ let remaining;
+ const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,timeoutMs:10000},execute:async(_p,_c,runtime)=>{remaining=runtime.timeoutMs;return response({result:'done'});}});
+ assert.equal(remaining,7500);assert.equal(job.timeoutMs,10000);assert.equal(job.executionRounds.length,3);
+ assert.ok(job.executionRounds[2].finishedAt>=job.executionRounds[2].startedAt);
+}));
+
+test('exhausted execution budget terminates without executing another round',()=>fixture(async cwd=>{
+ const root=join(cwd,'jobs');mkdirSync(root);const id=randomUUID();
+ writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',timeoutMs:1000,executionRounds:[{startedAt:100,finishedAt:1100}]});
+ let called=false;
+ const job=await runWorker({root,id,params,scope:'test',runtime:{cwd},execute:async()=>{called=true;return response({result:'unexpected'});}});
+ assert.equal(called,false);assert.equal(job.status,'timed_out');assert.equal(job.executionRounds.length,1);
+}));

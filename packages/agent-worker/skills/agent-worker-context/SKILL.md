@@ -33,3 +33,7 @@ CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机�
 ## 独立 workspace
 
 明确授权的代码修复任务可在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 保持原目录。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，提交推送只针对自己的任务分支。
+
+## 长短任务队列
+
+run 可传 taskClass: short（默认）或 long。短任务默认执行总时限 30 分钟，每 Agent 最多并发 3 个；明确需要长时间执行的任务选择 long，默认 3 小时、每 Agent 最多并发 1 个。两类独立排队，其他 Agent 也不共用容量；同一会话、资源锁和 workspace 池仍遵守原保护。按任务性质选择，不能借切换类型重跑超时、失联或已受理任务；reply 沿用原类型。排队及等待 Main/用户补充不消耗新任务执行时限。

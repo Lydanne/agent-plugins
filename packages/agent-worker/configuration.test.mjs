@@ -35,7 +35,7 @@ test('UI defaults match runtime defaults; configured policies and optional integ
  assert.ok(JSON.stringify(memorySchema(config)).includes('memory_get'));
  assert.ok(!JSON.stringify(memorySchema(config)).includes('ada_memory'));
  assert.ok(!description.includes(defaultConfiguration.cwd));
- for(const bad of [{cwd:'relative'},{timeoutMs:0},{skillDirectories:['../private']},{skillDirectories:null},{reportDirectory:'/absolute'},{approvalMode:'invented'}])assert.throws(()=>resolveConfiguration(bad));
+ for(const bad of [{cwd:'relative'},{timeoutMs:0},{longTimeoutMs:0},{skillDirectories:['../private']},{skillDirectories:null},{reportDirectory:'/absolute'},{approvalMode:'invented'}])assert.throws(()=>resolveConfiguration(bad));
 });
 
 test('portable published paths resolve at runtime without writing a build-machine home into the manifest',()=>{
@@ -407,4 +407,9 @@ test('skill acknowledgement schema applies to new and resumed refresh turns only
   if(threadId)assert.ok(args.indexOf('--output-schema')>args.indexOf('resume'));
  }
  assert.ok(!cliArguments(config,{outputSchemaPath:'/tmp/schema.json'}).includes('--output-schema'));
+});
+
+test('task-class timeout defaults and administrator overrides are validated',()=>{
+ const config=resolveConfiguration();assert.equal(config.timeoutMs,1800000);assert.equal(config.longTimeoutMs,10800000);
+ const custom=resolveConfiguration({timeoutMs:90000,longTimeoutMs:7200000});assert.equal(custom.timeoutMs,90000);assert.equal(custom.longTimeoutMs,7200000);
 });

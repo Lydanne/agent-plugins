@@ -23,6 +23,10 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
  try {
   // A cancelled queued job must never start a subprocess or a business operation.
   checkCancellation();controller.signal.throwIfAborted();
+  const usedMs=(job.executionRounds??[]).reduce((total,round)=>total+Math.max(0,(round.finishedAt??round.startedAt)-round.startedAt),0);
+  const remainingMs=job.timeoutMs===undefined?undefined:job.timeoutMs-usedMs;
+  if(remainingMs!==undefined&&remainingMs<1000)throw Object.assign(Error('Worker task execution budget exhausted'),{code:'EXECUTION_TIMEOUT'});
+  if(remainingMs!==undefined)runtime={...runtime,timeoutMs:remainingMs};
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});persist();
   await checkJobWorkspace(runtime??{});
@@ -45,6 +49,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
 
  }catch(e){delete job.result;job.status=controller.signal.aborted?'cancelled':e.code==='EXECUTION_TIMEOUT' || String(e.message).includes('exceeded 10 minutes')?'timed_out':'failed';job.error=String(e.message);}
  finally {
+  const lastRound=job.executionRounds?.at(-1);if(lastRound&&!lastRound.finishedAt)lastRound.finishedAt=Date.now();
   clearInterval(timer);if(omitted)appendFileSync(eventFile,JSON.stringify({event:'inspection.omitted',count:omitted})+'\n',{mode:0o600});if(job.status!=='awaiting_main')job.finishedAt=Date.now();
   if(job.status!=='awaiting_main')await finalizeJobReport({job,params,runtime});
   job.reports=await captureReports(job.result);
