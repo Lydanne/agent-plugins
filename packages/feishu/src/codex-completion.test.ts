@@ -1,3 +1,4 @@
+import {workingResultCard} from './working-card.js';
 import {splitCompletionReportLink,hasCloudReportLink} from "./completion-report-link.js";
 const completionRules=readFileSync(new URL('../../agent-worker/skills/agent-worker-context/references/completion.md',import.meta.url),'utf8');
 import * as documentBackground from "./document-background.js";
@@ -1081,7 +1082,7 @@ it('distinguishes report links from examples and preserves signed URLs',()=>{
  expect(hasCloudReportLink(`[完整报告](${url})`)).toBe(true);
 });
 
-it.each([false,true])('Main automatic answers preserve history and continue on one new GIF (shared=%s)',async shared=>{
+it.each([false,true])('concurrent Main automatic answers preserve history and continue on one new GIF (shared=%s)',async shared=>{
  const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');
  const {FeishuWorkingCard}=await import('./working-card.js');
  const p=event.provenance;
@@ -1095,7 +1096,7 @@ it.each([false,true])('Main automatic answers preserve history and continue on o
  await service.start({} as Parameters<typeof service.start>[0]);
  try{
   const resumed={jobId:event.jobId,questionId:question.questionId,provenance:p,status:'resumed'};
-  await bridge.contextState(resumed);await bridge.contextState(resumed);
+  await Promise.all([bridge.contextState(resumed),bridge.contextState(resumed),bridge.contextState(resumed)]);await bridge.contextState(resumed);
   expect(start).toHaveBeenCalledOnce();expect(hold).toHaveBeenCalledWith();
   const historyId=shared?'sent':'original';
   expect(readQuestionCard(cardStateDir,question.questionId)).toMatchObject({messageId:historyId,status:'accepted',answerSource:'main_context',note:question.answer,workingMessageId:'next-work',rendered:true});
@@ -1272,4 +1273,65 @@ it('recovers expired saved answers, preserves human input on timeout and exposes
   expect(readAsyncTaskCard(cardStateDir,'late-child',event.provenance)?.messageId).toBe('saved-card');
  }finally{workerQuestionBridge.read=undefined;workerQuestionBridge.acceptSubmission=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
  expect(workerQuestionBridge.pendingSubmissions).toBeUndefined();
+});
+
+// Real timeout replies and the collaboration recovery scan can arrive together.
+it.each([false,true])('serializes timeout continuation creation across callers (terminalDuringSend=%s)',async terminal=>{
+ const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
+ const {FeishuWorkingCard}=await import('./working-card.js');
+ const {acceptAsyncCardResult}=await import('./async-task-card.js');
+ const p=event.provenance;
+ bindAsyncTaskCard(cardStateDir,p,[event.jobId],{messageId:'question-card',imageKey:'old'});
+ const question={questionId:'timeout-race',question:'范围？',reason:'未知',progress:'已查',expiresAt:Date.now()+60000,answer:'未知跳过',answerSource:'main_context',resumeReason:'user_wait_timeout'};
+ saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:p,question,messageId:'question-card',status:'waiting',rendered:true});
+ workerQuestionBridge.read=()=>({status:'running',question});
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockImplementation(async()=>{
+  if(terminal)acceptAsyncCardResult(cardStateDir,readAsyncTaskCard(cardStateDir,event.jobId,p)!,'已完成的结果');
+ });
+ const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'only-working',imageKey:'gif'});
+ await service.start({} as Parameters<typeof service.start>[0]);
+ try{
+  const resumed={jobId:event.jobId,questionId:question.questionId,provenance:p,status:'resumed'};
+  const results=await Promise.allSettled([bridge.contextState(resumed),bridge.contextState(resumed),bridge.contextState(resumed)]);
+  expect(start).toHaveBeenCalledOnce();expect(hold).toHaveBeenCalledOnce();
+  expect(readQuestionCard(cardStateDir,question.questionId)?.workingMessageId).toBe('only-working');
+  if(terminal){
+   expect(results[0].status).toBe('rejected');
+   expect(readAsyncTaskCard(cardStateDir,event.jobId,p)).toMatchObject({messageId:'question-card',result:'已完成的结果'});
+   expect(mocks.edit).toHaveBeenCalledWith(expect.objectContaining({messageId:'only-working',card:workingResultCard('任务状态已更新，请查看任务的最新回复。')}));
+  }else{
+   expect(results.every(r=>r.status==='fulfilled')).toBe(true);
+   expect(readAsyncTaskCard(cardStateDir,event.jobId,p)).toMatchObject({messageId:'only-working',imageKey:'gif'});
+   await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+   expect(mocks.edit.mock.calls.some(([v])=>v.messageId==='only-working')).toBe(true);
+  }
+  expect(mocks.run).toHaveBeenCalledTimes(terminal?0:1);
+ }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+});
+
+it('startup closes a known unbound GIF after a terminal race and retries failed cleanup without resending',async()=>{
+ const {workerQuestionBridge,saveQuestionCard,readQuestionCard}=await import('./worker-question.js');
+ const {FeishuWorkingCard}=await import('./working-card.js');
+ const p=event.provenance;
+ bindAsyncTaskCard(cardStateDir,p,[event.jobId],{messageId:'result-card'});
+ acceptAsyncCardResult(cardStateDir,readAsyncTaskCard(cardStateDir,event.jobId,p)!,'已交付');
+ const question={questionId:'pending-cleanup',question:'范围',reason:'缺少',progress:'已查',expiresAt:Date.now()+60000,answer:'跳过未知',answerSource:'main_context',resumeReason:'user_wait_timeout'};
+ saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:p,question,messageId:'history',status:'accepted',answerSource:'main_context',rendered:true,workingAttempted:true,workingMessageId:'unbound',workingBindingPending:true});
+ workerQuestionBridge.read=()=>({status:'completed',question});
+ const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();
+ let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
+ const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
+ mocks.edit.mockRejectedValueOnce(new Error('network unavailable'));
+ try{
+  await service.start({} as Parameters<typeof service.start>[0]);
+  expect(readQuestionCard(cardStateDir,question.questionId)?.workingBindingPending).toBe(true);
+  await expect(bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:p,status:'resumed'})).rejects.toThrow('unused placeholder closed');
+  expect(readQuestionCard(cardStateDir,question.questionId)?.workingBindingPending).toBe(false);
+  expect(mocks.edit).toHaveBeenCalledTimes(2);
+  expect(mocks.edit.mock.calls.every(([v])=>v.messageId==='unbound')).toBe(true);
+  expect(start).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();expect(mocks.run).not.toHaveBeenCalled();
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,p)).toMatchObject({messageId:'result-card',result:'已交付'});
+ }finally{start.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
