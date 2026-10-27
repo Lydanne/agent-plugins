@@ -8,3 +8,12 @@ test('client uses assigned stable session key; polling never dispatches work',as
  await assert.rejects(()=>client.wait('t',{timeoutMs:0}),e=>e.code==='AUTOMATION_WAIT_TIMEOUT'&&e.taskId==='t');assert.equal(calls.filter(c=>c.method.endsWith('cancel')).length,0);
 });
 test('lost session creation response retains accepted task identifier',async()=>{const c=createAutomationClient(async method=>{if(method.endsWith('submit'))return {taskId:'t',phase:'waiting_session',sessionKey:'s'};throw Error('network');});await assert.rejects(()=>c.submit({agentId:'a'}),e=>e.taskId==='t'&&e.task.taskId==='t');});
+
+test('session presentation is applied to submit and rerun without changing task identity',async()=>{
+ const calls=[];const client=createAutomationClient(async(method,p)=>{calls.push({method,p});return {taskId:'t',phase:'waiting_session',sessionKey:'assigned'};},{sessionMetadata:{category:' CI 知识同步 ',label:' CI repo#1 / 2-1 ',key:'untrusted',agentId:'other'}});
+ await client.submit({agentId:'a',requestKey:'stable'});
+ await client.rerun('t','retry','a');
+ assert.deepEqual(calls.filter(c=>c.method==='sessions.create').map(c=>c.p),Array(2).fill({key:'assigned',agentId:'a',category:'CI 知识同步',label:'CI repo#1 / 2-1'}));
+ assert.deepEqual(calls[0].p,{agentId:'a',requestKey:'stable'});
+ assert.deepEqual(calls[2].p,{taskId:'t',operationId:'retry'});
+});

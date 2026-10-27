@@ -1,11 +1,12 @@
 import {setTimeout as sleep} from 'node:timers/promises';
 const prefix='agent-worker.automation.';
-export function createAutomationClient(rpc){
+export function createAutomationClient(rpc,{sessionMetadata={}}={}){
+ const presentation=Object.fromEntries(['category','label'].filter(k=>typeof sessionMetadata[k]==='string'&&sessionMetadata[k].trim()).map(k=>[k,sessionMetadata[k].trim()]));
  const get=taskId=>rpc(prefix+'get',{taskId});
  async function prepare(task,agentId){
   if(task.phase==='waiting_session'&&!task.sessionId){
    // sessions.create is a public authenticated host RPC. The server selects the key.
-   try{await rpc('sessions.create',{key:task.sessionKey,agentId});}catch(error){for(let retry=0;retry<5;retry++){try{const current=await get(task.taskId);if(current.sessionId)return current;}catch{break;}await sleep(1000);}throw Object.assign(error,{task,taskId:task.taskId});}
+   try{await rpc('sessions.create',{key:task.sessionKey,agentId,...presentation});}catch(error){for(let retry=0;retry<5;retry++){try{const current=await get(task.taskId);if(current.sessionId)return current;}catch{break;}await sleep(1000);}throw Object.assign(error,{task,taskId:task.taskId});}
   }
   return task;
  }
