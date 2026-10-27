@@ -100,7 +100,7 @@ export function createTaskService({store,jobs,main,invoke,policy,logger=console}
   if(t.sessionId&&t.sessionId!==entry.sessionId){patch(t.taskId,{state:'unknown',error:{code:'SESSION_REPLACED'}});return;}
   t=patch(t.taskId,{sessionId:entry.sessionId});await main.protect?.(t);await turn(t,'dispatch',t.delegationAttempts?'dispatch:'+t.delegationAttempts:'dispatch');
  }
- async function tick(){if(running||stopping)return;running=true;try{for(const t of store.list()){if(stopping)break;try{await step(t);}catch{patch(t.taskId,{state:'unknown',error:{code:'TASK_RECONCILIATION_FAILED'}});}}}catch{logger.error('Automation reconciliation failed; durable tasks retained');}finally{running=false;}}
+ async function tick(){if(running||stopping)return;running=true;try{for(const t of store.list()){if(stopping)break;try{await step(t);}catch(error){logger.error('Automation reconciliation failed task='+t.taskId+' phase='+t.phase+' type='+error?.name+' stack='+String(error?.stack??'').split('\n').slice(1,5).join(' | '));patch(t.taskId,{state:'unknown',error:{code:'TASK_RECONCILIATION_FAILED'}});}}}catch{logger.error('Automation reconciliation failed; durable tasks retained');}finally{running=false;}}
  return {tool,result,tick,view,
   submit(owner,input){if(!policy.enabled)throw fault('AUTOMATION_DISABLED');if(!policy.agents.includes(input.agentId)||!policy.projects.includes(input.projectId))throw fault('TASK_SCOPE_DENIED');return view(store.submit(owner,input,policy));},
   get:(owner,id)=>view(store.owned(id,owner)),
