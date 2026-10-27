@@ -454,3 +454,9 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 项目登记支持 `workspacePool: {enabled:true,maxSize:3}`，Worker run 支持 `useWorkspace:true`。目录为 Agent Repo 下的 `workspace/<项目ID>-<编号>`，分配状态在 `workspace/state.json`。池满返回原 queued job 和 waiting_workspace，不占执行槽；依赖只在首次或 package.json 相对上次成功安装变化时安装。完整配置、恢复边界和示例见 [工作区池协议](../../docs/workspace-pool.md)。旧部署需先升级插件再启用项目配置。
 
 WebUI 项目页提供代码工作区池配置、占用与异常详情。保存 projects.json 需要 operator.write，检测过期版本，不执行 Git 提交或服务重启；待提交变化及其对新任务准备/同步的影响在界面明确提示。池配置调整不终止已有分配，异常目录保留。详见 [工作区池](../../docs/workspace-pool.md)。
+
+### 仓库准备拦截诊断
+
+模型前置校验会返回 `AGENT_REPO_*` 错误码和安全原因；仓库诊断日志保存 `code`、`cause`、`runId`。`SNAPSHOT_MISSING` 指本轮未生成快照；`RUN_ID_MISSING` 指宿主缺少运行身份；`PROMPT_EXPIRED` 指准备钩子失效；`REPOSITORY_CHANGED` / `ROLE_FILES_CHANGED` 指准备后版本或文件变化；`ROLE_UNCOMMITTED` / `SKILLS_UNCOMMITTED` 指未提交内容；`GIT_TIMEOUT` / `GIT_OUTPUT_LIMIT` 指本地 Git 检查受阻。未知异常不会回显原始 stderr、URL、凭证或聊天正文。
+
+提示词准备失败保留首个原因，不再被通用“Prompt preparation failed”覆盖。每次提示词准备分配独立序号；被更新步骤替代的迟到失败不覆盖当前快照，迟到成功也不能发布旧快照。当前步骤尚未完成或已过期时仍返回 PROMPT_PENDING / PROMPT_EXPIRED，不回退到之前的快照。缺失、真实失败或版本变化仍阻止执行，不自动重试业务，也不借用其他 run 的快照。

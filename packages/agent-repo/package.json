@@ -70,7 +70,8 @@
     "dist/workspace-pool.mjs",
     "dist/workspace-lock.mjs",
     "workspace-management.mjs",
-    "workspace-pool-page.mjs"
+    "workspace-pool-page.mjs",
+    "preparation-error.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

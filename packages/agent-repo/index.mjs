@@ -89,11 +89,13 @@ export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',re
  api.on?.('before_agent_run',runtime.beforeAgentRun,{priority:1000});
  api.on?.('agent_end',(_event,context)=>runtime.endRun(context));
  api.on?.('before_prompt_build',async (_event,context)=>{
-  const binding=bindingFor(config,context);if(!binding||!context.workspaceDir)return;
+  const binding=bindingFor(config,context);if(!binding)return;
+  context=runtime.beginPrompt(context);
+  if(!context.workspaceDir){runtime.promptFailure(context,new Error('Prompt workspace is missing'));return;}
   try {
    const root=await realpath(binding.repo),workspace=await realpath(context.workspaceDir);
    const location=relative(root,workspace);
-   if(location!==''&&!/^(?:project|projects\/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:\/repositories\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/.test(location))return;
+   if(location!==''&&!/^(?:project|projects\/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:\/repositories\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/.test(location)){runtime.promptFailure(context,new Error('Prompt workspace is outside registered scope'));return;}
    if(location==='') {
     const projects=await readProjects(root);
     if(Object.keys(projects).length!==1){
@@ -107,7 +109,7 @@ export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',re
    const {snapshot,shadowed,instruction:_instruction,...catalog}=result;
    catalog.registryRevision=await registryRevision(binding);
    return {appendSystemContext:renderDataBlock('RepositorySkills',catalog)};
-  }catch{runtime.promptFailure(context);return {appendSystemContext:renderDataBlock('RepositorySkills',{status:'unavailable'})};}
+  }catch(error){runtime.promptFailure(context,error);return {appendSystemContext:renderDataBlock('RepositorySkills',{status:'unavailable'})};}
  });
 
 }};

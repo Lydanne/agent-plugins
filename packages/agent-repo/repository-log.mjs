@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {git} from './repository-skills.mjs';
 const validAgent=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
-const fields=['time','repository','stage','status','reason','effect'];
+const fields=['time','repository','stage','status','reason','effect','code','cause','errorType','runId'];
 const clean=value=>value.replace(/https?:\/\/\S+/g,'[URL omitted]').slice(0,2000);
 async function location(root,agentId){
  if(!validAgent(agentId))throw Error('Invalid repository log Agent');

@@ -1,3 +1,4 @@
+import {preparationDiagnostic,diagnosticError} from './preparation-error.mjs';
 import {writeRepositoryLog} from './repository-log.mjs';
 import {realpath} from 'node:fs/promises';
 import {parseAgentSessionKey} from 'openclaw/plugin-sdk/routing';
@@ -23,7 +24,7 @@ const control = (text,cfg,channel) => /^\/(?:stop|abort|status)(?:@[\w-]+)?(?:\s
  shouldHandleTextCommands({cfg,surface:channel,commandSource:'text'}) && readOnlyCommands.has(maybeResolveTextAlias((text??'').trim(),cfg));
 const failure = '仓库同步或技能准备未通过，本轮尚未开始。请管理员核对仓库配置、网络与本地 Git 状态。';
 export class PreparationError extends Error {}
-const failureText = error => error instanceof PreparationError||error instanceof RepositoryGitCheckError ? `${failure}\n原因：${error.message}` : failure;
+const failureText = error => {const {code,cause}=preparationDiagnostic(error);return `${failure}\n错误码：${code}\n原因：${cause}`;};
 function legacySyncEnabled(hostConfig) {
  const feishu=hostConfig.channels?.feishu;
  return feishu?.workspaceSync?.enabled===true||Object.values(feishu?.accounts??{}).some(account=>account?.workspaceSync?.enabled===true);
@@ -32,6 +33,14 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
  // Run IDs are used only to bind the version captured by a prompt hook to its
  // model gate. They are never used as a receipt for a different dispatch.
  const runs=new Map();
+ const attemptKey=Symbol('repository-prompt-attempt');let attemptSequence=0;
+ const runKey=context=>JSON.stringify([context.agentId,context.sessionKey,context.runId]);
+ function beginPrompt(context){
+  if(!context.runId)return context;
+  const token=++attemptSequence,key=runKey(context);prune();
+  runs.set(key,{...runs.get(key),at:clock(),pending:true,attempt:token});
+  return {...context,[attemptKey]:token};
+ }
  async function log(binding,agentId,entry){try{await writeRepositoryLog(binding.repo,agentId,entry);}catch{logger?.warn?.("agent-repo: repository diagnostic could not be saved");}}
  const enabled=binding=>binding?.sync?.enabled===true;
  async function checkWorkspace(binding,agentId) {
@@ -102,7 +111,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
    await validate({catalog});
    return options.syncSubmodules===true||synchronized.skipped?{...catalog,synchronization:synchronized}:catalog;
   }).catch(async error=>{
-   await log(binding,options.agentId,{repository:options.repository??options.projectId??'Agent Repo',stage:'技能准备',status:'failed',reason:failureText(error),effect:'执行范围准备未通过'});
+   await log(binding,options.agentId,{repository:options.repository??options.projectId??'Agent Repo',stage:'技能准备',status:'failed',...preparationDiagnostic(error),reason:failureText(error),effect:'执行范围准备未通过'});
    throw error;
   });
  }
@@ -161,7 +170,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
    });
   }catch(error) {
    // Claim hooks are fail-open on throws: return a handled reply explicitly.
-   if(enabled(binding)){await log(binding,parseSession(context.sessionKey??'')?.agentId,{repository:'Agent Repo',stage:'入站准备',status:'failed',reason:failureText(error),effect:'本轮未开始'});return {handled:true,text:failureText(error)};}
+   if(enabled(binding)){await log(binding,parseSession(context.sessionKey??'')?.agentId,{repository:'Agent Repo',stage:'入站准备',status:'failed',...preparationDiagnostic(error),reason:failureText(error),effect:'本轮未开始'});return {handled:true,text:failureText(error)};}
   }
  }
  function prune() {
@@ -171,26 +180,35 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
  async function capturePrompt(context,catalog) {
   const binding=bindingFor(config,context);
   if(!enabled(binding))return;
+  if(!context[attemptKey])context=beginPrompt(context);
   context.hookInvocation?.assertActive();
   await checkWorkspace(binding,context.agentId);
   if(!context.runId)throw Error('This runner does not expose a model run identity');
   const key=JSON.stringify([context.agentId,context.sessionKey,context.runId]);
   const previous=runs.get(key);
-  if(previous)await validate(previous);
-  const record={at:clock(),catalog};
+  if(previous?.catalog||previous?.failed)await validate({...previous,pending:false});
+  const record={at:clock(),catalog,attempt:context[attemptKey]};
   await validate(record);
-  if(previous&&catalog.snapshot.repositorySources.find(item=>item.root===binding.repo)?.head!==previous.catalog.snapshot.repositorySources.find(item=>item.root===binding.repo)?.head)throw Error('Agent role changed during this run');
+  if(previous?.catalog&&catalog.snapshot.repositorySources.find(item=>item.root===binding.repo)?.head!==previous.catalog.snapshot.repositorySources.find(item=>item.root===binding.repo)?.head)throw Error('Agent role changed during this run');
   // Host timeout discards prompt enrichment but does not cancel underlying work.
   // An expired invocation must never publish a version for the model gate.
   context.hookInvocation?.assertActive();
+  if(runs.get(key)?.attempt!==context[attemptKey])throw Error('Prompt preparation superseded');
   prune();runs.set(key,record);
  }
- function promptFailure(context) {
+ function promptFailure(context,error=new Error('Prompt preparation failed')) {
   if(!context.runId)return;
-  prune();runs.set(JSON.stringify([context.agentId,context.sessionKey,context.runId]),{at:clock(),failed:true});
+  const key=runKey(context),current=runs.get(key);
+  // Only a newer invocation can supersede this failure. An expired current
+  // invocation must still block, never fall back to a previous valid snapshot.
+  if(context[attemptKey]&&current?.attempt!==context[attemptKey])return;
+  try{context.hookInvocation?.assertActive();}catch(expired){error=expired;}
+  if(current?.failed)return;
+  prune();runs.set(key,{at:clock(),attempt:context[attemptKey]??current?.attempt,failed:true,diagnostic:preparationDiagnostic(error)});
  }
  async function validate(record) {
-  if(record.failed)throw Error('Prompt preparation failed');
+  if(record.pending&&!record.failed)throw Error('Prompt preparation is still pending');
+  if(record.failed)throw diagnosticError(record.diagnostic??preparationDiagnostic(new Error('Prompt preparation failed')));
   for(const item of record.catalog.snapshot.repositorySources) {
    if(await realpath(item.root)!==item.root||(await git(item.root,['rev-parse','HEAD'])).trim()!==item.head)throw Error('Repository version changed after prompt preparation');
    if((await git(item.root,['status','--porcelain=v1','--untracked-files=all','--',item.directory,'AGENTS.md','SOUL.md','IDENTITY.md','USER.md','TOOLS.md','BOOTSTRAP.md','HEARTBEAT.md'])).trim())throw Error('Role or skill files changed after prompt preparation');
@@ -216,8 +234,8 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
    if(!record)throw Error('No version captured by this run prompt hook');
    await validate(record);
    return {outcome:'pass'};
-  }catch(error){await log(binding,context.agentId,{repository:'Agent Repo',stage:'模型准备校验',status:'failed',reason:failureText(error),effect:'本轮未开始'});return {outcome:'block',reason:'agent-repo prompt repository validation failed',message:failureText(error),category:'repository_sync'};}
+  }catch(error){await log(binding,context.agentId,{repository:'Agent Repo',stage:'模型准备校验',status:'failed',reason:failureText(error),...preparationDiagnostic(error),runId:context.runId,effect:'本轮未开始'});return {outcome:'block',reason:preparationDiagnostic(error).code,message:failureText(error),category:'repository_sync'};}
  }
  function endRun(context) {if(context.runId)runs.delete(JSON.stringify([context.agentId,context.sessionKey,context.runId]));}
- return {scheduledSync,beforeDispatch,prepareScope,capturePrompt,promptFailure,beforeAgentRun,endRun};
+ return {scheduledSync,beforeDispatch,prepareScope,beginPrompt,capturePrompt,promptFailure,beforeAgentRun,endRun};
 }

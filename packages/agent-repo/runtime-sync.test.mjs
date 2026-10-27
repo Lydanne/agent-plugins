@@ -510,3 +510,44 @@ test('Agent-owned Git environment reaches inbound, Worker and scheduled sync wit
  const other=await fixture(t);await other.runtime().beforeDispatch({content:'normal'},dispatchContext);
  assert.ok(other.calls.every(call=>!Object.hasOwn(call.settings,'gitEnvironment')));
 });
+
+test('expired prompt failure cannot overwrite a successfully captured current snapshot',async t=>{
+ const f=await fixture(t),runtime=f.runtime(),catalog=await repositorySkills(f.binding);
+ const old=runtime.beginPrompt({...runContext,hookInvocation:{assertActive(){throw Error('prompt hook invocation is no longer active');}}});
+ const current=runtime.beginPrompt(runContext);
+ await runtime.capturePrompt(current,catalog);
+ runtime.promptFailure(old,new Error('Skill files must be committed before loading: agent'));
+ assert.equal((await runtime.beforeAgentRun({},runContext)).outcome,'pass');
+ runtime.promptFailure(runContext,new Error('Agent role files must be committed before loading'));
+ const blocked=await runtime.beforeAgentRun({},runContext);
+ assert.equal(blocked.reason,'AGENT_REPO_ROLE_UNCOMMITTED');assert.match(blocked.message,/角色文件尚未提交/);
+});
+
+test('gate failures preserve diagnostic codes and the original preparation cause',async t=>{
+ const f=await fixture(t),runtime=f.runtime();
+ const missing=await runtime.beforeAgentRun({},runContext);assert.equal(missing.reason,'AGENT_REPO_SNAPSHOT_MISSING');
+ runtime.promptFailure(runContext,new RepositoryGitCheckError('timeout'));
+ runtime.promptFailure(runContext,new Error('Prompt preparation failed')); // Preserve the first cause.
+ const blocked=await runtime.beforeAgentRun({},runContext);assert.equal(blocked.reason,'AGENT_REPO_GIT_TIMEOUT');
+ const {readRepositoryLogs}=await import('./repository-log.mjs');
+ const log=await readRepositoryLogs(f.root,'main');
+ assert.equal(log.records[0].code,'AGENT_REPO_GIT_TIMEOUT');assert.equal(log.records[0].runId,runContext.runId);assert.match(log.records[0].cause,/Git 状态检查超时/);
+});
+
+ test('expired current preparation blocks instead of falling back to an earlier successful snapshot',async t=>{
+ const f=await fixture(t),runtime=f.runtime(),catalog=await repositorySkills(f.binding);
+ await runtime.capturePrompt(runContext,catalog);
+ const current=runtime.beginPrompt({...runContext,hookInvocation:{assertActive(){throw Error('prompt hook invocation is no longer active');}}});
+ assert.equal((await runtime.beforeAgentRun({},runContext)).reason,'AGENT_REPO_PROMPT_PENDING');
+ runtime.promptFailure(current,new Error('fixture failure'));
+ assert.equal((await runtime.beforeAgentRun({},runContext)).reason,'AGENT_REPO_PROMPT_EXPIRED');
+ });
+
+test('late successful capture from an older invocation cannot replace the latest snapshot',async t=>{
+ const f=await fixture(t),runtime=f.runtime(),catalog=await repositorySkills(f.binding);
+ const older=runtime.beginPrompt(runContext),newer=runtime.beginPrompt(runContext);
+ await runtime.capturePrompt(newer,catalog);
+ await assert.rejects(runtime.capturePrompt(older,catalog),/superseded/);
+ runtime.promptFailure(older,new Error('Prompt preparation superseded'));
+ assert.equal((await runtime.beforeAgentRun({},runContext)).outcome,'pass');
+});
