@@ -495,3 +495,55 @@ it("sends inline message images through native media after the acknowledged text
  expect(mocks.mediaSend).toHaveBeenCalledWith(expect.objectContaining({mediaUrl:'/workspace/received.png',replyToMessageId:'message-test'}));
  expect(mocks.create).not.toHaveBeenCalled();
 });
+
+it('puts all 23 SQL sources in document code blocks and one source bundle, deduplicating media references',async()=>{
+ const mediaUrls=Array.from({length:23},(_,i)=>`/workspace/query-${i}.sql`);
+ const sql=(i:number)=>`select '"quoted"', '$HOME', '\\path', '${i}', '\`\`\`'\nfrom events where n = ${i};`;
+ mocks.load.mockImplementation(async(path:string)=>{const i=Number(/query-(\d+)/.exec(path)![1]);return {buffer:Buffer.from(sql(i)),fileName:`query-${i}.sql`};});
+ const failure=vi.fn();const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'已有查询原文',mediaUrls:[...mediaUrls,mediaUrls[0]],onFailure:failure});
+ expect(failure).not.toHaveBeenCalled();expect(result?.documentId).toBe('doc-test');expect(mocks.load).toHaveBeenCalledTimes(23);expect(mocks.upload).toHaveBeenCalledOnce();
+ const body=mocks.write.mock.calls[0][2],attachment=mocks.upload.mock.calls[0][0].data;
+ expect(attachment.file_name).toBe('sql-sources.md');
+ for(let i=0;i<23;i++){expect(body).toContain(sql(i));expect(body).toContain(`## query-${i}.sql`);expect(attachment.file.toString()).toContain(sql(i));}
+ expect(body).toContain('````sql');expect(result?.text).not.toContain("select");
+});
+it('keeps a normal SQL attachment and also writes its exact contents to the document',async()=>{
+ const source="select '\"x\"', '$value'\nfrom events;";mocks.load.mockResolvedValue({buffer:Buffer.from(source),fileName:'query.sql'});
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[SQL](/workspace/query.sql)'});
+ expect(mocks.write.mock.calls[0][2]).toContain(source);expect(mocks.upload.mock.calls[0][0].data.file_name).toBe('query.sql');
+});
+it('keeps a complete SQL source bundle when document conversion fails',async()=>{
+ mocks.account.mockReturnValue({accountId:'sql-fallback',domain:'feishu',config:{documentDelivery:{maxFiles:1}}});
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from('select 1;'),fileName:path.split('/').at(-1)}));mocks.write.mockRejectedValue(Error('converter failed'));
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:['/workspace/a.sql','/workspace/b.sql']});
+ expect(result?.documentId).toBe('doc-test');expect(result?.text).toContain('正文转换未完成');expect(mocks.upload.mock.calls[0][0].data.file_name).toBe('sql-sources.md');
+});
+it('rejects invalid SQL encoding in a bundle without leaking source bytes into the reply',async()=>{
+ mocks.account.mockReturnValue({accountId:'sql-invalid',domain:'feishu',config:{documentDelivery:{maxFiles:1}}});
+ mocks.load.mockResolvedValue({buffer:Buffer.from([0xff,0xfe]),fileName:'a.sql'});const onFailure=vi.fn();
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'摘要',mediaUrls:['/workspace/a.sql','/workspace/b.sql'],onFailure});
+ expect(onFailure).toHaveBeenCalledWith({stage:'read_files',code:'DOCX_SQL_ENCODING'});expect(result?.text).toContain('附件未成功交付');expect(mocks.create).not.toHaveBeenCalled();
+});
+it('keeps an explicit count limit for mixed non-SQL attachments with a diagnostic code',async()=>{
+ mocks.account.mockReturnValue({accountId:'mixed-limit',domain:'feishu',config:{documentDelivery:{maxFiles:1}}});const onFailure=vi.fn();
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:['/workspace/a.sql','/workspace/b.csv'],onFailure});
+ expect(onFailure).toHaveBeenCalledWith({stage:'read_files',code:'DOCX_FILE_COUNT_LIMIT'});expect(mocks.create).not.toHaveBeenCalled();
+});
+it('bounds SQL source fan-in before reading any file',async()=>{
+ const onFailure=vi.fn();await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:Array.from({length:201},(_,i)=>`/workspace/${i}.sql`),onFailure});
+ expect(onFailure).toHaveBeenCalledWith({stage:'read_files',code:'DOCX_SQL_SOURCE_LIMIT'});expect(mocks.load).not.toHaveBeenCalled();
+});
+it('keeps media authority checks for every SQL source after the original attachment limit',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>{
+  if(path.endsWith('/22.sql'))throw Object.assign(Error('not allowed'),{code:'EACCES'});
+  return {buffer:Buffer.from('select 1;'),fileName:path.split('/').at(-1)};
+ });const onFailure=vi.fn();
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:Array.from({length:23},(_,i)=>`/workspace/${i}.sql`),onFailure});
+ expect(mocks.load).toHaveBeenCalledTimes(23);expect(onFailure).toHaveBeenCalledWith({stage:'read_files',code:'EACCES'});expect(mocks.create).not.toHaveBeenCalled();
+});
+it('honors an explicit text-extension override while retaining the bundled SQL source attachment',async()=>{
+ mocks.account.mockReturnValue({accountId:'sql-attachment-only',domain:'feishu',config:{documentDelivery:{maxFiles:1,textExtensions:[]}}});
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from('select private_source;'),fileName:path.split('/').at(-1)}));
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'摘要',mediaUrls:['/workspace/a.sql','/workspace/b.sql']});
+ expect(mocks.write.mock.calls[0][2]).not.toContain('private_source');expect(mocks.upload.mock.calls[0][0].data.file.toString()).toContain('select private_source;');
+});

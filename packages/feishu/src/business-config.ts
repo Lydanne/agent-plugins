@@ -84,7 +84,7 @@ export const DocumentDeliveryConfigSchema = z.object({
  maxFiles:z.number().int().min(1).max(100).optional().meta({default:20}),
  maxFileMb:z.number().positive().max(20).optional().meta({default:20}), maxTotalMb:z.number().positive().max(200).optional().meta({default:50}),
  maxTextChars:z.number().int().min(1000).max(1000000).optional().meta({default:200000}),
- textExtensions:z.array(z.string().regex(/^\.[A-Za-z0-9]+$/)).max(30).optional().meta({default:[".md",".markdown",".txt"]}),
+ textExtensions:z.array(z.string().regex(/^\.[A-Za-z0-9]+$/)).max(30).optional().meta({default:[".md",".markdown",".txt",".sql"]}),
  titleTemplate:text.min(1).optional().meta({default:"{filename}"}),linkTemplate:text.regex(/\{url\}/).optional().meta({default:"已整理为飞书文档：[{title}]({url})"}),
  grantToTarget:z.boolean().optional().meta({default:true}),permission:z.enum(["view","edit"]).optional().meta({default:"view"}),
  urlBase:z.string().url().regex(/^https:\/\//).optional(),

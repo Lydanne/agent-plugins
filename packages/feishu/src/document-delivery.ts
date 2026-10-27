@@ -268,6 +268,11 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   const media = params.mediaUrls ?? [];
   if (!refs.length && !media.some(url=>resolveLocalFilePath(url,workspaceDir))) return undefined;
   const inputs = [...new Set([...refs.map(ref=>ref.path),...media.flatMap(url=>{const path=resolveLocalFilePath(url,workspaceDir);return path?[path]:[];})])];
+  const maxFiles = config?.maxFiles ?? 20;
+  // A large SQL-only batch is one readable document and one source bundle.
+  // Bound source fan-in separately; every input still passes the normal media authority.
+  const bundleSql = inputs.length > maxFiles && inputs.every(input=>extname(input).toLowerCase()===".sql");
+  if(bundleSql && inputs.length>200)throw Object.assign(Error("Too many SQL sources"),{code:"DOCX_SQL_SOURCE_LIMIT"});
   const maxBytes = Math.min((config?.maxFileMb ?? 20)*1024*1024,20*1024*1024);
   // Use the trusted turn owner, never the referenced file's parent, to grant a workspace.
   const mediaLocalRoots = params.mediaLocalRoots ?? config?.localRoots ??
@@ -275,7 +280,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   let total = 0;
   const files = [];
   const skipped:{path:string;size:number}[]=[];
-  const textual = new Set(config?.textExtensions ?? [".md",".markdown",".txt"]);
+  const textual = new Set(config?.textExtensions ?? [".md",".markdown",".txt",".sql"]);
   for (const input of inputs) {
     params.signal?.throwIfAborted();
     const info=await localFileInfo(input);
@@ -287,7 +292,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       captureText(replaceLocalReferences(params.text ?? "",refs),notice);
       continue;
     }
-    if(files.length>=(config?.maxFiles ?? 20))throw Error("Too many document attachments");
+    if(!bundleSql && files.length>=maxFiles)throw Object.assign(Error("Too many document attachments"),{code:"DOCX_FILE_COUNT_LIMIT"});
     let loaded;
     try {
       loaded = await runBeforeFeishuMessageDispatch(()=>(params.mediaRuntime ?? getFeishuRuntime().media).loadWebMedia(input,buildOutboundMediaLoadOptions({
@@ -305,7 +310,8 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
     if (!loaded.buffer.length) throw Error("Document attachment is empty");
     const name=loaded.fileName ?? basename(input);
     let content:string|undefined;
-    if(textual.has(extname(name).toLowerCase()))try{content=new TextDecoder("utf-8",{fatal:true}).decode(loaded.buffer);}catch{}
+    if(textual.has(extname(name).toLowerCase()) || bundleSql)try{content=new TextDecoder("utf-8",{fatal:true}).decode(loaded.buffer);}catch{}
+    if(bundleSql && content===undefined)throw Object.assign(Error("SQL source is not UTF-8"),{code:"DOCX_SQL_ENCODING"});
     if(content && /\.m(?:d|arkdown)$/i.test(name) && resolveLocalFilePath(input,workspaceDir)) {
       const nested=findLocalFileReferences(content,dirname(input));
       for(const ref of nested)if(!inputs.includes(ref.path))inputs.push(ref.path);
@@ -316,12 +322,22 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   let markdown = replaceLocalReferences(params.text ?? "",refs);
   if(!files.length && !skipped.length)return {text:markdown || "引用的本地文件不存在，已跳过上传。",mediaUrls:[]};
   const title = (config?.titleTemplate ?? "{filename}").replaceAll("{filename}",files[0]?.name ?? basename(skipped[0].path)).slice(0,200);
+  let sqlBundle = "";
   for (const file of files) {
     if(file.content===undefined)continue;
     const heading=file.name.replace(/([\\`*_\[\]<>#])/g,"\\$1");
-    if (/\.m(?:d|arkdown)$/i.test(file.name)) markdown += `\n\n## ${heading}\n\n${file.content}`;
+    if (/\.sql$/i.test(file.name)) {
+      let fenceLength=3;
+      for(const match of file.content.matchAll(/`+/g))fenceLength=Math.max(fenceLength,match[0].length+1);
+      const fence="`".repeat(fenceLength);
+      const section=`\n\n## ${heading}\n\n${fence}sql\n${file.content}\n${fence}`;
+      if(textual.has(".sql"))markdown+=section;sqlBundle+=section;
+    }
+    else if (/\.m(?:d|arkdown)$/i.test(file.name)) markdown += `\n\n## ${heading}\n\n${file.content}`;
     else markdown += `\n\n## ${heading}\n\n`+file.content.split(/\r?\n/).map(line=>line.replace(/([\\`*_\[\]<>#])/g,"\\$1")).join("\n");
   }
+  const attachments=bundleSql && files.length ? [{name:"sql-sources.md",buffer:Buffer.from(`# SQL 原文汇总（${files.length} 份）\n${sqlBundle}`,"utf8")}] : files;
+  if(bundleSql && attachments.some(file=>file.buffer.length>maxBytes))throw Object.assign(Error("SQL bundle exceeds attachment budget"),{code:"DOCX_SQL_BUNDLE_SIZE"});
   const skippedNotice=skippedAttachmentNotice(skipped);
   markdown+=skippedNotice;
   // This expanded body belongs only in the document. Upload failure must never
@@ -348,7 +364,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       } catch(error) {
         // Retirement/cancellation cannot grant permission for fallback mutations.
         assertDeliveryCurrent(params,error);
-        if(!files.some(file=>/\.m(?:d|arkdown)$/i.test(file.name)))throw error;
+        if(!bundleSql && !files.some(file=>/\.m(?:d|arkdown)$/i.test(file.name)))throw error;
         params.onFailure?.(documentDeliveryFailure(error));
         bodyFallback=true;
         // Do not retry the failed converter or clear partially inserted content.
@@ -361,7 +377,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
           assertFeishuApiSuccess(notice,"Document fallback notice failed");
         }));
       }
-      for(const file of files){check();await deliveryStep("attach_file",()=>runBeforeFeishuMessageDispatch(()=>attachDocumentFile(client,documentId,file,check)));}
+      for(const file of attachments){check();await deliveryStep("attach_file",()=>runBeforeFeishuMessageDispatch(()=>attachDocumentFile(client,documentId,file,check)));}
       if(config?.grantToTarget !== false){
         const {memberType,memberId:target}=resolveDocumentPermissionRecipient(params.to,params.recipientContext),perm=config?.permission ?? "view";
         const grant=params.confirmedGrant;

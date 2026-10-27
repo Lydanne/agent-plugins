@@ -1893,7 +1893,8 @@
                 "default": [
                   ".md",
                   ".markdown",
-                  ".txt"
+                  ".txt",
+                  ".sql"
                 ],
                 "maxItems": 30,
                 "type": "array",
