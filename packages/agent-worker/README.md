@@ -176,6 +176,7 @@ run 在原有必要参数外传 `"modelId":"deep","thinkingLevel":6` 即可。�
 | `modelProfiles`、`defaultModelId` | 原生按 ID 添加的模型配置及默认模型；每项支持启停、用途、CLI、推理强度、速度及 0–6 级覆盖。无启用项时不能提交新任务。 |
 | `thinkingLevel` | 默认 0；run 可按所选模型独立选择 0–6。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
+| `taskQueues`、`defaultQueueId` | 按 ID 添加的队列配置与默认队列；默认 short 和 long。 |
 | `timeoutMs` | 短任务执行总时限，默认 1800000 毫秒（30 分钟）；新任务累计各执行轮次，排队及等待补充时间不计入。 |
 | `longTimeoutMs` | 长任务执行总时限，默认 10800000 毫秒（3 小时）。 |
 | `executorInstructions`、`businessDataPolicy` | 完整替换执行器职责与业务数据展示规则；默认限制业务写入范围并禁止 Git 写操作；`{projectDir}` 在执行和委派提示中替换为当前 `cwd`。 |
@@ -384,11 +385,28 @@ main 完成轮次按 `provenance.senderId` 读取原提问者的当前账号画�
 `action: 'tag'` 携带 jobId 和 tags 可补充标签；tagMode 默认 merge，replace 替换，replace + 空数组清空。飞书仅允许原请求人修改自己任务的标签。元数据独立持久化，后台心跳不会覆盖修改；status/wait/list 读回最新标签。补标签不启动业务任务。
 
 
-`run.taskClass` 为 `short`（默认）或 `long`。每个可信 Agent 各有两个独立队列：短任务默认并发 3 个、执行 30 分钟；长任务默认并发 1 个、执行 3 小时。短队列配置 `maxConcurrentJobs` / `maxQueuedJobs`，长队列配置 `maxConcurrentLongJobs` / `maxQueuedLongJobs`；并发范围 1–10，排队范围 1–1000，排队均默认 100。Agent 身份来自宿主，不接受模型指定。一个队列满额不阻塞另一个队列或其他 Agent。
+任务队列由 `plugins.entries.agent-worker.config.taskQueues` 配置，按稳定 ID 添加条目。默认只有 `short`（30 分钟、并发 3）和 `long`（3 小时、并发 1）；每个队列的并发和排队容量按可信 Agent 独立计算。`defaultQueueId` 默认 `short`，必须指向已有队列。
 
-降低容量不会取消已有任务。`queued.queuePosition` 是当前 Agent、当前类型队列内的受理位置，不是预计开始时间；`waitingReason` 保留 session_busy、resource_busy、capacity、legacy_executor、waiting_workspace 或 awaiting_dispatch。同一执行会话、资源锁及有限 workspace 池仍受原有互斥保护。长短任务不能用来绕过同一业务记录的写入锁。
+每个队列可设置 `name`、可选 `description`、`timeoutMs`、`maxConcurrentJobs`、`maxQueuedJobs`。执行时限范围 1000–86400000 毫秒，并发 1–10，排队 1–1000，最多 50 个队列。下面是在默认两队列之外添加 `build` 的配置示例：
 
-任务类型及超时配置在受理时保存；reply、重启恢复及迟到补充继承原类型。省略类型与显式 short 的幂等键相同，long 纳入请求身份；不能通过改变同一请求的类型重复执行。旧任务无类型时归入短队列并保留执行配置；没有可信 Agent 身份的旧占用保守计入各 Agent 的短任务容量。已有任务不自动重跑或升级为长任务。
+```json
+{
+  "defaultQueueId": "short",
+  "taskQueues": {
+    "short": {"name": "短任务", "timeoutMs": 1800000, "maxConcurrentJobs": 3, "maxQueuedJobs": 100},
+    "long": {"name": "长任务", "timeoutMs": 10800000, "maxConcurrentJobs": 1, "maxQueuedJobs": 100},
+    "build": {"name": "构建任务", "description": "代码构建与测试", "timeoutMs": 7200000, "maxConcurrentJobs": 2, "maxQueuedJobs": 50}
+  }
+}
+```
+
+Main 可用 `action=queues` 只读查看队列目录，再以 `run.queueId=build` 选择；省略时使用默认队列。未知队列拒绝受理，不自动创建或回退。旧 `taskClass=short|long` 等价于同名 queueId，同时提供时必须一致。
+
+显式配置 taskQueues 时以完整字典为准，不自动补回删除的默认队列；未配置时兼容旧 timeoutMs、longTimeoutMs、maxConcurrentJobs、maxQueuedJobs、maxConcurrentLongJobs、maxQueuedLongJobs 并生成两队列。更改默认队列不影响已受理请求的重试。任务记录和执行快照保存队列、执行时限与容量；删除队列拒绝新请求，已有任务及其恢复仍按原队列继续，删除队列的容量使用受理快照。保留的队列使用当前容量，降低上限不取消已有任务。
+
+`queued.queuePosition` 是当前 Agent、当前队列内的受理位置，不是预计开始时间。同一执行会话、资源锁及有限 workspace 池仍受原有互斥保护。切换队列不授予额外权限，也不能绕过同一业务记录的写入锁。排队与等待补充不计入执行时限；新任务累计各轮执行耗时。
+
+旧任务无队列字段时归入 short 并保留原执行配置；无可信 Agent 身份的旧占用保守计入各 Agent 的同名队列容量。不自动重跑旧任务。
 
 导出或修复涉及同一业务用户/记录时，Ada 在 `run.resourceKeys` 传稳定资源键，例如 `['demo:production:user:oExample']`。最多 20 项、每项 1–160 字符；资源键按完整字符串精确匹配，相同键跨聊天/topic 串行。标签仅用于搜索；resourceKeys 才参与调度。资源键不能授予业务权限，不自动猜测业务范围；遗漏资源键时只有会话串行保障。请求重试沿用原 job 的资源键，不扩大或重启原业务操作。
 

@@ -204,3 +204,29 @@ test('legacy tasks retain their snapshot and unknown long jobs occupy only their
   assert.equal((await f.jobs.run({...params,topic:'other-long',taskClass:'long'},'other',{agentId:'other'})).status,'running');
  }finally{await cleanup(f);}
 });
+
+
+test('custom queues isolate agents, freeze admission and drain after configuration removal',async()=>{
+ const f=fixture();
+ let settings={taskQueues:{short:{name:'短',timeoutMs:1800000,maxConcurrentJobs:1,maxQueuedJobs:1},build:{name:'构建',timeoutMs:7200000,maxConcurrentJobs:2,maxQueuedJobs:1}},defaultQueueId:'build'};
+ f.jobs=createJobs({...f.options,getRuntime:()=>settings,getLimits:()=>settings});
+ const run=(topic,queueId,agentId='ada')=>f.jobs.run({...params,topic,queueId,requestId:topic},agentId,{agentId});
+ try{
+  const first=await run('first'),second=await run('second','build'),pending=await run('pending','build');
+  assert.equal(first.queueId,'build');assert.equal(first.timeoutMs,7200000);assert.equal(first.status,'running');assert.equal(second.status,'running');
+  assert.equal(pending.queuePosition,1);assert.equal((await run('full','build')).status,'queue_full');
+  assert.equal((await run('short','short')).status,'running');assert.equal((await run('other','build','other')).status,'running');
+  await assert.rejects(run('bad','missing'),/Unknown task queue/);
+  await assert.rejects(f.jobs.run({...params,queueId:'build',taskClass:'short'},'ada'),/conflicts/);
+  settings={taskQueues:{short:settings.taskQueues.short},defaultQueueId:'short'};
+  assert.equal((await run('first')).jobId,first.jobId);
+  await assert.rejects(run('first','short'),/different queue/);
+  assert.equal((await run('pending','build')).jobId,pending.jobId);
+  await assert.rejects(run('removed','build'),/Unknown task queue/);
+  await until(()=>existsSync(join(f.root,first.jobId+'.started')));
+  f.release(first.jobId);await until(()=>f.jobs.status(first.jobId,'ada').status==='completed');
+  const restarted=createJobs({...f.options,getRuntime:()=>settings,getLimits:()=>settings});restarted.tick();
+  assert.equal(restarted.status(pending.jobId,'ada').status,'running');
+  assert.equal(readJson(join(f.root,pending.jobId+'.request.json')).runtime.timeoutMs,7200000);
+ }finally{await cleanup(f);}
+});

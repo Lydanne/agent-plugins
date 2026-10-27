@@ -1,3 +1,4 @@
+import {resolveTaskQueues,requestedQueueId,queueFields} from './task-queues.mjs';
 import {processAlive} from './dist/workspace-pool.mjs';
 import {attachmentIdentity,attachmentSupplement} from './source-attachments.mjs';
 import {projectFields,modelFields,validateHistoryFilter,matchesHistoryFilter} from './project-binding.mjs';
@@ -13,7 +14,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 export function readJson(path){return JSON.parse(readFileSync(path,'utf8'));}
 export function writeJson(path,value){const tmp=path+'.'+randomUUID();writeFileSync(tmp,JSON.stringify(value),{mode:0o600});renameSync(tmp,path);}
-export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:attachmentIdentity(provenance.attachments)}]:[]),...(params.taskClass==='long'?[{taskClass:'long'}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.useWorkspace===true?[{useWorkspace:true}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
+export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:attachmentIdentity(provenance.attachments)}]:[]),...(requestedQueueId(params)==='long'?[{taskClass:'long'}]:requestedQueueId(params)&&requestedQueueId(params)!=='short'?[{queueId:requestedQueueId(params)}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.useWorkspace===true?[{useWorkspace:true}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
 export function normalizeTags(tags=[]) {
  if(!Array.isArray(tags)||tags.length>50)throw Error('tags must be an array of at most 50 strings');
  const unique=new Map();
@@ -29,7 +30,7 @@ export function savedBeforeDeadline(question,submittedAt){return Number.isFinite
 
 const timeoutAnswer='用户等待已超过 3 分钟，未收到输入。这不是用户答复或授权。保留已核验信息，未补充字段标为未知；跳过依赖这些字段、账号选择或额外授权的步骤，在原 task/constraints 范围内继续可独立完成的工作。不得猜测用户选择、扩大写入权限、重做已执行操作或重复询问同一缺口。无法继续时交付已核验结果、限制与未完成项，不把未知当成否定或成功。';
 const waitPolicy={optional:'可选补充未取得时注明缺失并继续。',required:'必要业务参数未知时跳过依赖步骤，交付未完成项。',decision:'用户未明确决策时跳过对应操作，不代选。',authorization:'外部授权未确认完成时跳过依赖授权的操作，不把超时当授权成功。'};
-export function taskClassOf(job){return job.taskClass??'short';}
+export function taskClassOf(job){return job.queueId??job.taskClass??'short';}
 const agentOf=job=>job.agentId??job.provenance?.agentId??job.project?.agentId??'__legacy__';
 const sameQueue=(a,b)=>agentOf(a)===agentOf(b)&&taskClassOf(a)===taskClassOf(b);
 const waiting=new Set(['awaiting_main','awaiting_user']);
@@ -42,9 +43,12 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
  const sameWorkspace=(a,b)=>a.workspace?.assignmentId&&a.workspace.assignmentId===b.workspace?.assignmentId;
  let workspaceAdmission=Promise.resolve();
  const files=()=>readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x)).map(x=>readJson(join(root,x)));
- const limits=job=>{const {maxConcurrentJobs=3,maxQueuedJobs=100,maxConcurrentLongJobs=1,maxQueuedLongJobs=100}=getLimits();
-  if([maxConcurrentJobs,maxConcurrentLongJobs].some(n=>!Number.isInteger(n)||n<1||n>10)||[maxQueuedJobs,maxQueuedLongJobs].some(n=>!Number.isInteger(n)||n<1||n>1000))throw Error('Invalid scheduler capacity');
-  return taskClassOf(job??{})==='long'?{maxConcurrentJobs:maxConcurrentLongJobs,maxQueuedJobs:maxQueuedLongJobs}:{maxConcurrentJobs,maxQueuedJobs};};
+ const limits=job=>{
+  const {taskQueues}=resolveTaskQueues(getLimits());
+  const id=taskClassOf(job??{});
+  // Removed queues drain admitted work with its persisted capacity; new work is rejected.
+  return Object.hasOwn(taskQueues,id)?taskQueues[id]:job?.queueConfig??{maxConcurrentJobs:id==='long'?1:3,maxQueuedJobs:100};
+ };
  const atCapacity=(running,job)=>running.filter(other=>sameQueue(other,job)||agentOf(other)==='__legacy__'&&taskClassOf(other)===taskClassOf(job)).length>=limits(job).maxConcurrentJobs;
  const legacyBusy=()=>existsSync(join(root,'active'))||existsSync(join(root,'..','lock'));
  const order=(a,b)=>(b.continuationPriority??0)-(a.continuationPriority??0)||(a.queueSequence??a.createdAt)-(b.queueSequence??b.createdAt)||a.createdAt-b.createdAt||a.jobId.localeCompare(b.jobId);
@@ -67,7 +71,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   }
   return j;
  }
- function view(j){const {scope,request,...result}=j;return {...result,taskClass:taskClassOf(j)};}
+ function view(j){const {scope,request,...result}=j;return {...result,...queueFields(taskClassOf(j))};}
  function cancelMatching(matches) {
   mkdirSync(root,{recursive:true,mode:0o700});
   const ids=[];
@@ -397,7 +401,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      const question={...s.question,answer,answerSource:s.answerSource,answerValues:s.answerValues,answerMessageId:s.answerMessageId,answeredAt:s.acceptedAt};
      const questions=[...(job.questions??[]),question];
      const resumeParams={...params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
-     const child={taskClass:taskClassOf(job),agentId:agentOf(job),timeoutMs:job.timeoutMs,jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance:job.provenance,topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
+     const child={...queueFields(taskClassOf(job)),queueConfig:job.queueConfig,agentId:agentOf(job),timeoutMs:job.timeoutMs,jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance:job.provenance,topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
      if(!existsSync(join(root,childId+'.json'))){writeJson(join(root,childId+'.request.json'),{...request,params,resumeParams});writeJson(join(root,childId+'.json'),child);}
      writeJson(join(directory,name),{...s,status:'dispatched',childJobId:childId});scheduleLocked();
     }finally{
@@ -408,7 +412,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    }
   },
   async run(params,scope,provenance){
-   if(params.taskClass!==undefined&&!['short','long'].includes(params.taskClass))throw Error('Invalid taskClass');
+   requestedQueueId(params);
    const automaticRequestId=params.requestId===undefined;
    if(automaticRequestId)params={...params,requestId:getRequestId(params,provenance)};
    const tags=normalizeTags(params.tags);
@@ -420,6 +424,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const findPrior=all=>{
     const exact=all.find(j=>j.inputRequestKey===inputRequestKey||j.requestKey===inputRequestKey);
     if(exact?.project&&params.projectId!==undefined&&params.projectId!==exact.projectId)throw Object.assign(Error('projectId conflicts with the original project binding'),{code:'PROJECT_SELECTOR_CONFLICT'});
+    if(exact&&requestedQueueId(params)!==undefined&&requestedQueueId(params)!==taskClassOf(exact))throw Object.assign(Error('Existing request has a different queue'),{code:'REQUEST_ID_CONFLICT'});
     if(exact)return exact;
     const sameBody=all.filter(j=>j.project&&j.scope===scopeKey(scope)&&j.requestBodyKey===requestKeyFor({...params,repository:undefined,projectId:undefined},scope,provenance));
     const matches=sameBody.filter(j=>params.repository?j.repository===params.repository:params.projectId?j.projectId===params.projectId&&j.repository==='projects/'+params.projectId:false);
@@ -428,9 +433,13 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    };
    const early=findPrior(files());
    let runtime=early?undefined:await getRuntime(params,{...provenance,sessionKey:scope});
-   const taskClass=params.taskClass??'short';
-   if(runtime)runtime={...runtime,timeoutMs:taskClass==='long'?(runtime.longTimeoutMs??10800000):(runtime.timeoutMs??1800000)};
    const originalParams=params;
+   const queueSettings=early?undefined:resolveTaskQueues({...runtime,...getLimits(),...(runtime?.taskQueues?{taskQueues:runtime.taskQueues}:{} )});
+   const taskClass=early?taskClassOf(early):requestedQueueId(params)??queueSettings.defaultQueueId;
+   const queueConfig=early?early.queueConfig:queueSettings.taskQueues[taskClass];
+   if(!early&&!Object.hasOwn(queueSettings.taskQueues,taskClass))throw Error('Unknown task queue: '+taskClass);
+   if(runtime)runtime={...runtime,timeoutMs:queueConfig.timeoutMs};
+   params={...params,queueId:taskClass};
    if(runtime?.projectContext){
     params={...params,projectId:runtime.projectContext.projectId,repository:runtime.projectContext.repository};
     if(automaticRequestId)params={...params,requestId:getRequestId({...params,requestId:undefined},provenance)};
@@ -445,11 +454,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(prior){jobId=prior.jobId;}
     else{
      // Retries of accepted jobs succeed even when the waiting queue is full.
-     const running=all.filter(occupied),candidate={taskClass,agentId:provenance?.agentId??runtime?.projectContext?.agentId,scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,modelSessionScope:runtime?.modelSessionScope,resourceKeys};
+     const running=all.filter(occupied),candidate={...queueFields(taskClass),queueConfig,agentId:provenance?.agentId??runtime?.projectContext?.agentId,scope:scopeKey(scope),topic:params.topic,executionScope:runtime?.executionScope,modelSessionScope:runtime?.modelSessionScope,resourceKeys};
      const canStart=!runtime?.workspacePool&&!legacyBusy()&&!atCapacity(running,candidate)&&!running.some(job=>conflict(job,candidate))&&!all.some(job=>waiting.has(job.status)&&sameSession(job,candidate));
-     if(!canStart&&all.filter(job=>queued(job)&&sameQueue(job,candidate)).length>=limits(candidate).maxQueuedJobs)return {status:'queue_full',taskClass,agentId:agentOf(candidate),accepted:false,message:'Waiting queue is full; no job was created.'};
+     if(!canStart&&all.filter(job=>queued(job)&&sameQueue(job,candidate)).length>=limits(candidate).maxQueuedJobs)return {status:'queue_full',...queueFields(taskClass),agentId:agentOf(candidate),accepted:false,message:'Waiting queue is full; no job was created.'};
      jobId=randomUUID();
-     const job={taskClass,agentId:agentOf(candidate),timeoutMs:runtime?.timeoutMs,jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{inputRequestKey,requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance)}:{}),requestId:params.requestId,provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
+     const job={...queueFields(taskClass),queueConfig,inputRequestKey,agentId:agentOf(candidate),timeoutMs:queueConfig.timeoutMs,jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance)}:{}),requestId:params.requestId,provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
      writeJson(join(root,jobId+'.request.json'),{params,scope,runtime});
      writeJson(join(root,jobId+'.json'),job);
     }

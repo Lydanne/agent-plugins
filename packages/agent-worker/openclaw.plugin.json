@@ -462,6 +462,81 @@
         "minimum": 1000,
         "maximum": 86400000,
         "description": "长任务执行上限（毫秒） / Long execution timeout (ms)"
+      },
+      "taskQueues": {
+        "type": "object",
+        "default": {
+          "short": {
+            "name": "短任务",
+            "description": "常规查询及短时间执行",
+            "timeoutMs": 1800000,
+            "maxConcurrentJobs": 3,
+            "maxQueuedJobs": 100
+          },
+          "long": {
+            "name": "长任务",
+            "description": "需要较长时间的分析、构建或处理",
+            "timeoutMs": 10800000,
+            "maxConcurrentJobs": 1,
+            "maxQueuedJobs": 100
+          }
+        },
+        "minProperties": 1,
+        "maxProperties": 50,
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "required": [
+            "name",
+            "timeoutMs",
+            "maxConcurrentJobs",
+            "maxQueuedJobs"
+          ],
+          "additionalProperties": false,
+          "default": {
+            "name": "新队列",
+            "timeoutMs": 1800000,
+            "maxConcurrentJobs": 1,
+            "maxQueuedJobs": 100
+          },
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "\\S",
+              "maxLength": 160
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            },
+            "maxConcurrentJobs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "maxQueuedJobs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          }
+        },
+        "description": "任务队列 / Task queues"
+      },
+      "defaultQueueId": {
+        "type": "string",
+        "default": "short",
+        "maxLength": 40000,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "description": "默认任务队列 / Default queue ID"
       }
     }
   },
@@ -472,11 +547,13 @@
     },
     "maxConcurrentJobs": {
       "label": "每 Agent 短任务并发数",
-      "help": "默认 3；不占用长任务容量。"
+      "help": "兼容旧配置；显式配置 taskQueues 后以队列配置为准。",
+      "advanced": true
     },
     "maxQueuedJobs": {
       "label": "每 Agent 短任务排队上限",
-      "help": "默认 100；按 Agent 和任务类型隔离。"
+      "help": "兼容旧配置；显式配置 taskQueues 后以队列配置为准。",
+      "advanced": true
     },
     "state": {
       "label": "任务状态目录 / Task state directory",
@@ -508,7 +585,8 @@
     },
     "timeoutMs": {
       "label": "短任务执行上限（毫秒） / Short execution timeout (ms)",
-      "help": "短任务默认 30 分钟；已受理任务保留原配置。"
+      "help": "兼容旧配置；显式配置 taskQueues 后以队列配置为准。",
+      "advanced": true
     },
     "skillsEnabled": {
       "label": "启用技能版本刷新 / Enable skill version refresh",
@@ -670,15 +748,41 @@
     },
     "maxConcurrentLongJobs": {
       "label": "每 Agent 长任务并发数",
-      "help": "默认 1；不占用短任务容量。"
+      "help": "兼容旧配置；显式配置 taskQueues 后以队列配置为准。",
+      "advanced": true
     },
     "maxQueuedLongJobs": {
       "label": "每 Agent 长任务排队上限",
-      "help": "默认 100；按 Agent 和任务类型隔离。"
+      "help": "兼容旧配置；显式配置 taskQueues 后以队列配置为准。",
+      "advanced": true
     },
     "longTimeoutMs": {
       "label": "长任务执行上限（毫秒） / Long execution timeout (ms)",
-      "help": "长任务默认 3 小时；已受理任务保留原配置。"
+      "help": "兼容旧配置；显式配置 taskQueues 后以队列配置为准。",
+      "advanced": true
+    },
+    "taskQueues": {
+      "label": "任务队列 / Task queues",
+      "help": "按稳定 ID 添加队列；每个队列分别配置名称、用途、执行时限、每 Agent 并发和排队上限。显式配置后替代旧长短队列设置。"
+    },
+    "defaultQueueId": {
+      "label": "默认任务队列 / Default queue ID",
+      "help": "省略 run.queueId 时使用的队列，必须是已配置 ID，默认 short。"
+    },
+    "taskQueues.*.name": {
+      "label": "队列名称"
+    },
+    "taskQueues.*.description": {
+      "label": "适用任务"
+    },
+    "taskQueues.*.timeoutMs": {
+      "label": "执行总时限（毫秒）"
+    },
+    "taskQueues.*.maxConcurrentJobs": {
+      "label": "每 Agent 最大并发数"
+    },
+    "taskQueues.*.maxQueuedJobs": {
+      "label": "每 Agent 最大排队数"
     }
   },
   "controlUi": {

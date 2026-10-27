@@ -7,6 +7,7 @@ export function diagnosticKey(context) {
 export function explainQueryError(error) {
  const text=String(error?.message ?? error ?? '');
  const rules=[
+  [/^Unknown task queue:|^Invalid queueId|^Invalid taskClass|^queueId conflicts|^queueId\/taskClass are only supported/,'QUEUE_SELECTION_INVALID','任务队列参数无效，新任务未启动。使用 action=queues 核对队列 ID，在 run 传 queueId；reply 沿用原队列。'],
   [/No matching pending question|Question expired|Task cannot accept a reply|Question already answered differently/,'QUESTION_UNAVAILABLE','问题已过期、已回答或任务已结束；请核对原 jobId/questionId 和状态，不创建新的 run 或覆盖已有回答。'],
   [/Original task authorization is no longer current|Original Worker session cannot be resumed safely|Only the task requester Main can reply/,'CONTEXT_REPLY_FORBIDDEN','原任务授权、请求人或 Worker 会话校验未通过，未恢复执行；请核对原消息和原任务，不扩大权限或新建任务重做。'],
   [/Waiting queue is full; question remains pending/,'CONTEXT_REPLY_QUEUE_FULL','执行队列已满，问题仍待回答；稍后用相同 jobId、questionId 和回答重试，不创建新的 run。'],

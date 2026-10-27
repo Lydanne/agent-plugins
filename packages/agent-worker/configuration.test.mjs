@@ -132,7 +132,7 @@ test('registration uses configured storage',async t=>{
 });
 
 test('configured execution timeout survives dispatch and marks the original job timed_out',async t=>{
- const config={...await fixture(t),timeoutMs:1000};
+ const config={...await fixture(t),taskQueues:undefined,timeoutMs:1000};
  const jobs=createJobs({root:join(config.state,'jobs'),node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:()=>config,logger:console});
  const result=await jobs.run({topic:'slow',task:'slow',context:'none',constraints:'read only',waitSeconds:5},'timeout-fixture');
  assert.equal(result.status,'timed_out');assert.match(result.error,/1000 ms/);
@@ -412,4 +412,21 @@ test('skill acknowledgement schema applies to new and resumed refresh turns only
 test('task-class timeout defaults and administrator overrides are validated',()=>{
  const config=resolveConfiguration();assert.equal(config.timeoutMs,1800000);assert.equal(config.longTimeoutMs,10800000);
  const custom=resolveConfiguration({timeoutMs:90000,longTimeoutMs:7200000});assert.equal(custom.timeoutMs,90000);assert.equal(custom.longTimeoutMs,7200000);
+});
+
+
+test('configurable queue catalog validates IDs, defaults, limits and legacy migration',async t=>{
+ const custom={name:'构建',description:'代码构建',timeoutMs:7200000,maxConcurrentJobs:2,maxQueuedJobs:12};
+ const config=resolveConfiguration({taskQueues:{...defaultConfiguration.taskQueues,build:custom},defaultQueueId:'build'});
+ assert.equal(config.taskQueues.build.timeoutMs,7200000);
+ const legacy=resolveConfiguration({timeoutMs:90000,maxConcurrentJobs:2,maxConcurrentLongJobs:4});
+ assert.equal(legacy.taskQueues.short.timeoutMs,90000);assert.equal(legacy.taskQueues.short.maxConcurrentJobs,2);assert.equal(legacy.taskQueues.long.maxConcurrentJobs,4);
+ assert.equal(resolveConfiguration({...config,timeoutMs:1000}).taskQueues.short.timeoutMs,1800000);
+ for(const bad of [{taskQueues:null},{defaultQueueId:null},{taskQueues:{}},{defaultQueueId:'missing'},{taskQueues:{'bad/id':custom},defaultQueueId:'bad/id'},{taskQueues:{build:{...custom,maxConcurrentJobs:0}},defaultQueueId:'build'},{taskQueues:{build:{...custom,timeoutMs:0}},defaultQueueId:'build'}])assert.throws(()=>resolveConfiguration(bad));
+ const factories=[];
+ plugin.register({pluginConfig:{...await fixture(t),taskQueues:config.taskQueues,defaultQueueId:config.defaultQueueId},logger:console,registerService:()=>{},registerTool:f=>factories.push(f)});
+ const tool=factories[0]({sessionKey:'queue-catalog'});
+ const result=JSON.parse((await tool.execute('',{action:'queues'})).content[0].text);
+ assert.equal(result.defaultQueueId,'build');assert.deepEqual(result.queues.find(q=>q.id==='build'),{id:'build',...custom});
+ await assert.rejects(tool.execute('',{action:'reply',queueId:'build'}),/QUEUE_SELECTION_INVALID/);
 });

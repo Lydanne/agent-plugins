@@ -34,6 +34,6 @@ CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机�
 
 明确授权的代码修复任务可在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 保持原目录。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，提交推送只针对自己的任务分支。
 
-## 长短任务队列
+## 可配置任务队列
 
-run 可传 taskClass: short（默认）或 long。短任务默认执行总时限 30 分钟，每 Agent 最多并发 3 个；明确需要长时间执行的任务选择 long，默认 3 小时、每 Agent 最多并发 1 个。两类独立排队，其他 Agent 也不共用容量；同一会话、资源锁和 workspace 池仍遵守原保护。按任务性质选择，不能借切换类型重跑超时、失联或已受理任务；reply 沿用原类型。排队及等待 Main/用户补充不消耗新任务执行时限。
+run.queueId 选择已配置队列，省略使用管理员 defaultQueueId；可用 action=queues 只读查看名称、用途、执行时限和容量。默认 short 为 30 分钟、每 Agent 并发 3，long 为 3 小时、每 Agent 并发 1，管理员可添加其他队列。每 Agent、每队列独立排队；同一会话、资源锁和 workspace 池仍遵守原保护。旧 taskClass=short|long 兼容同名队列。按任务性质选择，不通过切换队列重跑超时、失联或已受理任务；reply 沿用原队列。删除队列不取消原任务，未知队列不能提交新任务。排队及等待补充不消耗执行时限。
