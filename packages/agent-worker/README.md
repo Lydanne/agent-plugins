@@ -588,6 +588,9 @@ context、constraints、useWorkspace、可选 attempt。禁止任意 cwd 和调�
 服务生成固定会话；当前外部插件不能直接为原生 Main 引擎调用 createSessionEntry，客户端用公开
 sessions.create 创建指定会话，服务读取并固定 sessionId。会话替换不会自动接管。
 Main 使用公开 runWithWorkAdmission、runEmbeddedAgent、带外 toolBindings；没有 owner 身份或飞书路由注入。
+服务使用宿主 V2 service scheduler 调度轮询，避免继承热重载 RPC 已释放的 admission；不得改回普通后台定时器。
+部署时若 Agent 配置了工具 allowlist，须保留原列表并加入 `agent_task_result`，否则 Worker 能完成但 Main 无法提交结果。
+该工具只在宿主绑定的自动化轮次注册，执行仍校验任务、会话、nonce 与核验阶段。
 核验轮次的 agent_task_result 接受 `{outcome:"succeeded"|"blocked",result:{...}}`，重复相同结果幂等，
 冲突拒绝。知识任务的 merged/no-change/blocked 是 result 中的业务值，服务不识别知识 PR。
 
