@@ -74,7 +74,19 @@ export function createTaskService({store,jobs,main,invoke,policy,logger=console}
   const j=t.jobId?jobs.status(t.jobId,t.sessionKey):null;
   if(j)t=patch(t.taskId,{workerStatus:j.status,waitingReason:j.waitingReason??j.workspaceWaiting,artifacts:(j.reports??[]).map(r=>({path:r.path,omittedReason:r.omittedReason})),settled:jobTerminal.has(j.status)&&(!j.useWorkspace||j.workspaceSettled===true&&j.workspaceRelease==='idle')});
   if(terminalStates.has(t.state)){if(t.settled)main.release?.(t);return;}
+  if(t.state==='unknown'&&!j&&!t.cancelRequestedAt){
+   // Reconcile jobs first. Never run Main to investigate an uncertain execution.
+   const entry=await main.session(t);
+   if((!t.sessionId&&!entry)||(t.sessionId&&entry?.sessionId===t.sessionId)){
+    const settled=store.settleUnstartedUnknown(t.taskId);
+    if(settled){main.release?.(settled);return;}
+   }
+   if(t.sessionId)await main.protect?.(t);
+   return; // Neither a missing receipt nor deadline expiry proves non-execution.
+  }
   if(t.sessionId)await main.protect?.(t);
+  if(j?.status==='unknown'&&!t.cancelRequestedAt&&t.state!=='cancelling'){patch(t.taskId,{state:'unknown',phase:'worker',error:{code:'WORKER_UNKNOWN'}});return;}
+  if(t.state==='unknown'&&j&&!jobTerminal.has(j.status)&&!t.cancelRequestedAt)return;
   if(t.cancelRequestedAt&&(t.state!=='cancelling'||t.error))t=patch(t.taskId,{state:'cancelling',phase:'stopping',error:null});
   if(Date.now()>=t.deadline&&t.state!=='cancelling')t=fail(t,'TASK_DEADLINE_EXCEEDED',!j&&(!store.event(t.taskId,'delegation')||store.event(t.taskId,'delegation').rejected===true));
   if(terminalStates.has(t.state)){if(t.settled)main.release?.(t);return;}
@@ -85,7 +97,6 @@ export function createTaskService({store,jobs,main,invoke,policy,logger=console}
    patch(t.taskId,{state:t.error?'failed':'cancelled',phase:'finished',settled:!j||t.settled});return;
   }
   if(j&&jobs.executionActive?.(t.jobId,t.sessionKey)&&(jobTerminal.has(j.status)||j.status==='awaiting_main'))return;
-  if(j?.status==='unknown'){patch(t.taskId,{state:'unknown',phase:'worker',error:{code:'WORKER_UNKNOWN'}});return;}
   if(j&&jobTerminal.has(j.status)){const attempt=(t.verificationAttempts??0)+1;if(attempt>3){fail(t,'MAIN_VERIFICATION_EXHAUSTED',t.settled);return;}t=patch(t.taskId,{verificationAttempts:attempt});await turn(t,'verify','verify:'+attempt,j);return;}
   if(t.state==='unknown')return;
   if(j?.status==='awaiting_main'){

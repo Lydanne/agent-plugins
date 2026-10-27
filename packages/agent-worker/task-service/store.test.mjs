@@ -12,3 +12,10 @@ test('durable dedup across attempts and reopen; conflicting inputs never overwri
  }finally{s.close();rmSync(root,{recursive:true,force:true});}
 });
 test('source and repository injection rejected',()=>{const root=mkdtempSync(join(tmpdir(),'automation-store-'));const s=openTaskStore(root);try{for(const patch of [{cwd:'/tmp'},{provenance:{senderId:'fake'}},{repository:'projects/other'},{repository:'projects/example/repositories/..'}])assert.throws(()=>s.submit('owner',{...input,...patch},{timeoutMs:60000}));}finally{s.close();rmSync(root,{recursive:true,force:true});}});
+test('automatic unstarted settlement survives reopen and preserves dedup and cause',()=>{
+ const root=mkdtempSync(join(tmpdir(),'automation-unstarted-'));let s=openTaskStore(root);
+ try{const t=s.submit('owner',input,{timeoutMs:60000});s.update(t.taskId,()=>({state:'unknown',error:{code:'TASK_RECONCILIATION_FAILED'}}));s.close();s=openTaskStore(root);
+ assert.equal(s.settleUnstartedUnknown(t.taskId).state,'failed');assert.equal(s.settleUnstartedUnknown(t.taskId),null);s.close();s=openTaskStore(root);
+ assert.equal(s.get(t.taskId).settled,true);assert.equal(s.event(t.taskId,'unstarted-settlement').previousError.code,'TASK_RECONCILIATION_FAILED');assert.equal(s.submit('owner',{...input,attempt:'2'},{timeoutMs:60000}).taskId,t.taskId);assert.equal(s.list().length,1);
+ }finally{s.close();rmSync(root,{recursive:true,force:true});}
+});

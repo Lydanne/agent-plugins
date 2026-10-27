@@ -598,7 +598,11 @@ Main 使用公开 runWithWorkAdmission、runEmbeddedAgent、带外 toolBindings�
 AUTHORIZATION_REQUIRED；没有新证据的重复缺口停止。工作区由既有 scheduler 结算，不手工置空闲。
 CI 默认 15 秒查询、一小时等待；等待超时保留 taskId 且不取消。显式取消返回 cancelling，确认
 停止后才 cancelled，已发生的外部操作不会回滚。崩溃后优先对账主 job，无法确认的 Main 接纳窗口
-进入 unknown，不重派；完成 Worker 只能进入受限核验，核验最多三次。
+进入 unknown，不重派。新受理记录带版本化执行日志标记；仅 waiting_session 的接纳/对账失败、
+账本仅含完整受理事件、没有 Main/委派/核验事件且无关联 job、会话身份一致时，自动收尾为
+failed / NO_EXECUTION_STARTED，持久保存原错误和判定事件并释放会话占用。不会删除记录或重新执行。
+旧记录、日志缺失、会话身份不符和任何执行痕迹都保留现场；无 job 的不确定任务也不因总时限到期而自动认定未执行。
+完成 Worker 只能进入受限核验，核验最多三次。
 
 查询包含阶段、Worker 原始状态、等待原因、核验尝试、报告引用、前序任务和结果，不返回原始任务正文
 或凭据。管理中心禁止删除未结束、未知、待核验或未结算的自动化 Worker 会话；去重账本不随聊天删除。

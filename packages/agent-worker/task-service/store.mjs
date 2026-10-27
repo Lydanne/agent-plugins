@@ -29,10 +29,22 @@ export function openTaskStore(root){
  function insert(owner,request,key,generation,predecessorTaskId,policy){
   const taskId=randomUUID(),now=Date.now(),prior=predecessorTaskId?get(predecessorTaskId):undefined;
   const t={version:1,taskId,owner,request,inputDigest:digest(request),generation,predecessorTaskId,...(prior?{predecessor:{taskId:prior.taskId,jobId:prior.jobId,result:prior.result,artifacts:prior.artifacts??[]}}:{}),sessionKey:`agent:${request.agentId}:automation:${taskId}`,state:'accepted',phase:'waiting_session',createdAt:now,updatedAt:now,deadline:now+policy.timeoutMs,policy,jobId:null,result:null,error:null};
-  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?)').run(taskId,owner,key,generation,t.inputDigest,JSON.stringify(t));db.prepare('INSERT INTO events VALUES(?,?,?,?)').run(taskId,'accepted','done',JSON.stringify({createdAt:now}));return t;
+  db.prepare('INSERT INTO tasks VALUES(?,?,?,?,?,?)').run(taskId,owner,key,generation,t.inputDigest,JSON.stringify(t));db.prepare('INSERT INTO events VALUES(?,?,?,?)').run(taskId,'accepted','done',JSON.stringify({createdAt:now,executionJournalVersion:1}));return t;
  }
  return {
   close:()=>db.close(),get,
+  // Only a complete, versioned pre-execution journal is affirmative evidence.
+  // The transaction rechecks it at settlement; absence in legacy records is not proof.
+  settleUnstartedUnknown(id){return tx(()=>{
+   const t=get(id),events=db.prepare('SELECT id,status,body FROM events WHERE task=?').all(id);
+   if(t.state!=='unknown'||t.phase!=='waiting_session'||t.jobId||t.result||t.cancelRequestedAt||t.delegationAttempts||t.verificationAttempts||
+      !['TASK_RECONCILIATION_FAILED','SESSION_RECONCILIATION_FAILED'].includes(t.error?.code)||events.length!==1||events[0].id!=='accepted'||events[0].status!=='done')return null;
+   const accepted=JSON.parse(events[0].body);
+   if(accepted.executionJournalVersion!==1||accepted.createdAt!==t.createdAt)return null;
+   const completedAt=Date.now(),receipt={reason:'NO_EXECUTION_STARTED',previousError:t.error,executionJournalVersion:1,completedAt};
+   db.prepare('INSERT INTO events VALUES(?,?,?,?)').run(id,'unstarted-settlement','done',JSON.stringify(receipt));
+   return save({...t,state:'failed',phase:'finished',settled:true,error:{code:'NO_EXECUTION_STARTED',cause:t.error.code},updatedAt:completedAt});
+  });},
   owned(id,owner){const t=get(id);if(t.owner!==owner)throw fault('TASK_NOT_FOUND');return t;},
   list(){return db.prepare('SELECT body FROM tasks ORDER BY rowid').all().map(r=>JSON.parse(r.body));},
   submit(owner,input,policy){const request=validateSubmission(input),key=digest([request.agentId,request.projectId,request.requestKey]);return tx(()=>{
