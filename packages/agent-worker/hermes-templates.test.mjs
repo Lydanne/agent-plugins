@@ -73,3 +73,32 @@ test('pre-Hermes admitted requests execute and resume with the original model pa
  const current=resolveConfiguration({...legacy,harness:undefined});
  assert.equal(decode(await executeQuery({action:'list'},{sessionKey:scope},current)).tasks[0].needsMigration,true);
 });
+
+test('template labels and variable key order preserve the actual CLI session',async t=>{
+ const {config}=await fixture(t),context={sessionKey:'cosmetic-template'},first=decode(await executeQuery(params,context,config));
+ const templates=structuredClone(config.hermesTemplates);
+ templates.wrapper.name='新的显示名称';templates.wrapper.description='新的用途说明';
+ templates.wrapper.variables.profile='changed default overridden by queue';
+ const changed={...config,hermesTemplates:templates,taskQueues:{...config.taskQueues,custom:{...config.taskQueues.custom,hermesVariables:Object.fromEntries(Object.entries(config.taskQueues.custom.hermesVariables).reverse())}}};
+ const before=resolveQueueExecution(config),after=resolveQueueExecution(changed);
+ assert.deepEqual(hermesCommand(before),hermesCommand(after));assert.equal(before.modelSessionScope,after.modelSessionScope);
+ const next=decode(await executeQuery(params,context,changed));assert.equal(next.sessionId,first.sessionId);assert.equal(next.reused,true);
+ assert.equal(decode(await executeQuery({action:'list'},context,changed)).tasks[0].needsMigration,false);
+ for(const update of [{command:'/different-cli'},{args:[...templates.wrapper.args,'--different']},{resumeArgs:['resume','--different','{{sessionId}}']}]){
+  const realChange=resolveQueueExecution({...changed,hermesTemplates:{wrapper:{...templates.wrapper,...update}}});assert.notEqual(realChange.modelSessionScope,before.modelSessionScope);
+ }
+ const variablesChanged=resolveQueueExecution({...config,taskQueues:{...config.taskQueues,custom:{...config.taskQueues.custom,hermesVariables:{model:'another-model',profile:'another-profile'}}}});
+ assert.notEqual(variablesChanged.modelSessionScope,before.modelSessionScope);
+});
+
+test('in-flight Hermes v1 snapshots retain their old fingerprint when resuming',async t=>{
+ const {createHash}=await import('node:crypto');
+ const {config}=await fixture(t),runtime=resolveQueueExecution(config);
+ delete runtime.hermesIdentityVersion;
+ runtime.hermesRevision=createHash('sha256').update(JSON.stringify(runtime.hermesExecution)).digest('hex');
+ runtime.modelSessionScope=createHash('sha256').update(JSON.stringify(['hermes',runtime.hermesTemplateId,runtime.hermesRevision])).digest('hex');
+ const context={sessionKey:'v1-snapshot'},task={...params,task:'ask'};
+ const waiting=decode(await executeQuery(task,context,runtime));assert.ok(waiting.contextRequest);
+ const done=decode(await executeQuery({...task,mainReplies:[{questionId:'fixture',answer:'continue'}]},{...context,expectedSessionId:waiting.sessionId},runtime));
+ assert.equal(done.sessionId,waiting.sessionId);assert.equal(done.reused,true);
+});

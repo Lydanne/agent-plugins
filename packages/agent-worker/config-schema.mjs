@@ -26,6 +26,13 @@ for(const [key,hint]of Object.entries(modelHints))manifest.uiHints['modelProfile
 for(const key of Object.keys(manifest.uiHints))if(key.startsWith('models.*.'))delete manifest.uiHints[key];
 for(const key of ['thinkingLevel','thinkingProfiles','models','model','reasoningEffort','historyEnabled','historyLimit','historyTimeoutMs','larkCli','openclawHome','larkPathPrefix']){delete manifest.configSchema.properties[key];delete manifest.uiHints[key];}
 for(const key of Object.keys(manifest.uiHints))if(key.includes('.thinkingProfiles'))delete manifest.uiHints[key];
+// Host validation runs before resolveConfiguration can discard retired settings.
+const retiredLevels={type:'object',deprecated:true,additionalProperties:{type:'object'}};
+manifest.configSchema.properties.thinkingLevel={type:'integer',minimum:0,maximum:6,deprecated:true};
+manifest.configSchema.properties.thinkingProfiles=retiredLevels;
+manifest.configSchema.properties.modelProfiles.additionalProperties.properties.thinkingProfiles=retiredLevels;
+for(const key of ['thinkingLevel','thinkingProfiles','modelProfiles.*.thinkingProfiles'])manifest.uiHints[key]={label:'旧等级配置（已废弃）',advanced:true,help:'仅接受已有配置以兼容升级，不参与新任务执行；可以删除。请使用 Hermes 模板变量配置参数。'};
+
 for(const [key,label] of Object.entries({name:'模板名称',description:'用途',adapter:'输出协议',command:'CLI 可执行命令',args:'CLI 参数模板',resumeArgs:'恢复会话参数',stdin:'标准输入模板',variables:'默认变量'}))manifest.uiHints['hermesTemplates.*.'+key]={label};
 manifest.uiHints['taskQueues.*.hermesTemplateId']={label:'Hermes 模板 ID',help:'默认 codex，引用已配置模板。'};
 manifest.uiHints['taskQueues.*.hermesVariables']={label:'模板变量',help:'覆盖模型、推理参数、CLI 路径或模板声明的自定义变量；不设置智慧等级。'};

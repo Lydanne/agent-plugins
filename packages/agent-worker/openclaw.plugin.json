@@ -258,6 +258,13 @@
                 "default",
                 "fast"
               ]
+            },
+            "thinkingProfiles": {
+              "type": "object",
+              "deprecated": true,
+              "additionalProperties": {
+                "type": "object"
+              }
             }
           }
         },
@@ -511,6 +518,19 @@
           }
         },
         "description": "Hermes 模板 / Hermes templates"
+      },
+      "thinkingLevel": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 6,
+        "deprecated": true
+      },
+      "thinkingProfiles": {
+        "type": "object",
+        "deprecated": true,
+        "additionalProperties": {
+          "type": "object"
+        }
       }
     }
   },
@@ -721,6 +741,21 @@
     "taskQueues.*.hermesVariables": {
       "label": "模板变量",
       "help": "覆盖模型、推理参数、CLI 路径或模板声明的自定义变量；不设置智慧等级。"
+    },
+    "thinkingLevel": {
+      "label": "旧等级配置（已废弃）",
+      "advanced": true,
+      "help": "仅接受已有配置以兼容升级，不参与新任务执行；可以删除。请使用 Hermes 模板变量配置参数。"
+    },
+    "thinkingProfiles": {
+      "label": "旧等级配置（已废弃）",
+      "advanced": true,
+      "help": "仅接受已有配置以兼容升级，不参与新任务执行；可以删除。请使用 Hermes 模板变量配置参数。"
+    },
+    "modelProfiles.*.thinkingProfiles": {
+      "label": "旧等级配置（已废弃）",
+      "advanced": true,
+      "help": "仅接受已有配置以兼容升级，不参与新任务执行；可以删除。请使用 Hermes 模板变量配置参数。"
     }
   },
   "controlUi": {

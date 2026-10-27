@@ -52,6 +52,13 @@ export function validateHermesTemplates(templates,queues){
   for(const key of Object.keys(queue.hermesVariables??{}))if(!['cli','model','reasoningEffort','speed','codexHome'].includes(key)&&!Object.hasOwn(templates[id].variables,key))throw Error('Undeclared Hermes variable: '+key);
  }
 }
+// Labels and descriptions never affect CLI/session identity. Sort dictionaries so
+// equivalent operator edits do not migrate a session solely due to key order.
+export function hermesExecutionIdentity(execution){
+ const {template,variables}=execution;
+ return {templateId:execution.templateId,adapter:template.adapter,command:template.command,args:template.args,resumeArgs:template.resumeArgs,stdin:template.stdin,
+  variables:Object.fromEntries(Object.entries(variables).sort(([a],[b])=>a.localeCompare(b)))};
+}
 export function bindHermes(config,queue,{explicitModel=false}={}){
  const id=queue.hermesTemplateId??'codex',template=config.hermesTemplates[id];
  if(!template)throw Error('Unknown Hermes template: '+id);
@@ -60,8 +67,8 @@ export function bindHermes(config,queue,{explicitModel=false}={}){
  for(const key of ['cli','codexHome'])if(variables[key]?.startsWith('~/'))variables[key]=join(homedir(),variables[key].slice(2));
  for(const key of ['cli','model','reasoningEffort','codexHome'])if(typeof variables[key]!=='string'||!variables[key].trim())throw Error('Missing Hermes variable: '+key);
  const hermesExecution=structuredClone({templateId:id,template,variables});
- const hermesRevision=createHash('sha256').update(JSON.stringify(hermesExecution)).digest('hex');
- return {...config,hermesExecution,hermesExplicitModel:explicitModel,hermesTemplateId:id,hermesRevision,cli:variables.cli,model:variables.model,reasoningEffort:variables.reasoningEffort,speed:variables.speed||undefined,codexHome:variables.codexHome,
+ const hermesRevision=createHash('sha256').update(JSON.stringify(hermesExecutionIdentity(hermesExecution))).digest('hex');
+ return {...config,hermesExecution,hermesIdentityVersion:2,hermesExplicitModel:explicitModel,hermesTemplateId:id,hermesRevision,cli:variables.cli,model:variables.model,reasoningEffort:variables.reasoningEffort,speed:variables.speed||undefined,codexHome:variables.codexHome,
   modelSessionScope:createHash('sha256').update(JSON.stringify(['hermes',id,hermesRevision])).digest('hex')};
 }
 export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,prompt=''}={}){

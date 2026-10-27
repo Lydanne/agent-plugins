@@ -154,7 +154,7 @@ test('memory feature combinations advertise the actual admission and native tool
 test('registration and manifest expose only delegation without inactive history configuration',()=>{
  const manifest=JSON.parse(requireManifestText);
  assert.deepEqual(manifest.contracts.tools,['agent_worker']);
- for(const key of ['memoryRoot','memoryToolName','memoryEnabled','memorySemanticEnabled','memoryEmbeddingTimeoutMs','larkCli','openclawHome','larkPathPrefix','historyEnabled','historyLimit','historyTimeoutMs','thinkingProfiles']) {
+ for(const key of ['memoryRoot','memoryToolName','memoryEnabled','memorySemanticEnabled','memoryEmbeddingTimeoutMs','larkCli','openclawHome','larkPathPrefix','historyEnabled','historyLimit','historyTimeoutMs']) {
   assert.ok(!(key in defaultConfiguration));
   assert.ok(!(key in manifest.configSchema.properties));
   assert.ok(!(key in manifest.uiHints));

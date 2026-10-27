@@ -1,4 +1,4 @@
-import {defaultHermesTemplates,hermesTemplatesSchema,validateHermesTemplates,bindHermes,hermesCommand} from './hermes-templates.mjs';
+import {defaultHermesTemplates,hermesTemplatesSchema,validateHermesTemplates,bindHermes,hermesCommand,hermesExecutionIdentity} from './hermes-templates.mjs';
 import {defaultTaskQueues,taskQueuesSchema,resolveTaskQueues,queueIdPattern} from './task-queues.mjs';
 import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
@@ -105,7 +105,7 @@ export function modelCatalog(input={}) {
 export function executionFingerprint(config,{policyVersion}={}) {
  const keys=['cwd','cli','codexHome','model',...(config.modelSessionScope?['harness']:['reasoningEffort']),'approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];
  const value=keys.map(k=>[k,config[k]]);
- if(config.hermesExecution)value.push(['hermesExecution',config.hermesExecution]);
+ if(config.hermesExecution)value.push(['hermesExecution',config.hermesIdentityVersion===2?hermesExecutionIdentity(config.hermesExecution):config.hermesExecution]);
  if(config.scopedSkillSnapshot?.projectRegistration)value.push(['projectRegistration',config.scopedSkillSnapshot.projectRegistration]);
  if(config.skillContextRoot)value.push(['skillContextRoot',config.skillContextRoot]);
  if(config.speed&&!config.modelSessionScope)value.push(['speed',config.speed]);
