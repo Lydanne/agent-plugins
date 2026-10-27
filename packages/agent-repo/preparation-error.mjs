@@ -31,3 +31,22 @@ export function preparationDiagnostic(error){
  return {code:'AGENT_REPO_PREPARATION_UNKNOWN',cause:'仓库准备发生未分类异常，需管理员核对本轮诊断记录。',errorType:/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error?.name??'')?error.name:'Error'};
 }
 export function diagnosticError(diagnostic){const error=new Error('Prompt preparation failed');error.preparationDiagnostic=diagnostic;return error;}
+
+// Interpret Git stderr locally; only return fixed descriptions, never raw output.
+export function gitSyncDiagnostic(error) {
+ const stderr=typeof error?.stderr==='string'?error.stderr:'';
+ const cases=[
+  [/permission denied|authentication failed|could not read username|has no .*permission/i,'AUTH_FAILED','Git 认证或仓库权限检查失败。'],
+  [/host key verification failed|remote host identification has changed/i,'HOST_KEY_FAILED','SSH 主机身份校验失败，需管理员核对主机密钥。'],
+  [/could not resolve host|could not resolve hostname|name or service not known/i,'DNS_FAILED','Git 远端域名解析失败。'],
+  [/connection timed out|operation timed out|connection timeout/i,'CONNECT_TIMEOUT','连接 Git 远端超时。'],
+  [/connection reset|connection refused|connection closed|network is unreachable|early EOF|remote end hung up|SSL_connect/i,'NETWORK_FAILED','Git 连接中断或远端不可达。'],
+  [/cannot lock ref|unable to create .*lock|another git process|is at .* but expected/i,'LOCK_CONFLICT','Git 引用或锁发生冲突，可能有另一同步进程；现场已保留。'],
+  [/couldn.t find remote ref/i,'REMOTE_REF_MISSING','远端目标分支不存在。'],
+  [/repository .*not found|does not appear to be a git repository/i,'REMOTE_UNAVAILABLE','远端仓库不存在或不可访问。'],
+  [/no space left on device/i,'DISK_FULL','Git 写入失败：磁盘空间不足。'],
+ ];
+ const match=cases.find(([pattern])=>pattern.test(stderr));
+ const exitCode=Number.isInteger(error?.code)?error.code:undefined;
+ return {code:'AGENT_REPO_GIT_'+(match?.[1]??'COMMAND_FAILED'),cause:match?.[2]??`Git 命令失败${exitCode!==undefined?`（退出码 ${exitCode}）`:''}，未匹配已知错误类型。`};
+}

@@ -1,3 +1,4 @@
+import {gitSyncDiagnostic} from './preparation-error.mjs';
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -314,11 +315,12 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       ...upstreamHead ? { upstreamHead } : {}
     });
   } catch (error) {
-    const diagnostic = signal.aborted && failedGit ? { ...failedGit, repository: repo, stage,
+    const diagnostic = failedGit ? { ...failedGit, repository: repo, stage,
       elapsedMs: Math.round(performance.now() - startedAt), timeoutMs } : undefined;
-    const reason = signal.aborted ? `资料同步超时${diagnostic ? `（${repo}${stage}；${diagnostic.operation}；命令耗时 ${diagnostic.commandElapsedMs}ms；总耗时 ${diagnostic.elapsedMs}ms；预算 ${timeoutMs}ms）` : ''}` : error instanceof SyncBlocked ? error.message : `${repo}${stage}失败，请管理员检查仓库权限、网络或 Git 状态`;
-    await progress(stage, "failed", {reason});
-    return { ok: false, reason, ...(diagnostic ? {diagnostic} : {}), ...(!signal.aborted && error instanceof SyncBlocked && error.code ? {code: error.code} : {}) };
+    const gitFailure = !signal.aborted && failedGit && !(error instanceof SyncBlocked) ? gitSyncDiagnostic(error) : undefined;
+    const reason = signal.aborted ? `资料同步超时${diagnostic ? `（${repo}${stage}；${diagnostic.operation}；命令耗时 ${diagnostic.commandElapsedMs}ms；总耗时 ${diagnostic.elapsedMs}ms；预算 ${timeoutMs}ms）` : ''}` : error instanceof SyncBlocked ? error.message : `${repo}${stage}失败：${gitFailure?.cause ?? "请管理员检查仓库权限、网络或 Git 状态"}`;
+    await progress(stage, "failed", {reason,...(gitFailure??{})});
+    return { ok: false, reason, ...(gitFailure ? {code:gitFailure.code} : {}), ...(diagnostic ? {diagnostic} : {}), ...(!signal.aborted && error instanceof SyncBlocked && error.code ? {code: error.code} : {}) };
   } finally {
     if (lock) {
       await lock.close().catch(() => {

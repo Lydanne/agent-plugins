@@ -94,8 +94,9 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   else result=await synchronize({...settings,root:project.paths.repository,preserveLocalMemory:false,...projectConfig(project,submodules),project:undefined,submodules:projectConfig(project,submodules).submodules},project.url);
   if(!result?.ok){
    const skipped=allowLocalChanges&&result?.code==='LOCAL_CHANGES';
-   await log(binding,agentId,{repository:project?.repository??'Agent Repo',stage:'仓库同步',status:skipped?'skipped':'failed',reason:result?.reason??'仓库准备失败。',effect:skipped?'已跳过同步，继续使用本地资料；技能及角色仍需通过校验。':'准备未通过'});
+   await log(binding,agentId,{repository:project?.repository??'Agent Repo',stage:'仓库同步',status:skipped?'skipped':'failed',reason:result?.reason??'仓库准备失败。',...(result?.code?{code:result.code,cause:result.reason}:{}),effect:skipped?'已跳过同步，继续使用本地资料；技能及角色仍需通过校验。':'准备未通过'});
    if(skipped)return {...result,skipped:true};
+   if(/^AGENT_REPO_GIT_[A-Z_]+$/.test(result?.code??''))throw diagnosticError({code:result.code,cause:result.reason});
    throw new PreparationError(result?.reason??'仓库准备失败。');
   }
   return result;

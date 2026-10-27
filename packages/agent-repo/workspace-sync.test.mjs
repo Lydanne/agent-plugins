@@ -328,3 +328,12 @@ test('structured progress captures repository stages and safe failure diagnostic
  assert.equal(failed.ok,false);assert.equal(events.at(-1).status,'failed');assert.equal(events.at(-1).reason,failed.reason);
  assert.ok(events.every(event=>!Object.hasOwn(event,'stdout')&&!Object.hasOwn(event,'stderr')));
 });
+
+test('fetch errors retain classified cause and safe command evidence without changing HEAD',async()=>{
+ const f=fixture(),before=git(f.root,'rev-parse','HEAD');
+ git(f.root,'remote','set-url','origin',join(f.directory,'private-missing-remote'));
+ const result=await syncWorkspace(f.config);
+ assert.equal(result.ok,false);assert.equal(result.code,'AGENT_REPO_GIT_REMOTE_UNAVAILABLE');
+ assert.match(result.reason,/远端仓库不存在或不可访问/);assert.match(result.diagnostic.operation,/fetch/);
+ assert.ok(!JSON.stringify(result).includes('private-missing-remote'));assert.equal(git(f.root,'rev-parse','HEAD'),before);
+});

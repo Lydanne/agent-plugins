@@ -460,3 +460,5 @@ WebUI 项目页提供代码工作区池配置、占用与异常详情。保存 p
 模型前置校验会返回 `AGENT_REPO_*` 错误码和安全原因；仓库诊断日志保存 `code`、`cause`、`runId`。`SNAPSHOT_MISSING` 指本轮未生成快照；`RUN_ID_MISSING` 指宿主缺少运行身份；`PROMPT_EXPIRED` 指准备钩子失效；`REPOSITORY_CHANGED` / `ROLE_FILES_CHANGED` 指准备后版本或文件变化；`ROLE_UNCOMMITTED` / `SKILLS_UNCOMMITTED` 指未提交内容；`GIT_TIMEOUT` / `GIT_OUTPUT_LIMIT` 指本地 Git 检查受阻。未知异常不会回显原始 stderr、URL、凭证或聊天正文。
 
 提示词准备失败保留首个原因，不再被通用“Prompt preparation failed”覆盖。每次提示词准备分配独立序号；被更新步骤替代的迟到失败不覆盖当前快照，迟到成功也不能发布旧快照。当前步骤尚未完成或已过期时仍返回 PROMPT_PENDING / PROMPT_EXPIRED，不回退到之前的快照。缺失、真实失败或版本变化仍阻止执行，不自动重试业务，也不借用其他 run 的快照。
+
+Git 同步失败会保留具体诊断码并传递到入站拦截提示：`AGENT_REPO_GIT_AUTH_FAILED`、`HOST_KEY_FAILED`、`DNS_FAILED`、`CONNECT_TIMEOUT`、`NETWORK_FAILED`、`LOCK_CONFLICT`、`REMOTE_REF_MISSING`、`REMOTE_UNAVAILABLE`、`DISK_FULL`（均使用 `AGENT_REPO_GIT_` 前缀）。未知错误使用 `AGENT_REPO_GIT_COMMAND_FAILED`，保留数字退出码和脱敏命令类别，不输出 stderr、远端 URL 或凭证，不将未知原因猜成网络错误。诊断不新增自动重试，不删除锁、不重置分支，也不重新派发原业务。

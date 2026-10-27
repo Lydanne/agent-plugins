@@ -551,3 +551,9 @@ test('late successful capture from an older invocation cannot replace the latest
  runtime.promptFailure(older,new Error('Prompt preparation superseded'));
  assert.equal((await runtime.beforeAgentRun({},runContext)).outcome,'pass');
 });
+
+test('inbound sync preserves specific Git failure code instead of generic preparation rejection',async t=>{
+ const f=await fixture(t),runtime=f.runtime({synchronize:async()=>({ok:false,code:'AGENT_REPO_GIT_LOCK_CONFLICT',reason:'主仓库拉取失败：Git 引用或锁发生冲突，现场已保留。'})});
+ const result=await runtime.beforeDispatch({body:'fixture'},dispatchContext);
+ assertHandled(result);assert.match(result.text,/AGENT_REPO_GIT_LOCK_CONFLICT/);assert.match(result.text,/引用或锁发生冲突/);
+});
