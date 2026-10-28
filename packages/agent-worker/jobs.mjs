@@ -283,7 +283,11 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const release=await acquireLock(lock);
    try {
     const job=get(jobId,scope);
-    if(hasSourceProvenance(job.provenance)&&(!requester?.senderId||requester.senderId!==job.provenance.senderId||requester.accountId!==job.provenance.accountId))throw Error('Only the task requester Main can reply');
+    const question=job.contextRequest??job.questions?.find(q=>q.questionId===questionId);
+    const groupSource=answerMetadata.attachmentSource?.kind==='group_context'?attachmentSupplement(job.provenance,answerMetadata.attachmentSource):undefined;
+    const groupReply=!waitingForUser&&groupSource&&groupSource.senderId===requester?.senderId&&groupSource.accountId===requester?.accountId&&question?.requestKind!=='plugin'&&['optional','required'].includes(question?.waitKind??'required');
+    if(hasSourceProvenance(job.provenance)&&(!requester?.senderId||requester.senderId!==job.provenance.senderId||requester.accountId!==job.provenance.accountId)&&!groupReply)throw Error('Only the task requester Main can reply to decisions or authorization; group context requires a trusted same-chat source');
+    if(groupSource&&!authorize({...job.provenance,attachmentSources:[...(job.provenance?.attachmentSources??[]),groupSource]}))throw Error('Group context source is no longer current');
     if(!hasSourceProvenance(job.provenance)&&scope.includes(':feishu:'))throw Error('Job requester is unknown');
     if(!authorize(job.provenance))throw Error('Original task authorization is no longer current');
     if(['cancelled','timed_out','failed'].includes(job.status))throw Error('Task cannot accept a reply');

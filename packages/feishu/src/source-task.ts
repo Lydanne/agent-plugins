@@ -10,7 +10,7 @@ import type {FeishuChatType} from "./types.js";
 export type TaskAttachment = {messageId:string;kind:string;resourceId?:string;path?:string;contentType?:string;availability:"available"|"unavailable"};
 export type TaskSource = { messageId: string; text: string; kind?: "request" | "reference"; attachments?:Omit<TaskAttachment,"messageId">[] };
 export type RecallIdentity = { accountId: string; chatId: string; messageId: string };
-export type TaskAttachmentSource = Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"sessionKey"|"senderId"|"sourceMessageIds"> & {attachments?:TaskAttachment[];questionId?:string};
+export type TaskAttachmentSource = Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"sessionKey"|"senderId"|"sourceMessageIds"> & {attachments?:TaskAttachment[];questionId?:string;kind?:'group_context';chatType?:FeishuChatType};
 export type TaskLease = {
   taskId: string; revision: number; accountId: string; chatId: string;
   sessionKey: string; senderId: string; sourceMessageIds: string[]; requestMessageIds?: string[]; rootId?: string; replyInThread?: boolean;
@@ -169,6 +169,6 @@ export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|
   };
   if(!valid(p))return false;
   if(p.attachmentSources!==undefined&&(!Array.isArray(p.attachmentSources)||p.attachmentSources.length>64))return false;
-  return (p.attachmentSources??[]).every(source=>source&&source.accountId===p.accountId&&source.chatId===p.chatId&&source.sessionKey===p.sessionKey&&source.senderId===p.senderId&&valid(source));
+  return (p.attachmentSources??[]).every(source=>source&&source.accountId===p.accountId&&source.chatId===p.chatId&&source.sessionKey===p.sessionKey&&(source.senderId===p.senderId||source.kind==='group_context'&&['group','topic_group'].includes(p.chatType??'')&&['group','topic_group'].includes(source.chatType??''))&&valid(source));
  } finally {db.close();}
 }

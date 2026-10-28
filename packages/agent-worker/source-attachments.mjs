@@ -22,11 +22,12 @@ export function attachmentIdentity(items=[]) {
 }
 
 export function attachmentSupplement(original,source) {
- if(!original||!source||['accountId','chatId','sessionKey','senderId'].some(key=>!original[key]||source[key]!==original[key]))throw Error('Attachment supplement source does not match the original task');
+ const groupContext=source?.kind==='group_context'&&['group','topic_group'].includes(original?.chatType)&&['group','topic_group'].includes(source?.chatType)&&typeof source?.senderId==='string'&&source.senderId;
+ if(!original||!source||['accountId','chatId','sessionKey',...(groupContext?[]:['senderId'])].some(key=>!original[key]||source[key]!==original[key]))throw Error('Attachment supplement source does not match the original task');
  if(typeof source.taskId!=='string'||!Number.isInteger(source.revision)||source.revision<0||!Array.isArray(source.sourceMessageIds)||!source.sourceMessageIds.length||!source.sourceMessageIds.every(id=>typeof id==='string'&&id))throw Error('Invalid attachment supplement source');
  const attachments=snapshotSourceAttachments(source.attachments,source.sourceMessageIds);
  const {taskId,revision,accountId,chatId,sessionKey,senderId}=source;
- return {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds:[...source.sourceMessageIds],attachments};
+ return {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds:[...source.sourceMessageIds],attachments,...(groupContext?{kind:'group_context',chatType:source.chatType}:{})};
 }
 
 export function jobSourceAttachments(provenance) {

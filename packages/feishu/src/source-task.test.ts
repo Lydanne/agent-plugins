@@ -129,3 +129,15 @@ it("keeps native source tracking and reference separation without repeated field
  expect(JSON.parse(t.instruction().split('\n')[1]).referenceMessageIds).toEqual(['quote']);
  recallTaskSource({...scope,messageId:'quote'});const after=t.instruction(false,{compactPrivate:true});expect(after).toContain('[TaskSourceWithdrawal]');expect(after).toContain('"withdrawnMessageIds":["quote"]');expect(after).toContain('"cancellationRequested":true');
 });
+
+it('validates a different group contributor independently and invalidates recalled hints',()=>{
+ const original=new SourceTask({...scope,chatType:'group'},[{messageId:'group-request',text:'read only'}]);opened.push(original);const p=original.begin();original.activate();original.close();
+ const contributor=new SourceTask({...scope,chatType:'group',senderId:'bob'},[{messageId:'group-hint',text:'hint'}]);opened.push(contributor);const q=contributor.begin();contributor.activate();contributor.close();
+ const source={...q,kind:'group_context' as const};
+ const bound={...p,attachmentSources:[source]};
+ expect(isCompletionSourceCurrent(bound,state.dir)).toBe(true);
+ for(const patch of [{senderId:'forged'},{chatId:'other'},{accountId:'other'},{sessionKey:'other'},{revision:99},{kind:undefined},{chatType:'p2p' as const}])expect(isCompletionSourceCurrent({...bound,attachmentSources:[{...source,...patch}]},state.dir)).toBe(false);
+ expect(isCompletionSourceCurrent({...bound,chatType:'p2p'},state.dir)).toBe(false);
+ recallTaskSource({...scope,messageId:'group-hint'});
+ expect(isCompletionSourceCurrent(bound,state.dir)).toBe(false);expect(isCompletionSourceCurrent(p,state.dir)).toBe(true);
+});

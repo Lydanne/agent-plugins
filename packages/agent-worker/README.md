@@ -67,6 +67,8 @@ run 返回 jobId 后保存关联。queued/running 表示已受理；queue_full �
 
 Worker 缺少信息时输出 request，Main 优先用已知上下文或授权内查询补齐；确需用户时 await_user，再由用户回答后 reply 续接同一个 job。不得用新的 run 接替提问，否则可能重复业务操作。
 
+同一账号、群和会话中，其他真人成员可通过 Main 的原 jobId/questionId `reply` 提供普通上下文线索，无需原请求人复述。仅当宿主存在当前成员的有效来源绑定、原任务与补充来源均有效，且问题为 optional/required 上下文时接纳；decision、authorization、插件请求及 cancel/await_user 仍要求原请求人。补充保留真实发言人、消息 ID、附件及来源版本，作为待核验线索交给 Worker，不改变原请求人、task 或 constraints；补充来源撤回后不再恢复或交付旧结果。原请求人的交互卡片仍由原请求人操作。此入口只回答已有待补充问题，不向正在运行的 CLI 即时注入输入；没有 pending question 时不得重建任务或伪造 questionId。
+
 完成后 Worker 返回证据、完整报告及可回收经验；Main 核验后面向用户总结。Feishu 负责卡片、@、报告文档和交互提交；Worker 报告不能指定任意聊天或替换任务来源。经验由 Main 审核后按原生记忆机制保存，不由插件自动写回。
 
 ## 初次验收与排障入口
