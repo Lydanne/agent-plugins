@@ -9,6 +9,13 @@ import type { ResolvedFeishuAccount } from "./types.js";
 
 const GROUP_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
 const GROUP_NAME_CACHE_MAX_SIZE = 500;
+const pendingReads = new Map<string, symbol>();
+
+export function invalidateGroupInfo(accountId: string, chatId: string): void {
+  const key = `${accountId}:${chatId}`;
+  feishuGroupNameCache.delete(key);
+  pendingReads.delete(key);
+}
 
 function evictGroupNameCache(): void {
   const now = asDateTimestampMs(Date.now());
@@ -67,6 +74,9 @@ export async function resolveGroupInfo(params: {
     feishuGroupNameCache.delete(cacheKey);
   }
 
+  const readVersion = Symbol();
+  pendingReads.set(cacheKey, readVersion);
+  while (pendingReads.size > GROUP_NAME_CACHE_MAX_SIZE) pendingReads.delete(pendingReads.keys().next().value!);
   let info: FeishuGroupInfo;
   try {
     const client = createFeishuClient(account);
@@ -82,7 +92,10 @@ export async function resolveGroupInfo(params: {
     info = { status: "unavailable", fetchedAt: Date.now() };
   }
 
-  setCacheEntry(cacheKey, info);
+  if (pendingReads.get(cacheKey) === readVersion) {
+    setCacheEntry(cacheKey, info);
+    pendingReads.delete(cacheKey);
+  }
   evictGroupNameCache();
   return info;
 }

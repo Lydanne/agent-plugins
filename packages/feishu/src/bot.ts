@@ -77,6 +77,7 @@ import {
   resolveFeishuGroupSession,
   resolveFeishuMediaList,
 } from "./bot-content.js";
+import { resolveGroupResources } from "./group-resources.js";
 import { resolveGroupInfo } from "./bot-group-name.js";
 import { resolveFeishuBotName } from "./bot-name.js";
 import { resolveFeishuSenderName, type FeishuPermissionError } from "./bot-sender-name.js";
@@ -1401,6 +1402,7 @@ export async function handleFeishuMessage(params: {
       }
       return rootMessageInfo ?? null;
     };
+    let groupResourcesPromise: ReturnType<typeof resolveGroupResources> | undefined;
     let groupInfoPromise: ReturnType<typeof resolveGroupInfo> | undefined;
     const resolveCurrentGroupInfo = () => {
       if (!isGroup) return undefined;
@@ -1515,10 +1517,23 @@ export async function handleFeishuMessage(params: {
       agentAccountId: string,
       wasMentioned: boolean,
     ) => {
-      const groupInfo = await resolveCurrentGroupInfo();
+      const [groupInfo, resources] = await Promise.all([
+        resolveCurrentGroupInfo(),
+        isGroup ? (groupResourcesPromise ??= resolveGroupResources({ cfg: effectiveCfg, account, chatId: ctx.chatId })) : undefined,
+      ]);
+      const visiblePins = [];
+      let hiddenPins = 0;
+      for (const pin of resources?.pins.items ?? []) {
+        if (pin.message && !await shouldIncludeFetchedGroupContextMessage({
+          cfg: effectiveCfg, accountId: account.accountId, chatId: ctx.chatId, isGroup,
+          allowFrom: effectiveGroupSenderAllowFrom, mode: contextVisibilityMode, kind: "history",
+          senderId: pin.message.senderId, senderType: pin.message.senderType,
+        })) { hiddenPins++; continue; }
+        visiblePins.push(pin);
+      }
       const groupName = groupInfo?.name;
       const groupContext = groupInfo
-        ? renderContextData("GroupInfo", { accountId: account.accountId, chatId: ctx.chatId, ...groupInfo }) + "\n"
+        ? renderContextData("GroupInfo", { accountId: account.accountId, chatId: ctx.chatId, ...groupInfo, ...(resources ? { fetchedResourcesAt: resources.fetchedAt, announcement: resources.announcement, pins: { ...resources.pins, items: visiblePins, hiddenByPolicy: hiddenPins } } : {}) }) + "\n"
         : "";
       const threadContext = await resolveThreadContextForAgent(agentId, agentSessionKey, groupName);
       const contextBinding = {

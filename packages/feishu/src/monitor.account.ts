@@ -1,3 +1,4 @@
+import { groupContextEventHandlers, invalidateGroupContext } from "./group-context-events.js";
 import {handlePeopleJoin} from './people-group-sync.js';
 import { recallTaskSource } from "./source-task.js";
 // Feishu plugin module implements monitor.account behavior.
@@ -306,6 +307,7 @@ function registerEventHandlers(
   };
 
   eventDispatcher.register({
+    ...groupContextEventHandlers(accountId),
     "im.message.receive_v1": createFeishuMessageReceiveHandler({
       cfg,
       channelRuntime,
@@ -326,6 +328,7 @@ function registerEventHandlers(
     "im.message.recalled_v1": async (data) => {
       // This lane must not await the running task it is cancelling. Propagate I/O
       // errors to durable ingress so cancellation is retried with the same event.
+      if (data.chat_id) invalidateGroupContext(accountId, data.chat_id);
       recallTaskSource({ accountId, chatId: data.chat_id ?? "", messageId: data.message_id ?? "" });
     },
     "im.message.message_read_v1": async () => {
@@ -356,6 +359,7 @@ function registerEventHandlers(
         if (!chatId) {
           return;
         }
+        invalidateGroupContext(accountId, chatId);
         log(`feishu[${accountId}]: bot removed from chat ${chatId}`);
       } catch (err) {
         error(`feishu[${accountId}]: error handling bot removed event: ${String(err)}`);

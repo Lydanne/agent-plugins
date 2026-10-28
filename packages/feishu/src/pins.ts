@@ -2,6 +2,7 @@
 import type { ClawdbotConfig } from "../runtime-api.js";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { assertFeishuApiSuccess } from "./api-response.js";
+import { invalidateGroupResources } from "./group-resources.js";
 import { createFeishuClient } from "./client.js";
 
 type FeishuPin = {
@@ -45,6 +46,7 @@ export async function createPinFeishu(params: {
     },
   });
   assertFeishuApiSuccess(response, "Feishu pin create failed");
+  if (response.data?.pin?.chat_id) invalidateGroupResources(account.accountId, response.data.pin.chat_id);
   return response.data?.pin ? normalizePin(response.data.pin) : null;
 }
 

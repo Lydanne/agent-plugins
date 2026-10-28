@@ -2116,6 +2116,36 @@ describe("handleFeishuMessage command authorization", () => {
     expect(get).toHaveBeenCalledTimes(1);
   });
 
+  it("includes announcement and Pin text but filters Pin senders under current history visibility", async () => {
+    const chatId = "oc_resource_policy";
+    mockCreateFeishuClient.mockReturnValue({
+      docx: {
+        chatAnnouncement: { get: vi.fn().mockResolvedValue({ code: 0, data: { announcement_type: "docx", revision_id: 1 } }) },
+        chatAnnouncementBlock: { list: vi.fn().mockResolvedValue({ code: 0, data: { items: [{ text: { elements: [{ text_run: { content: "默认测试环境" } }] } }], has_more: false } }) },
+      },
+      im: {
+        chat: { get: vi.fn().mockResolvedValue({ code: 0, data: { name: "群资料测试", description: "用途" } }) },
+        pin: { list: vi.fn().mockResolvedValue({ code: 0, data: { items: [{ message_id: "allowed-pin" }, { message_id: "hidden-pin" }], has_more: false } }) },
+      },
+    });
+    mockGetMessageFeishu.mockImplementation(async ({ messageId }: { messageId: string }) => ({
+      messageId, chatId, senderId: messageId === "allowed-pin" ? "ou_sender_1" : "ou_foreign", senderType: "user", contentType: "text",
+      content: messageId === "allowed-pin" ? "本群默认约定" : "HIDDEN_PIN_BODY",
+    }));
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ appId: "cli_test", appSecret: "test-secret", groupPolicy: "open", requireMention: false,
+        resolveSenderNames: false, contextVisibility: "allowlist", groups: { [chatId]: { allowFrom: ["ou_sender_1"] } } }),
+      event: createFeishuTestEvent({ messageId: "resources-policy", chatId, chatType: "group", senderOpenId: "ou_sender_1", text: "hello" }),
+    });
+    const { BodyForAgent } = lastMockCallArg<{ BodyForAgent: string }>(mockFinalizeInboundContext);
+    const info = JSON.parse(BodyForAgent.split("[GroupInfo]\n")[1].split("\n")[0]);
+    expect(info.announcement.text).toBe("默认测试环境");
+    expect(info.pins.hiddenByPolicy).toBe(1);
+    expect(info.pins.items).toHaveLength(1);
+    expect(info.pins.items[0].message.content).toBe("本群默认约定");
+    expect(BodyForAgent).not.toContain("HIDDEN_PIN_BODY");
+  });
+
   it("continues group dispatch with explicit unavailable metadata on lookup failure", async () => {
     mockCreateFeishuClient.mockReturnValue({ im: { chat: { get: vi.fn().mockRejectedValue(new Error("permission denied")) } } });
     await dispatchMessage({

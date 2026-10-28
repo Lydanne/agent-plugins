@@ -1,7 +1,7 @@
 // Feishu tests cover bot group name plugin behavior.
 import { afterAll, describe, it, expect, vi, beforeEach } from "vitest";
 import { feishuGroupNameCache } from "./bot-group-name-state.js";
-import { resolveGroupName, resolveGroupInfo } from "./bot-group-name.js";
+import { resolveGroupName, resolveGroupInfo, invalidateGroupInfo } from "./bot-group-name.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
 const mockGetChatInfo = vi.hoisted(() => vi.fn());
@@ -194,6 +194,18 @@ describe("resolveGroupName", () => {
   it("does not query an unconfigured account", async () => {
     expect(await resolveGroupInfo({ account: { ...account, configured: false }, chatId: "oc_none", log })).toMatchObject({ status: "unavailable" });
     expect(mockGetChatInfo).not.toHaveBeenCalled();
+  });
+
+  it("does not restore stale group information after an update invalidates an in-flight read", async () => {
+    let release!: (value: unknown) => void;
+    mockGetChatInfo.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const pending = resolveGroupInfo({ account, chatId: "oc_updating", log });
+    invalidateGroupInfo(account.accountId, "oc_updating");
+    release({ name: "old" });
+    await pending;
+    mockGetChatInfo.mockResolvedValue({ name: "new", description: "updated defaults" });
+    expect((await resolveGroupInfo({ account, chatId: "oc_updating", log })).name).toBe("new");
+    expect(mockGetChatInfo).toHaveBeenCalledTimes(2);
   });
 
 });

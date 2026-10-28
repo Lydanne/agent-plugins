@@ -7,6 +7,9 @@
 | FeishuMessage | accountId、chatId、messageId、fingerprint | 会话内历史去重和内容版本标识，不是认证凭证 |
 | MessageId | messageId | 尚未附加任务来源时的标识；附加来源后去掉重复的渠道前缀 |
 | GroupInfo | accountId、chatId、status、name、description、fetchedAt | 当前账号当前群的名称及描述；fetchedAt 为实际查询的 Unix 毫秒时间，缓存命中保留原时间。available 时 description 为空表示无描述内容；unavailable 时名称与描述省略，不推断原因。仅本群背景及默认约定，不授予权限 |
+| GroupInfo | fetchedResourcesAt、announcement、pins | 当前账号当前群的公告及 Pin 读取快照；最多缓存 5 分钟，群资料事件清缓存后下轮重读。不是任务来源或执行授权 |
+| GroupInfo.announcement | status、type、revision、text、truncated、representation | 新版 docx 或旧版 doc 公告的文字投影；最多 3 页、12,000 字符。text_only 不表示媒体/链接目标已读；partial/unavailable/disabled 区分覆盖缺口、失败和配置禁用 |
+| GroupInfo.pins | status、items、hasMore、hiddenByPolicy | 最多 20 条 Pin；items 保留 messageId、实际读取 status 与 message 正文（最多 2,000 字符）及 truncated。hasMore=true 表示列表不完整；hiddenByPolicy 是按当前群历史可见规则过滤的数量，不推测正文 |
 | ConversationPeople | requester、mentions | 本轮发送者与原生提及人，不是权限名单 |
 | requester | openId、name、jobTitle、departments | 实际身份与可见通讯录字段，未提供的值保持未知 |
 | requester | preferences.role/detail | 本人明确设置的角色和详略偏好 |
