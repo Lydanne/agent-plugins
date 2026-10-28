@@ -2,7 +2,7 @@ import {beforeEach,afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {presentContributorApproval,renderContributorCard,readContributorCard,handleContributorAction,WORKER_CONTRIBUTOR_APPROVE,type ContributorEvent} from './worker-contributor.js';
+import {presentContributorApproval,renderContributorCard,readContributorCard,handleContributorAction,updateContributorReceipt,WORKER_CONTRIBUTOR_APPROVE,type ContributorEvent} from './worker-contributor.js';
 import {workerQuestionBridge} from './worker-question.js';
 import {handleFeishuCardAction} from './card-action.js';
 const mocks=vi.hoisted(()=>({send:vi.fn(),edit:vi.fn(),message:vi.fn()}));
@@ -48,4 +48,19 @@ it('retains approval after card edit failure without granting again',async()=>{
 
 it('labels long hints as excerpts and leaves stored input complete',()=>{
  event.request.answer='长'.repeat(2000);const raw=JSON.stringify(renderContributorCard(event));expect(raw).toContain('补充内容（摘录）');expect(raw).toContain('完整补充已保存');expect(event.request.answer).toHaveLength(2000);
+});
+
+it.each(['blocked','suppressed','dispatched'])('persists and renders durable steering outcome %s',async state=>{
+ event.request.kind='steering';await present();workerQuestionBridge.contributorDecide=vi.fn(async p=>({mode:p.mode,resumed:state==='dispatched',queued:false,state,reason:state==='dispatched'?undefined:'original_session_missing'}));
+ await handleContributorAction({cfg:{},stateDir,accountId:'a',event:callback()});
+ const card=readContributorCard(stateDir,'permission')!;expect(card.state).toBe(state);expect(card.reason).toBe(state==='dispatched'?undefined:'original_session_missing');
+ const raw=JSON.stringify(mocks.edit.mock.calls.at(-1));expect(raw).not.toContain('将在原 Worker 当前轮次结束后接续');
+ if(state==='dispatched'){expect(raw).toContain('已交回原 Worker');expect(raw).not.toContain('业务已完成');}else{expect(raw).toContain('原 Worker 会话不可用');expect(raw).toContain('引导未执行');}
+});
+it('updates a granted queued steering card when background continuation becomes unavailable',async()=>{
+ event.request.kind='steering';await present();workerQuestionBridge.contributorDecide=vi.fn(async p=>({mode:p.mode,resumed:false,queued:true,state:'accepted'}));
+ await handleContributorAction({cfg:{},stateDir,accountId:'a',event:callback()});
+ const update={cfg:{},stateDir,jobId:event.jobId,provenance:event.provenance,supplementId:event.request.questionId,kind:'supplement_unavailable',status:'blocked',reason:'original_session_missing'};
+ await updateContributorReceipt(update);expect(readContributorCard(stateDir,'permission')?.state).toBe('blocked');expect(readContributorCard(stateDir,'permission')?.queued).toBe(false);expect(JSON.stringify(mocks.edit.mock.calls.at(-1))).toContain('原 Worker 会话不可用');
+ const calls=mocks.edit.mock.calls.length;await updateContributorReceipt({...update,provenance:{...event.provenance,accountId:'other'}});expect(mocks.edit).toHaveBeenCalledTimes(calls);
 });

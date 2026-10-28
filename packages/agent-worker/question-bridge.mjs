@@ -55,9 +55,15 @@ export function waitingPresentationInstruction(presentation){
   :'原任务已等待用户，但交互卡片未成功投递。请立即用普通文字列出待补充字段与可选项，请原用户直接回复；不要让用户确认卡片是否存在，不代选、不使用默认答案。收到有效补充后 reply，不创建新的 run。可再次 await_user 重试更新原卡片。';
 }
 
+/** Replays describe the durable receipt, never turn a terminal record back into pending work. */
+export function steeringReceiptOutcome(record){
+ const queued=['waiting','accepted'].includes(record.status),resumed=record.status==='dispatched';
+ return {queued,resumed,state:record.status,effectiveAt:queued?'next_execution_boundary':resumed?'already_dispatched':'unavailable',...(record.reason?{reason:record.reason}:{}),...(record.childJobId?{continuationJobId:record.childJobId}:{})};
+}
+
 /** Apply an admitted contribution identically for a card decision or inherited permission. */
 export async function continueContributor(jobs,job,request,authorize,completionBridge){
-  if(request.kind==='steering'){await jobs.enqueueSteering(job.jobId,job.provenance.sessionKey,request,authorize);return {mode:request.mode,resumed:false,queued:true};}
+  if(request.kind==='steering'){const record=await jobs.enqueueSteering(job.jobId,job.provenance.sessionKey,request,authorize);return {mode:request.mode,...steeringReceiptOutcome(record)};}
   let resumed;
   try{resumed=await jobs.reply(job.jobId,job.provenance.sessionKey,request.questionId,request.answer,{senderId:request.source.senderId,accountId:request.source.accountId},authorize,false,undefined,{answerSource:'main_context',attachmentSource:request.source,contributorApprovalId:request.requestId});}
   catch(error){

@@ -1,4 +1,4 @@
-import {continueContributor} from './question-bridge.mjs';
+import {continueContributor,steeringReceiptOutcome} from './question-bridge.mjs';
 import {registerAutomation} from './adapters/automation.mjs';
 import {hermesCommand} from './hermes-templates.mjs';
 import {requestedQueueId,queueIdPattern} from './task-queues.mjs';
@@ -204,7 +204,7 @@ async function queryInternal(params,context={}) {
  if(params.action==='steer'){
   if(params.questionId!==undefined)throw Error('steer does not answer a question; use reply for an existing question');
   const original=jobs.status(params.jobId,scope),lease=bindSourceTask(context),source=lease?taskProvenance(lease):undefined;
-  if(!source||!hasSourceProvenance(original.provenance))throw Error('Steering requires a current trusted human task source');
+  if(!source||lease.scheduledRequest||!hasSourceProvenance(original.provenance))throw Error('Steering requires a current trusted human task source');
   const bound=attachmentSupplement(original.provenance,{...source,...(source.senderId!==original.provenance.senderId?{kind:'group_context'}:{})});
   const requester={senderId:context.requesterSenderId,accountId:context.agentAccountId},authorize=p=>completionBridge.authorizeReply?.(p)===true;
   let request=await jobs.prepareSteering(params.jobId,scope,params.answer,requester,bound,authorize);
@@ -217,7 +217,8 @@ async function queryInternal(params,context={}) {
    request=permission.request;
   }
   const record=await jobs.enqueueSteering(params.jobId,scope,request,authorize);
-  return wrap({jobId:original.jobId,steeringId:record.supplementId,accepted:true,state:record.status,effectiveAt:'next_execution_boundary',instruction:'引导已保存，将在原任务当前执行轮次结束后沿原 Worker 会话处理；不是实时插入，也未改变原 task/constraints。独立决策、授权或插件问题仍需单独回答。结束本轮，不中断、不重复提交或轮询。'});
+  const outcome=steeringReceiptOutcome(record);
+  return wrap({jobId:original.jobId,steeringId:record.supplementId,accepted:outcome.queued||outcome.resumed,...outcome,instruction:outcome.queued?'引导已保存，将在原任务当前执行轮次结束后沿原 Worker 会话处理；不是实时插入，也未改变原 task/constraints。独立决策、授权或插件问题仍需单独回答。结束本轮，不中断、不重复提交或轮询。':outcome.resumed?'这条引导此前已交回原会话接续，本次仅返回已有回执，未重复排队；不把已交回称为业务已完成。':'这条引导未能接续，已保存终态及原因；不是等待执行，不自动重建或重试业务。请按原任务状态说明未完成事项。'});
  }
  if(['reply','await_user'].includes(params.action)){
   const original=jobs.status(params.jobId,scope);

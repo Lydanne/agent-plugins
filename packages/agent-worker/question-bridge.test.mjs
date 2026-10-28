@@ -42,3 +42,9 @@ test('user answers and cancellation remain available during the bounded Main tim
  const bridge=globalThis[Symbol.for('ada.worker-question.v1')];await service.start();
  try{assert.equal(bridge.read({jobId:'job',questionId:'q',provenance:p}).status,'awaiting_user');assert.equal(bridge.cancel({jobId:'job',questionId:'q',provenance:p}).status,'cancelled');assert.equal(cancels,1);}finally{service.stop();}
 });
+
+for(const status of ['accepted','dispatched','blocked','suppressed'])test('steering approval replays durable receipt state '+status,async()=>{
+ const {continueContributor}=await import('./question-bridge.mjs');
+ const outcome=await continueContributor({enqueueSteering:async()=>({status,reason:status==='blocked'?'original_session_missing':undefined,childJobId:status==='dispatched'?'child':undefined})},{jobId:'job',provenance:{sessionKey:'scope'}},{kind:'steering',mode:'once'},()=>true,{});
+ assert.equal(outcome.queued,status==='accepted');assert.equal(outcome.resumed,status==='dispatched');assert.equal(outcome.state,status);
+});

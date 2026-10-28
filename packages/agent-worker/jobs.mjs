@@ -111,6 +111,35 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     writeJson(join(root,jobId+'.json'),resumed);
   return resumed;
  }
+ // Steering continuations are one execution family, even when a human targets
+ // the currently active child instead of its original parent.
+ function steeringFamily(job,all){
+  const byId=new Map(all.map(value=>[value.jobId,value]));
+  const origin=value=>{const seen=new Set();while(value?.parentJobId&&value.supplementId&&!seen.has(value.jobId)){seen.add(value.jobId);const parent=byId.get(value.parentJobId);if(!parent||parent.scope!==value.scope)break;value=parent;}return value?.jobId;};
+  const rootId=origin(job);return all.filter(value=>origin(value)===rootId);
+ }
+ function steeringHistory(family){
+  const rounds=[...new Map(family.flatMap(value=>value.executionRounds??[]).map(round=>[JSON.stringify([round.startedAt,round.finishedAt,round.resumed]),round])).values()].sort((a,b)=>a.startedAt-b.startedAt);
+  const completed=family.filter(value=>value.status==='completed').sort((a,b)=>(b.executionRounds?.at(-1)?.finishedAt??b.finishedAt??b.createdAt)-(a.executionRounds?.at(-1)?.finishedAt??a.finishedAt??a.createdAt));
+  return {rounds,latest:completed[0]};
+ }
+ function steeringAdmissionOrder(a,b){
+  const aNumbered=Number.isSafeInteger(a.admissionSequence),bNumbered=Number.isSafeInteger(b.admissionSequence);
+  if(aNumbered&&bNumbered)return a.admissionSequence-b.admissionSequence;
+  // Pre-sequence receipts are conservatively ahead of newly admitted work.
+  if(aNumbered!==bNumbered)return aNumbered?1:-1;
+  return (a.acceptedAt??a.createdAt)-(b.acceptedAt??b.createdAt)||(a.sequence??0)-(b.sequence??0);
+ }
+ function pendingSteering(job){
+  const directory=join(root,'supplements');
+  return (job.steeringInputs??[]).some(input=>{
+   const file=join(directory,input.questionId+'.json');
+   if(existsSync(file))return readJson(file).status==='accepted';
+   const approval=(job.contributorApprovals??[]).find(request=>request.questionId===input.questionId&&request.status==='approved');
+   const admittedAt=approval?(approval.approvedAt??approval.createdAt):input.source?.senderId===job.provenance?.senderId?input.createdAt:undefined;
+   return input.expiresAt>Date.now()&&Number.isFinite(admittedAt)&&Date.now()-admittedAt<60000;
+  });
+ }
  function scheduleLocked(){
   const all=files();
   for(const job of all.filter(j=>waiting.has(j.status)&&j.contextRequest?.expiresAt<=Date.now())){
@@ -153,7 +182,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    if(existsSync(join(root,job.jobId+'.cancel'))){Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);}
   }
   for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&(!j.workspaceSettled||j.workspaceRelease==='blocked')&&(!j.workspaceReleaseRetryAt||j.workspaceReleaseRetryAt<=Date.now()))){
-   if(workspaceOperations.has(job.jobId)||!settleWorkspace||all.some(other=>sameWorkspace(job,other)&&settlementActive(other)))continue;
+   if(workspaceOperations.has(job.jobId)||!settleWorkspace||all.some(other=>sameWorkspace(job,other)&&(settlementActive(other)||pendingSteering(other))))continue;
    const processFile=join(root,job.jobId+'.process.json');
    if(existsSync(processFile)&&processAlive(readJson(processFile).pid))continue;
    if(Number.isInteger(job.executionPid)){try{process.kill(-job.executionPid,0);continue;}catch(error){if(error.code!=='ESRCH')continue;}}
@@ -185,6 +214,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const file=join(root,job.jobId+'.json');
    if(existsSync(join(root,job.jobId+'.cancel'))){terminalJob({...job,status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});continue;}
    if(all.some(other=>sameWorkspace(other,job)&&(settlementActive(other)||workspaceOperations.has(other.jobId))))continue;
+   // A saved guide belongs to the finishing task's next boundary. Do not let
+   // an independent same-session run race ahead before collaboration admits it.
+   if(!(job.parentJobId&&job.supplementId)&&all.some(other=>other.jobId!==job.jobId&&sameSession(other,job)&&pendingSteering(other)))continue;
    if(running.some(other=>conflict(other,job))||all.some(other=>waiting.has(other.status)&&sameSession(other,job)))continue;
    if(atCapacity(running,job))continue;
    const requestFile=join(root,job.jobId+'.request.json');
@@ -259,7 +291,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(!authorize({...job.provenance,attachmentSources:[...(job.provenance.attachmentSources??[]),bound]}))throw Error('Steering or original source is no longer current');
     if(['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     const prior=job.steeringInputs?.find(r=>contributorSourceIdentity(r.source)===contributorSourceIdentity(bound));
-    if(prior){if(prior.answer!==answer)throw Error('Steering input already saved differently');return prior;}
+    if(prior){if(prior.answer!==answer)throw Error('Steering input already saved differently');const receiptFile=join(root,'supplements',prior.questionId+'.json');if(existsSync(receiptFile)&&!['waiting','accepted'].includes(readJson(receiptFile).status))return prior;}
+    if(job.useWorkspace&&(job.workspaceSettled||job.workspaceRelease==='idle'||job.workspaceSettlement))throw Error('Steering workspace is settling or already released');
+    if(prior)return prior;
     if(!['queued','running','awaiting_main','awaiting_user','completed'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     if((job.steeringInputs?.length??0)>=64)throw Error('Steering input limit reached');
     const id=randomUUID(),request={kind:'steering',requestId:id,questionId:id,question:'原任务追加引导',waitKind:'optional',source:bound,answer,createdAt:Date.now(),expiresAt:Date.now()+86400000,sequence:job.steeringInputs?.length??0};
@@ -276,10 +310,19 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(!owner&&!contributorPermission(job,input.source,request.requestId,input.questionId))throw Error('Steering requires requester approval');
     if(['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     const directory=join(root,'supplements'),file=join(directory,input.questionId+'.json');
-    if(existsSync(file)){const prior=readJson(file);if(prior.kind!=='steering'||prior.jobId!==jobId||prior.answer!==input.answer)throw Error('Steering binding mismatch');return prior;}
+    if(existsSync(file)){const prior=readJson(file);if(prior.kind!=='steering'||prior.jobId!==jobId||prior.answer!==input.answer)throw Error('Steering binding mismatch');if(['waiting','accepted'].includes(prior.status)&&job.useWorkspace&&(job.workspaceSettled||job.workspaceRelease==='idle'||job.workspaceSettlement))throw Error('Steering workspace is settling or already released');return prior;}
+    if(job.useWorkspace&&(job.workspaceSettled||job.workspaceRelease==='idle'||job.workspaceSettlement))throw Error('Steering workspace is settling or already released');
     if(input.expiresAt<=Date.now()||!['queued','running','awaiting_main','awaiting_user','completed'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     mkdirSync(directory,{recursive:true,mode:0o700});
-    const record={kind:'steering',supplementId:input.questionId,jobId,originalQuestionId:input.questionId,scope:job.scope,provenance:job.provenance,question:{questionId:input.questionId,question:input.question,waitKind:'optional',createdAt:input.createdAt,expiresAt:input.expiresAt},answer:input.answer,answerSource:'main_context',attachmentSource:input.source,...(!owner?{contributorApprovalId:request.requestId}:{}),status:'accepted',createdAt:input.createdAt,sequence:input.sequence,acceptedAt:Date.now()};
+    // Admission is serialized by scheduler-lock. This sequence orders receipts
+    // across parent/child nodes even when Date.now() and local sequence tie.
+    const counterFile=join(root,'steering-admission-sequence.json'),savedCounter=existsSync(counterFile)?readJson(counterFile).value:0;
+    if(!Number.isSafeInteger(savedCounter)||savedCounter<0)throw Error('Steering admission sequence is invalid');
+    const priorOrders=readdirSync(directory).filter(name=>/^[0-9a-f-]{36}\.json$/i.test(name)).map(name=>readJson(join(directory,name)).admissionSequence).filter(Number.isSafeInteger);
+    const admissionSequence=priorOrders.reduce((maximum,value)=>Math.max(maximum,value),savedCounter)+1;
+    if(!Number.isSafeInteger(admissionSequence))throw Error('Steering admission sequence exhausted');
+    writeJson(counterFile,{value:admissionSequence});
+    const record={kind:'steering',admissionSequence,supplementId:input.questionId,jobId,originalQuestionId:input.questionId,scope:job.scope,provenance:job.provenance,question:{questionId:input.questionId,question:input.question,waitKind:'optional',createdAt:input.createdAt,expiresAt:input.expiresAt},answer:input.answer,answerSource:'main_context',attachmentSource:input.source,...(!owner?{contributorApprovalId:request.requestId}:{}),status:'accepted',createdAt:input.createdAt,sequence:input.sequence,acceptedAt:Date.now()};
     writeJson(file,record);return record;
    }finally{release();}
   },
@@ -368,14 +411,20 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   findAutomation(taskId,scope){const found=(existsSync(root)?files():[]).filter(j=>j.scope===scopeKey(scope)&&j.provenance?.automation?.version===1&&j.provenance.automation.taskId===taskId);if(found.length>1)throw Error('Multiple automation jobs');return found[0]?view(get(found[0].jobId,scope)):null;},
   async failAutomationContext(jobId,scope,taskId,questionId,code){const release=await acquireLock(lock);try{const j=get(jobId,scope);if(j.provenance?.automation?.version!==1||j.provenance.automation.taskId!==taskId||!waiting.has(j.status)||j.contextRequest?.questionId!==questionId)throw Error('Automation context binding mismatch');terminalJob({...j,scope:scopeKey(scope),status:'failed',error:code,finishedAt:Date.now()});return view(get(jobId,scope));}finally{release();}},
   status:(jobId,scope)=>view(get(jobId,scope)),wait,
-  cancel(jobId,scope,requester){const j=get(jobId,scope);
+  cancel(jobId,scope,requester,chain={seen:new Set(),guidanceTree:false}){const j=get(jobId,scope);
+   if(chain.seen.has(jobId))return view(j);chain.seen.add(jobId);
    if(hasSourceProvenance(j.provenance) && (!requester?.senderId || requester.senderId!==j.provenance.senderId || requester.accountId!==j.provenance.accountId))throw Error('Only the task requester can cancel this job');
    if(!hasSourceProvenance(j.provenance) && scope.includes(':feishu:'))throw Error('Job requester is unknown; administrator inspection required');
    const stored=readJson(join(root,jobId+'.json'));
-   const guidance=files().filter(child=>child.parentJobId===jobId&&child.continuationKind==='steering');
+   const all=files();
+   const children=parent=>all.filter(child=>child.parentJobId===parent.jobId&&child.scope===parent.scope&&['taskId','revision','accountId','chatId','sessionKey','senderId'].every(key=>child.provenance?.[key]===parent.provenance?.[key]));
+   const containsGuidance=(node,seen=new Set())=>{if(seen.has(node.jobId))return false;seen.add(node.jobId);return ['steering','late_answer'].includes(node.continuationKind)||children(node).some(child=>containsGuidance(child,seen));};
+   // An ordinary late-answer record can bridge the root and a later steering
+   // record. Include that branch without cancelling unrelated run jobs.
+   const guidance=children(stored).filter(child=>chain.guidanceTree||containsGuidance(child));
    if(stored.steeringInputs?.length||guidance.length){
     writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});
-    j.guidanceCancellationRequested=guidance.filter(child=>active.has(child.status)||waiting.has(child.status)||child.status==='unknown').map(child=>{this.cancel(child.jobId,scope,requester);return child.jobId;});
+    j.guidanceCancellationRequested=guidance.flatMap(child=>{const result=this.cancel(child.jobId,scope,requester,{seen:chain.seen,guidanceTree:true});return [...(active.has(child.status)||waiting.has(child.status)||child.status==='unknown'?[child.jobId]:[]),...(result.guidanceCancellationRequested??[])];});
    }
    const processFile=join(root,jobId+'.process.json');
    if(j.provenance?.automation&&existsSync(processFile)&&processAlive(readJson(processFile).pid)){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});return {...view(j),status:'cancelling'};}
@@ -473,7 +522,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   },
   async processSupplements(jobId,scope,authorize,observe){
    const directory=join(root,'supplements');if(!existsSync(directory))return;
-   for(const name of readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).sort((a,b)=>{const x=readJson(join(directory,a)),y=readJson(join(directory,b));return (x.acceptedAt??x.createdAt)-(y.acceptedAt??y.createdAt)||(x.sequence??0)-(y.sequence??0)||a.localeCompare(b);})){
+   for(const name of readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).sort((a,b)=>{const x=readJson(join(directory,a)),y=readJson(join(directory,b));return x.kind==='steering'&&y.kind==='steering'?steeringAdmissionOrder(x,y):(x.acceptedAt??x.createdAt)-(y.acceptedAt??y.createdAt)||(x.sequence??0)-(y.sequence??0)||a.localeCompare(b);})){
     let s=readJson(join(directory,name));if(s.supplementId+'.json'!==name||s.jobId!==jobId)continue;
     const terminalEvent=()=>({kind:'supplement_unavailable',supplementId:s.supplementId,status:s.status,reason:s.reason??'continuation_unavailable'});
     if(s.status==='suppressed'&&s.reason==='source_invalid'&&s.notificationSuppressed===true)continue;
@@ -486,12 +535,24 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const release=await acquireLock(lock);
     try{
      const job=get(jobId,scope);s=readJson(join(directory,name));if(s.status!=='accepted')continue;
+     const family=steeringFamily(job,files()),members=new Set(family.map(member=>member.jobId));
+     const steeringReceipts=readdirSync(directory).filter(value=>/^[0-9a-f-]{36}\.json$/i.test(value)).map(value=>readJson(join(directory,value))).filter(record=>record.kind==='steering'&&members.has(record.jobId));
+     const guided=s.kind==='steering'||family.some(member=>['steering','late_answer'].includes(member.continuationKind))||steeringReceipts.some(record=>['accepted','dispatched'].includes(record.status)),history=steeringHistory(family);
      const fail=(status,reason)=>{s={...s,status,reason,finishedAt:Date.now()};writeJson(join(directory,name),s);};
+     if(guided){
+      const failed=family.find(member=>['failed','timed_out','cancelled','cancelling'].includes(member.status)||existsSync(join(root,member.jobId+'.cancel')));
+      if(failed){fail(['cancelled','cancelling'].includes(failed.status)||existsSync(join(root,failed.jobId+'.cancel'))?'suppressed':'blocked',failed.status==='timed_out'?'worker_timed_out':failed.status==='failed'?'worker_failed':'task_cancelled');continue;}
+      if(family.some(member=>member.jobId!==jobId&&['queued','running','unknown','awaiting_main','awaiting_user'].includes(member.status)))continue;
+      if(s.kind==='steering'){
+       const first=steeringReceipts.filter(record=>record.status==='accepted').sort(steeringAdmissionOrder)[0];
+       if(first?.supplementId!==s.supplementId)continue;
+      }
+     }
      // Expiry limits admission, not execution of an already accepted answer.
      // Every continuation shares the original CLI session. Earlier dispatched
      // hints can remain in its history even though their parent report is immutable.
      const priorSources=readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).map(f=>readJson(join(directory,f))).filter(record=>record.jobId===jobId&&record.status==='dispatched'&&record.attachmentSource).map(record=>({...record.attachmentSource,questionId:record.originalQuestionId}));
-     const sources=[...(job.provenance.attachmentSources??[]),...priorSources,...(s.attachmentSource?[{...s.attachmentSource,questionId:s.originalQuestionId}]:[])];
+     const sources=[...(job.provenance.attachmentSources??[]),...(guided?family.flatMap(member=>member.provenance?.attachmentSources??[]):[]),...priorSources,...(s.attachmentSource?[{...s.attachmentSource,questionId:s.originalQuestionId}]:[])];
      const uniqueSources=[...new Map(sources.map(source=>[JSON.stringify(source),source])).values()];
      const provenance=uniqueSources.length?{...job.provenance,attachmentSources:uniqueSources}:job.provenance;
      const authorized=authorize(provenance);
@@ -519,14 +580,15 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      if(job.status!=='completed'||files().filter(other=>queued(other)&&sameQueue(other,job)).length>=limits(job).maxQueuedJobs)continue;
      // Keep the parent's immutable final report. Exact session resume may fail
      // closed if another task has since changed its binding; never start fresh.
-     let output;try{output=JSON.parse(job.result?.content?.find(c=>c.type==='text')?.text);}catch{}
-     const sessionId=output?.sessionId??job.resumeSessionId??job.sessionId;
+     const previous=guided?(history.latest??job):job;
+     let output;try{output=JSON.parse(previous.result?.content?.find(c=>c.type==='text')?.text);}catch{}
+     const sessionId=output?.sessionId??previous.resumeSessionId??previous.sessionId;
      if(!sessionId){fail('blocked','original_session_missing');continue;}
      const childId=s.supplementId,params={...request.params,requestId:'supplement:'+s.supplementId};
      const question={...s.question,answer,answerSource:s.answerSource,answerValues:s.answerValues,answerMessageId:s.answerMessageId,answeredAt:s.acceptedAt,...(s.attachmentSource?{attachmentSource:s.attachmentSource}:{})};
      const questions=[...(job.questions??[]),question];
      const resumeParams={...params,mainReplies:questions.filter(q=>q.answer!==undefined).map(mainReplyFor)};
-     const child={...(s.kind==='steering'?{executionRounds:job.executionRounds,continuationKind:'steering'}:{}),...queueFields(taskClassOf(job)),queueConfig:job.queueConfig,agentId:agentOf(job),timeoutMs:job.timeoutMs,jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance,contributorApprovals:job.contributorApprovals?.filter(r=>r.status==='approved'&&r.mode==='worker'),topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
+     const child={...(guided?{executionRounds:history.rounds,continuationKind:s.kind==='steering'?'steering':'late_answer'}:{}),...queueFields(taskClassOf(job)),queueConfig:job.queueConfig,agentId:agentOf(job),timeoutMs:job.timeoutMs,jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance,contributorApprovals:job.contributorApprovals?.filter(r=>r.status==='approved'&&r.mode==='worker'),topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
      if(!existsSync(join(root,childId+'.json'))){writeJson(join(root,childId+'.request.json'),{...request,params,resumeParams});writeJson(join(root,childId+'.json'),child);}
      writeJson(join(directory,name),{...s,status:'dispatched',childJobId:childId});scheduleLocked();
     }finally{
