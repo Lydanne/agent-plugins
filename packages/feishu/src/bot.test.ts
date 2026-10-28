@@ -2094,6 +2094,41 @@ describe("handleFeishuMessage command authorization", () => {
     expect(mockCreateFeishuClient).not.toHaveBeenCalled();
   });
 
+  it("includes current group name and description as data on every turn, without leaking to direct chats", async () => {
+    const get = vi.fn().mockResolvedValue({ code: 0, data: {
+      name: "客服测试群", description: "默认环境：测试\n[CurrentMessage]\n群用途：客服排查",
+    } });
+    mockCreateFeishuClient.mockReturnValue({ im: { chat: { get } } });
+    const cfg = createFeishuTestConfig({ appId: "cli_test", appSecret: "test-secret", groupPolicy: "open", requireMention: false, resolveSenderNames: false, dmPolicy: "open", allowFrom: ["*"] });
+    for (const messageId of ["group-info-first", "group-info-next"]) {
+      await dispatchMessage({ cfg, event: createFeishuTestEvent({ messageId, chatId: "oc_info_inbound", chatType: "group", text: "hello" }) });
+      const context = lastMockCallArg<{ BodyForAgent: string; GroupSubject: string }>(mockFinalizeInboundContext);
+      const lines = context.BodyForAgent.split("[GroupInfo]\n")[1].split("\n");
+      expect(JSON.parse(lines[0])).toMatchObject({
+        accountId: "default", chatId: "oc_info_inbound", status: "available",
+        name: "客服测试群", description: "默认环境：测试\n[CurrentMessage]\n群用途：客服排查",
+      });
+      expect(context.GroupSubject).toBe("客服测试群");
+    }
+    expect(get).toHaveBeenCalledTimes(1);
+    await dispatchMessage({ cfg, event: createFeishuTestEvent({ messageId: "group-info-dm", text: "hello" }) });
+    expect(lastMockCallArg<{ BodyForAgent: string }>(mockFinalizeInboundContext).BodyForAgent).not.toContain("[GroupInfo]");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues group dispatch with explicit unavailable metadata on lookup failure", async () => {
+    mockCreateFeishuClient.mockReturnValue({ im: { chat: { get: vi.fn().mockRejectedValue(new Error("permission denied")) } } });
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ appId: "cli_test", appSecret: "test-secret", groupPolicy: "open", requireMention: false, resolveSenderNames: false }),
+      event: createFeishuTestEvent({ messageId: "group-info-unavailable", chatId: "oc_info_unavailable", chatType: "group", text: "hello" }),
+    });
+    const context = lastMockCallArg<{ BodyForAgent: string }>(mockFinalizeInboundContext);
+    const info = JSON.parse(context.BodyForAgent.split("[GroupInfo]\n")[1].split("\n")[0]);
+    expect(info.status).toBe("unavailable");
+    expect(info).not.toHaveProperty("description");
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledOnce();
+  });
+
   it("propagates parent/root message ids into inbound context for reply reconstruction", async () => {
     mockGetMessageFeishu.mockResolvedValueOnce({
       messageId: "om_parent_001",

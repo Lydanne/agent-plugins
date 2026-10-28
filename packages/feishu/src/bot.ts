@@ -77,7 +77,7 @@ import {
   resolveFeishuGroupSession,
   resolveFeishuMediaList,
 } from "./bot-content.js";
-import { resolveGroupName } from "./bot-group-name.js";
+import { resolveGroupInfo } from "./bot-group-name.js";
 import { resolveFeishuBotName } from "./bot-name.js";
 import { resolveFeishuSenderName, type FeishuPermissionError } from "./bot-sender-name.js";
 import { createFeishuClient } from "./client.js";
@@ -1401,13 +1401,11 @@ export async function handleFeishuMessage(params: {
       }
       return rootMessageInfo ?? null;
     };
-    let groupNamePromise: Promise<string | undefined> | undefined;
-    const resolveGroupNameForLabel = (): Promise<string | undefined> => {
-      if (!isGroup) {
-        return Promise.resolve(undefined);
-      }
-      groupNamePromise ??= resolveGroupName({ account, chatId: ctx.chatId, log });
-      return groupNamePromise;
+    let groupInfoPromise: ReturnType<typeof resolveGroupInfo> | undefined;
+    const resolveCurrentGroupInfo = () => {
+      if (!isGroup) return undefined;
+      groupInfoPromise ??= resolveGroupInfo({ account, chatId: ctx.chatId, log });
+      return groupInfoPromise;
     };
 
     const resolveThreadContextForAgent = async (
@@ -1517,7 +1515,11 @@ export async function handleFeishuMessage(params: {
       agentAccountId: string,
       wasMentioned: boolean,
     ) => {
-      const groupName = await resolveGroupNameForLabel();
+      const groupInfo = await resolveCurrentGroupInfo();
+      const groupName = groupInfo?.name;
+      const groupContext = groupInfo
+        ? renderContextData("GroupInfo", { accountId: account.accountId, chatId: ctx.chatId, ...groupInfo }) + "\n"
+        : "";
       const threadContext = await resolveThreadContextForAgent(agentId, agentSessionKey, groupName);
       const contextBinding = {
         agentId,
@@ -1604,7 +1606,7 @@ export async function handleFeishuMessage(params: {
         },
         message: {
           body: combinedBody,
-          bodyForAgent: mergeHistoryContext(activeWindowContext + messageBody.replace('[MessageId]', peopleContext + '\n[MessageId]').replace(`\n${CURRENT_HEADER}\n`, `${buildRelatedPeopleContext({
+          bodyForAgent: mergeHistoryContext(activeWindowContext + messageBody.replace('[MessageId]', peopleContext + '\n[MessageId]').replace(`\n${CURRENT_HEADER}\n`, `${groupContext}${buildRelatedPeopleContext({
             sender: isGroup && !peopleContext && ctx.senderType !== "bot" && event.sender.sender_id.open_id
               ? {name: ctx.senderName ?? null, open_id: event.sender.sender_id.open_id} : undefined,
             targets: (ctx.mentionTargets ?? []).filter(target => !taskPeopleByAgent.get(agentId)?.mentions.some(person => person.openId === target.openId)),

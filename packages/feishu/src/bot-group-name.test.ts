@@ -1,7 +1,7 @@
 // Feishu tests cover bot group name plugin behavior.
 import { afterAll, describe, it, expect, vi, beforeEach } from "vitest";
 import { feishuGroupNameCache } from "./bot-group-name-state.js";
-import { resolveGroupName } from "./bot-group-name.js";
+import { resolveGroupName, resolveGroupInfo } from "./bot-group-name.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
 const mockGetChatInfo = vi.hoisted(() => vi.fn());
@@ -146,4 +146,54 @@ describe("resolveGroupName", () => {
     expect(nameB).toBe("Team Beta");
     expect(mockGetChatInfo).toHaveBeenCalledTimes(2); // separate API calls
   });
+  it("shares name and description lookup and refreshes changed or cleared descriptions after five minutes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-28T01:00:00Z"));
+    try {
+      mockGetChatInfo.mockResolvedValue({ name: "Support", description: "生产客服\n默认查询环境：生产" });
+      const first = await resolveGroupInfo({ account, chatId: "oc_info", log });
+      expect(first).toEqual({ status: "available", name: "Support", description: "生产客服\n默认查询环境：生产", fetchedAt: Date.now() });
+      expect(await resolveGroupName({ account, chatId: "oc_info", log })).toBe("Support");
+      mockGetChatInfo.mockResolvedValue({ name: "Renamed", description: "" });
+      vi.advanceTimersByTime(5 * 60 * 1000 - 1);
+      expect(await resolveGroupInfo({ account, chatId: "oc_info", log })).toEqual(first);
+      vi.advanceTimersByTime(1);
+      expect(await resolveGroupInfo({ account, chatId: "oc_info", log })).toEqual({ status: "available", name: "Renamed", description: "", fetchedAt: Date.now() });
+      expect(mockGetChatInfo).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("distinguishes unavailable metadata from empty description and retries after expiry", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetChatInfo.mockRejectedValue(new Error("permission denied"));
+      expect(await resolveGroupInfo({ account, chatId: "oc_error", log })).toEqual({ status: "unavailable", fetchedAt: Date.now() });
+      mockGetChatInfo.mockResolvedValue({ description: "Description without name" });
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      expect(await resolveGroupInfo({ account, chatId: "oc_error", log })).toMatchObject({ status: "available", description: "Description without name" });
+      expect(mockGetChatInfo).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("isolates descriptions between chats and accounts", async () => {
+    mockGetChatInfo
+      .mockResolvedValueOnce({ name: "A", description: "A defaults" })
+      .mockResolvedValueOnce({ name: "B", description: "B defaults" })
+      .mockResolvedValueOnce({ name: "C", description: "C defaults" });
+    expect((await resolveGroupInfo({ account, chatId: "oc_a", log })).description).toBe("A defaults");
+    expect((await resolveGroupInfo({ account, chatId: "oc_b", log })).description).toBe("B defaults");
+    expect((await resolveGroupInfo({ account: makeAccount("other"), chatId: "oc_a", log })).description).toBe("C defaults");
+    expect((await resolveGroupInfo({ account, chatId: "oc_a", log })).description).toBe("A defaults");
+    expect(mockGetChatInfo).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not query an unconfigured account", async () => {
+    expect(await resolveGroupInfo({ account: { ...account, configured: false }, chatId: "oc_none", log })).toMatchObject({ status: "unavailable" });
+    expect(mockGetChatInfo).not.toHaveBeenCalled();
+  });
+
 });

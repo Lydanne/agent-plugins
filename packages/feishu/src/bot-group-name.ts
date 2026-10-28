@@ -2,12 +2,12 @@ import {
   asDateTimestampMs,
   resolveExpiresAtMsFromDurationMs,
 } from "openclaw/plugin-sdk/number-runtime";
-import { feishuGroupNameCache } from "./bot-group-name-state.js";
+import { feishuGroupNameCache, type FeishuGroupInfo } from "./bot-group-name-state.js";
 import { getChatInfo } from "./chat.js";
 import { createFeishuClient } from "./client.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
-const GROUP_NAME_CACHE_TTL_MS = 30 * 60 * 1000;
+const GROUP_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
 const GROUP_NAME_CACHE_MAX_SIZE = 500;
 
 function evictGroupNameCache(): void {
@@ -37,22 +37,22 @@ function evictGroupNameCache(): void {
   }
 }
 
-function setCacheEntry(key: string, name: string): void {
+function setCacheEntry(key: string, info: FeishuGroupInfo): void {
   const expiresAt = resolveExpiresAtMsFromDurationMs(GROUP_NAME_CACHE_TTL_MS);
   feishuGroupNameCache.delete(key);
   if (expiresAt !== undefined) {
-    feishuGroupNameCache.set(key, { name, expiresAt });
+    feishuGroupNameCache.set(key, { ...info, expiresAt });
   }
 }
 
-export async function resolveGroupName(params: {
+export async function resolveGroupInfo(params: {
   account: ResolvedFeishuAccount;
   chatId: string;
   log: (...args: unknown[]) => void;
-}): Promise<string | undefined> {
+}): Promise<FeishuGroupInfo> {
   const { account, chatId, log } = params;
   if (!account.configured) {
-    return undefined;
+    return { status: "unavailable", fetchedAt: Date.now() };
   }
 
   const cacheKey = `${account.accountId}:${chatId}`;
@@ -61,27 +61,34 @@ export async function resolveGroupName(params: {
     const now = asDateTimestampMs(Date.now());
     const expiresAt = asDateTimestampMs(cached.expiresAt);
     if (now !== undefined && expiresAt !== undefined && expiresAt > now) {
-      return cached.name || undefined;
+      const { expiresAt: _, ...info } = cached;
+      return info;
     }
     feishuGroupNameCache.delete(cacheKey);
   }
 
-  let resolvedName: string | undefined;
+  let info: FeishuGroupInfo;
   try {
     const client = createFeishuClient(account);
     const chatInfo = await getChatInfo(client, chatId);
-    const name = chatInfo?.name?.trim();
-    if (name) {
-      setCacheEntry(cacheKey, name);
-      resolvedName = name;
-    } else {
-      setCacheEntry(cacheKey, "");
-    }
+    info = {
+      status: "available",
+      name: chatInfo.name?.trim() || undefined,
+      description: chatInfo.description ?? "",
+      fetchedAt: Date.now(),
+    };
   } catch (err) {
     log(`feishu[${account.accountId}]: getChatInfo failed for ${chatId}: ${String(err)}`);
-    setCacheEntry(cacheKey, "");
+    info = { status: "unavailable", fetchedAt: Date.now() };
   }
 
+  setCacheEntry(cacheKey, info);
   evictGroupNameCache();
-  return resolvedName;
+  return info;
+}
+
+export async function resolveGroupName(
+  params: Parameters<typeof resolveGroupInfo>[0],
+): Promise<string | undefined> {
+  return (await resolveGroupInfo(params)).name;
 }
