@@ -57,6 +57,7 @@ export function waitingPresentationInstruction(presentation){
 
 /** Apply an admitted contribution identically for a card decision or inherited permission. */
 export async function continueContributor(jobs,job,request,authorize,completionBridge){
+  if(request.kind==='steering'){await jobs.enqueueSteering(job.jobId,job.provenance.sessionKey,request,authorize);return {mode:request.mode,resumed:false,queued:true};}
   let resumed;
   try{resumed=await jobs.reply(job.jobId,job.provenance.sessionKey,request.questionId,request.answer,{senderId:request.source.senderId,accountId:request.source.accountId},authorize,false,undefined,{answerSource:'main_context',attachmentSource:request.source,contributorApprovalId:request.requestId});}
   catch(error){

@@ -169,3 +169,9 @@ person_lookup 只接受原可信请求人或原生提及者的 OpenID；Agent、
 ## 验证边界
 
 自动化测试使用临时状态、假的 Worker 进程及模拟飞书接口，覆盖超时类型、Main 核对窗口、重启续接、重复回调、发送不确定、来源撤回、直接补充与自动插件调用的回退。部署、真实 OAuth、真实群卡片及生产 Worker 验收另行进行。
+
+### Main 的运行中引导分流
+
+Main 优先遵循用户明确选择；同一原任务的证据、纠正和方向调用 `steer(jobId,answer)`，独立目标沿相同 topic 调用 run 排队。steer 无需 pending question，也不接受 questionId；由宿主绑定当前来源，不从参数指定发言人。A 直接入队，B 复用三档许可；许可确认与实际执行分开。
+
+引导持久化至任务回执并在当前轮次结束后接续，当前 CLI 不被中断。普通上下文等待可以用新线索恢复核验，但决策、授权、插件问题不代答。完成后的接续记录保留 parentJobId、原 session、constraints、资源锁和累计执行预算；原报告不改写，旧来源撤回时抑制相关接续及交付。状态、受理和执行分别交付，不能把 contextSaved 或 permissionPending 称为已执行。

@@ -172,3 +172,12 @@ it('suppresses recalled contributor input before observing its answer in Main',a
  const observe=vi.fn();await jobs.processSupplements(job.jobId,p.sessionKey,(p:any)=>!p.attachmentSources?.some((s:any)=>s.senderId==='bob'),observe);
  expect(observe).not.toHaveBeenCalled();expect(records()[0].status).toBe('suppressed');
 });
+it('running-task steering without a pending question passes through A permission card before queueing',async()=>{
+ const provenance={...p,chatType:'group'},running={...job,provenance,status:'running',heartbeatAt:Date.now(),questions:[]};writeJson(join(workerRoot,job.jobId+'.json'),running);
+ const source={taskId:'steer-source',revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId:'bob',chatType:'group',kind:'group_context',sourceMessageIds:['steer-message'],attachments:[]};
+ const input=await jobs.prepareSteering(job.jobId,p.sessionKey,'new direction',{senderId:'bob',accountId:'a'},source,completion.authorizeReply),permission=await jobs.requestContributor(job.jobId,p.sessionKey,input.questionId,input.answer,{senderId:'bob',accountId:'a'},source,completion.authorizeReply);
+ expect(permission.approved).toBe(false);await completion.contributorApproval({jobId:job.jobId,provenance,request:permission.request});expect(records()).toHaveLength(0);
+ const c=readContributorCard(root,permission.request.requestId)!;
+ await workerQuestionBridge.contributorAction!({cfg:{},accountId:'a',event:{operator:{open_id:'alice'},token:'steer-token',context:{chat_id:'chat',open_message_id:c.messageId},action:{value:{a:'worker.contributor.approve',m:{requestId:permission.request.requestId,mode:'once'}}}} as any});
+ expect(records()).toHaveLength(1);expect(records()[0].kind).toBe('steering');expect(readJson(join(workerRoot,job.jobId+'.json')).status).toBe('running');await dispatch();expect(records()[0].status).toBe('accepted');
+});

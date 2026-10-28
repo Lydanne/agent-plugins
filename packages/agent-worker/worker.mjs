@@ -1,3 +1,4 @@
+import {tryLock,acquireLock} from './locks.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {checkJobWorkspace,holdJobWorkspace} from './workspace-runtime.mjs';
 import {jobSourceAttachments} from './source-attachments.mjs';
@@ -16,7 +17,9 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
  const controller=new AbortController();
  const eventFile=join(root,id+'.events.jsonl');let eventBytes=existsSync(eventFile)?statSync(eventFile).size:0,omitted=0;
  function recordEvent(event){const line=JSON.stringify(event)+'\n';const bytes=Buffer.byteLength(line);if(eventBytes+bytes>5*1024*1024){omitted++;return;}appendFileSync(eventFile,line,{mode:0o600});eventBytes+=bytes;}
- function persist(){job.heartbeatAt=Date.now();writeJson(file,job);}
+ function persistUnlocked(){const latest=readJson(file);for(const key of ['steeringInputs','contributorApprovals'])if(latest[key]!==undefined)job[key]=latest[key];job.heartbeatAt=Date.now();writeJson(file,job);}
+ function persist(){const release=tryLock(join(root,'scheduler-lock'));if(!release)return;try{persistUnlocked();}finally{release();}}
+ async function persistBoundary(){const release=await acquireLock(join(root,'scheduler-lock'));try{persistUnlocked();}finally{release();}}
  function checkCancellation(){if(existsSync(join(root,id+'.cancel'))){job.status='cancelling';controller.abort();}}
  const timer=setInterval(()=>{
   try{checkCancellation();persist();}catch{controller.abort();}
@@ -30,7 +33,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   if(remainingMs!==undefined&&remainingMs<1000)throw Object.assign(Error('Worker task execution budget exhausted'),{code:'EXECUTION_TIMEOUT'});
   if(remainingMs!==undefined)runtime={...runtime,timeoutMs:remainingMs};
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
-  job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});persist();
+  job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});await persistBoundary();
   await checkJobWorkspace(runtime??{});
   const attachments=jobSourceAttachments(job.provenance);
   const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onProgress:progress=>{job={...job,...progress};persist();}},runtime);
@@ -56,7 +59,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   if(job.status!=='awaiting_main')await finalizeJobReport({job,params,runtime});
   job.reports=await captureReports(job.result);
   // Persist terminal result before releasing admission. On storage failure stay blocked.
-  persist();
+  await persistBoundary();
   const owner=join(root,'active','owner.json');
   if(existsSync(owner)&&readJson(owner).jobId===id)rmSync(join(root,'active'),{recursive:true,force:true});
   rmSync(join(root,id+'.cancel'),{force:true});

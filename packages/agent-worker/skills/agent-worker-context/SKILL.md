@@ -37,3 +37,9 @@ CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机�
 ## 可配置任务队列
 
 run.queueId 选择已配置队列，省略使用管理员 defaultQueueId；可用 action=queues 只读查看名称、用途、执行时限和容量。默认 short 为 30 分钟、每 Agent 并发 3，long 为 3 小时、每 Agent 并发 1，管理员可添加其他队列。每 Agent、每队列独立排队；同一会话、资源锁和 workspace 池仍遵守原保护。旧 taskClass=short|long 兼容同名队列。按任务性质选择，不通过切换队列重跑超时、失联或已受理任务；reply 沿用原队列。删除队列不取消原任务，未知队列不能提交新任务。排队及等待补充不消耗执行时限。
+
+## Main 选择排队或引导
+
+用户明确要求优先。同一任务的新证据、纠正、方向用 `agent_worker action=steer,jobId=原job,answer=完整引导`，不要求 questionId。新的独立目标用 run 沿原 topic 新建排队 job。不能把新目标、额外业务写入或扩大查询权限包装成引导。
+
+steer 仅在当前可信真人轮次受理；A 直接保存并入队，B 按一次/Worker/长期许可校验，permissionPending 不代表已进入执行。返回 accepted 后说明“已保存，将在当前轮次结束后处理”，不是已生效。引导在原会话的下一执行边界交给 Worker，不中断当前 CLI、不重跑已完成操作；独立的决策/授权/插件问题仍需原流程处理。结束 Main 轮次，不轮询；不要用新 run 代替引导或伪造问题 ID。
