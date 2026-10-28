@@ -45,3 +45,7 @@ it('does not confirm failed grants and allows the same callback token to retry',
 it('retains approval after card edit failure without granting again',async()=>{
  await present();mocks.edit.mockRejectedValueOnce(Error('edit failed'));await expect(handleContributorAction({cfg:{},stateDir,accountId:'a',event:callback()})).rejects.toThrow();await handleContributorAction({cfg:{},stateDir,accountId:'a',event:callback()});expect(workerQuestionBridge.contributorDecide).toHaveBeenCalledOnce();
 });
+
+it('labels long hints as excerpts and leaves stored input complete',()=>{
+ event.request.answer='长'.repeat(2000);const raw=JSON.stringify(renderContributorCard(event));expect(raw).toContain('补充内容（摘录）');expect(raw).toContain('完整补充已保存');expect(event.request.answer).toHaveLength(2000);
+});

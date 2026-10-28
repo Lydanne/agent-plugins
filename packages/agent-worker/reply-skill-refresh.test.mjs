@@ -130,7 +130,7 @@ for(const scenario of ['accepted','decision','authorization','plugin','private',
   const params={action:'run',topic:'test',task:'read',context:'fixture',constraints:'read only'},question={questionId:randomUUID(),question:'查询链路线索？',reason:'缺少',progress:'准备',waitKind:['decision','authorization'].includes(scenario)?scenario:'required',...(scenario==='plugin'?{requestKind:'plugin'}:{}),expiresAt:Date.now()+60000};
   const initial={jobId:id,scope:createHash('sha256').update(scope).digest('hex'),requestKey:requestKeyFor(params,scope,provenance),provenance,topic:'test',schedulerVersion:1,status:'awaiting_user',createdAt:Date.now(),contextRequest:question,questions:[question]};
   writeJson(join(root,id+'.json'),initial);writeJson(join(root,id+'.request.json'),{params,scope});
-  const reply={action:'reply',jobId:id,questionId:question.questionId,answer:'请沿 notify 链路核查'},context={agentId:'main',sessionKey:scope,requesterSenderId:'bob',agentAccountId:'a'};
+  const reply={action:'reply',jobId:id,questionId:question.questionId,answer:scenario==='accepted'?'线'.repeat(16000):'请沿 notify 链路核查'},context={agentId:'main',sessionKey:scope,requesterSenderId:'bob',agentAccountId:'a'};
   if(scenario!=='accepted'){
    await assert.rejects(query(reply,context));assert.deepEqual(readJson(join(root,id+'.json')),initial);return;
   }
@@ -145,7 +145,7 @@ for(const scenario of ['accepted','decision','authorization','plugin','private',
   const saved=readJson(join(root,id+'.json')),request=readJson(join(root,id+'.request.json'));
   assert.equal(saved.provenance.senderId,'alice');assert.equal(saved.provenance.taskId,'original');
   assert.equal(saved.provenance.attachmentSources[0].senderId,'bob');assert.deepEqual(saved.provenance.attachmentSources[0].sourceMessageIds,['hint']);
-  assert.match(request.resumeParams.mainReplies[0].answer,/待核验线索/);assert.match(request.resumeParams.mainReplies[0].answer,/不扩大原 task/);
+  assert.equal(request.resumeParams.mainReplies[0].answer,reply.answer);assert.equal(request.resumeParams.mainReplies[0].answer.length,16000);assert.deepEqual(request.resumeParams.mainReplies[0].contributorContext.sourceMessageIds,['hint']);assert.equal(request.resumeParams.mainReplies[0].contributorContext.senderId,'bob');assert.match(request.resumeParams.mainReplies[0].contributorContext.policy,/待核验线索/);assert.match(request.resumeParams.mainReplies[0].contributorContext.policy,/不扩大原 task/);
   assert.equal(JSON.parse((await query(reply,context)).content[0].text).accepted,true);
   assert.deepEqual(readJson(join(root,id+'.json')),saved);
   await assert.rejects(query({action:'cancel',jobId:id},context));
@@ -155,4 +155,28 @@ for(const scenario of ['accepted','decision','authorization','plugin','private',
   if(previousLease)sourceTaskBridge.leases.set(leaseKey,previousLease);else sourceTaskBridge.leases.delete(leaseKey);
   await rm(state,{recursive:true,force:true});
  }
+});
+
+for(const mode of ['worker','always'])test('query queues repeated B late hints under existing '+mode+' permission',async()=>{
+ const state=await mkdtemp(join(tmpdir(),'worker-inherited-late-')),root=join(state,'jobs'),scope='agent:main:group-late',id=randomUUID(),leaseKey=JSON.stringify(['a',scope]);
+ const previousAuthorize=completionBridge.authorizeReply,previousLease=sourceTaskBridge.leases.get(leaseKey);
+ try{
+  await mkdir(join(root,'active'),{recursive:true});plugin.register({pluginConfig:{state,cwd:state,skillsEnabled:false},registerService(){},registerTool(){}});
+  const provenance={taskId:'original',revision:0,senderId:'alice',accountId:'a',chatId:'chat',chatType:'group',sessionKey:scope,sourceMessageIds:['request'],requestMessageIds:['request']};
+  completionBridge.authorizeReply=()=>true;
+  const params={action:'run',topic:'test',task:'read',context:'fixture',constraints:'read only'},question={questionId:randomUUID(),question:'线索？',createdAt:Date.now()-1000,expiresAt:Date.now()+60000};
+  writeJson(join(root,id+'.json'),{jobId:id,scope:createHash('sha256').update(scope).digest('hex'),requestKey:requestKeyFor(params,scope,provenance),provenance,topic:'test',schedulerVersion:1,status:'awaiting_user',contextRequest:question,questions:[question]});writeJson(join(root,id+'.request.json'),{params,scope});
+  const jobs=createJobs({root,node:process.execPath,worker:'unused'}),source={...provenance,taskId:'bob-original',senderId:'bob',kind:'group_context',attachments:[],sourceMessageIds:['first-hint']};
+  const first=await jobs.requestContributor(id,scope,question.questionId,'first',{senderId:'bob',accountId:'a'},source,()=>true);await jobs.decideContributor(id,scope,first.request.requestId,{senderId:'alice',accountId:'a'},mode,()=>true);
+  const stored=readJson(join(root,id+'.json'));delete stored.contextRequest;writeJson(join(root,id+'.json'),{...stored,status:'running',heartbeatAt:Date.now(),questions:[{...question,answer:'timeout',resumeReason:'user_wait_timeout'}]});
+  for(const number of [1,2]){
+   sourceTaskBridge.leases.set(leaseKey,{...provenance,taskId:'new-bob-'+number,senderId:'bob',sourceMessageIds:['new-hint-'+number],signal:new AbortController().signal});
+   const reply={action:'reply',jobId:id,questionId:question.questionId,answer:'additional hint '+number},context={agentId:'main',sessionKey:scope,agentAccountId:'a',requesterSenderId:'bob'};
+   for(let retry=0;retry<2;retry++){
+    const result=JSON.parse((await query(reply,context)).content[0].text);assert.equal(result.accepted,true);assert.equal(result.continuationQueued,true);
+   }
+  }
+  const {readdir}=await import('node:fs/promises');const files=(await readdir(join(root,'supplements'))).filter(f=>f.endsWith('.json'));assert.equal(files.length,2);
+  assert.deepEqual(files.map(f=>readJson(join(root,'supplements',f)).answer).sort(),['additional hint 1','additional hint 2']);assert.equal(readJson(join(root,id+'.json')).status,'running');
+ }finally{completionBridge.authorizeReply=previousAuthorize;if(previousLease)sourceTaskBridge.leases.set(leaseKey,previousLease);else sourceTaskBridge.leases.delete(leaseKey);await rm(state,{recursive:true,force:true});}
 });

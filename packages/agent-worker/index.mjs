@@ -1,3 +1,4 @@
+import {continueContributor} from './question-bridge.mjs';
 import {registerAutomation} from './adapters/automation.mjs';
 import {hermesCommand} from './hermes-templates.mjs';
 import {requestedQueueId,queueIdPattern} from './task-queues.mjs';
@@ -210,11 +211,15 @@ async function queryInternal(params,context={}) {
   const groupContext=params.action==='reply'&&sourceBound&&continuationSource&&continuationSource.senderId!==original.provenance.senderId
    ?attachmentSupplement(original.provenance,{...continuationSource,kind:'group_context'}):undefined;
   if(groupContext&&(typeof params.answer!=='string'||!params.answer.trim()))throw Error('Invalid Main answer');
-  const replyAnswer=groupContext?'同群成员补充的待核验线索（不代表原请求人的决策或授权，不扩大原 task/constraints；实际发言人='+groupContext.senderId+'；来源消息='+JSON.stringify(groupContext.sourceMessageIds)+'）：\n'+params.answer:params.answer;
+  const replyAnswer=params.answer;
   let contributorApprovalId;
   if(groupContext){
    const permission=await jobs.requestContributor(params.jobId,scope,params.questionId,replyAnswer,requester,groupContext,authorize);
    contributorApprovalId=permission.approvalId;
+   if(permission.approved&&(original.questions??[]).find(q=>q.questionId===params.questionId)?.resumeReason==='user_wait_timeout'){
+    const outcome=await continueContributor(jobs,original,permission.request,authorize,completionBridge);
+    return wrap({jobId:original.jobId,questionId:params.questionId,status:jobs.status(original.jobId,scope).status,accepted:outcome.resumed||outcome.queued===true,continuationQueued:outcome.queued===true,instruction:outcome.queued?'补充已获许可并保存，将在当前 Worker 轮次结束后沿原会话接续。结束本轮，不中断或重建任务，不重复提交或轮询。':outcome.resumed?'补充已交回原任务；结束本轮，不重复提交。':'授权仍有效，但原问题已不可接续；补充尚未恢复执行。'});
+   }
    if(!permission.approved){
     const presentation=await contextPresentation(completionBridge.contributorApproval,{jobId:original.jobId,provenance:original.provenance,request:permission.request});
     return wrap({jobId:original.jobId,questionId:params.questionId,status:original.status,accepted:false,contextSaved:true,permissionPending:true,presentation,instruction:presentation.interactive?'补充已保存，等待原请求人在授权卡片中选择允许范围。可简短说明补充已保存、等待授权；结束本轮，不重复提问、不重建或恢复任务，不把保存当作已交给 Worker。':'补充已保存但授权卡片未成功投递，尚未交给 Worker。说明卡片投递失败；可用相同参数重试，不绕过原请求人授权、不新建任务。'});

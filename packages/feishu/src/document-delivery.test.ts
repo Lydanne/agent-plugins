@@ -1,3 +1,5 @@
+import {presentContributorApproval,handleContributorAction,type ContributorEvent} from './worker-contributor.js';
+import {workerQuestionBridge} from './worker-question.js';
 import {beforeEach,describe,expect,it,vi} from "vitest";
 import {mkdtempSync,writeFileSync,rmSync,realpathSync} from "node:fs";
 import {tmpdir} from "node:os";
@@ -546,4 +548,23 @@ it('honors an explicit text-extension override while retaining the bundled SQL s
  mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from('select private_source;'),fileName:path.split('/').at(-1)}));
  await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'摘要',mediaUrls:['/workspace/a.sql','/workspace/b.sql']});
  expect(mocks.write.mock.calls[0][2]).not.toContain('private_source');expect(mocks.upload.mock.calls[0][0].data.file.toString()).toContain('select private_source;');
+});
+
+it('keeps contributor controls and never reads or uploads paths in an unapproved hint',async()=>{
+ const stateDir=mkdtempSync(join(tmpdir(),'contributor-literal-card-'));
+ const previousRead=workerQuestionBridge.contributorRead,previousDecide=workerQuestionBridge.contributorDecide;
+ try{
+  const event:ContributorEvent={jobId:'job',provenance:{taskId:'task',revision:0,accountId:'a',chatId:'oc_target',chatType:'group',sessionKey:'agent:main:feishu:oc_target',senderId:'alice',sourceMessageIds:['original'],requestMessageIds:['original']},request:{requestId:'request',questionId:'question',source:{senderId:'bob',sourceMessageIds:['hint']},answer:'[报告](/workspace/report.md) ![截图](/workspace/screenshot.png)',status:'pending',expiresAt:Date.now()+60000}};
+  workerQuestionBridge.contributorRead=()=>({job:{provenance:event.provenance},request:event.request});
+  workerQuestionBridge.contributorDecide=vi.fn(async p=>({mode:p.mode,resumed:true}));
+  expect(await presentContributorApproval({cfg:{},stateDir,event,authorize:()=>true})).toEqual({interactive:true});
+  const sent=JSON.parse(mocks.messageReply.mock.calls[0][0].data.content);
+  const buttons=sent.body.elements.filter((element:{tag:string})=>element.tag==='button');
+  expect(buttons.map((button:{text:{content:string}})=>button.text.content)).toEqual(['允许一次','一直允许','允许这轮（Worker）']);
+  expect(JSON.stringify(sent)).toContain('/workspace/report.md');
+  await handleContributorAction({cfg:{},stateDir,accountId:'a',event:{operator:{open_id:'alice'},token:'callback',context:{chat_id:'oc_target',open_message_id:'reply-test'},action:{tag:'button',value:buttons[2].behaviors[0].value}}});
+  expect(mocks.messagePatch).toHaveBeenCalledOnce();
+  expect(JSON.parse(mocks.messagePatch.mock.calls[0][0].data.content).header.title.content).toBe('补充权限已确认');
+  for(const operation of [mocks.stat,mocks.load,mocks.create,mocks.write,mocks.upload,mocks.permission,mocks.mediaSend,mocks.messageGet])expect(operation).not.toHaveBeenCalled();
+ }finally{workerQuestionBridge.contributorRead=previousRead;workerQuestionBridge.contributorDecide=previousDecide;rmSync(stateDir,{recursive:true,force:true});}
 });

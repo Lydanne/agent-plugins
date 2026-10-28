@@ -103,3 +103,72 @@ it('approval after user-wait timeout queues B hint for the original session with
  const supplement=records()[0],child=readJson(join(workerRoot,supplement.supplementId+'.json'));expect(child.resumeSessionId).toBe(job.resumeSessionId);expect(child.provenance.attachmentSources[0].senderId).toBe('bob');expect(child.contributorApprovals[0].mode).toBe('worker');
  expect(readJson(join(workerRoot,child.jobId+'.request.json')).resumeParams.constraints).toBe('read only');
 });
+
+it('keeps independently approved contributor hints and requester late answers separate for one question',async()=>{
+ const provenance={...p,chatType:'group'},question={...q};delete question.answer;delete question.resumeReason;
+ writeJson(join(workerRoot,job.jobId+'.json'),{...job,provenance,status:'awaiting_user',contextRequest:question,questions:[question]});
+ const pending=[];
+ for(const senderId of ['bob','carol']){
+  const source={taskId:senderId,revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId,chatType:'group',kind:'group_context',sourceMessageIds:[senderId+'-hint'],attachments:[]};
+  pending.push(await jobs.requestContributor(job.jobId,p.sessionKey,q.questionId,senderId+' late hint',{senderId,accountId:'a'},source,completion.authorizeReply));
+ }
+ const saved=readJson(join(workerRoot,job.jobId+'.json'));delete saved.contextRequest;writeJson(join(workerRoot,job.jobId+'.json'),{...saved,status:'running',questions:[q],heartbeatAt:Date.now()});
+ const own=await jobs.openSupplement(job.jobId,p.sessionKey,q.questionId,completion.authorizeReply);
+ await jobs.submitSupplement(job.jobId,p.sessionKey,own.supplementId,'Alice late hint',{answerSource:'user_text'},completion.authorizeReply);
+ for(const entry of pending){
+  const params={jobId:job.jobId,requestId:entry.request.requestId,provenance:provenance as any,actor:{senderId:'alice',accountId:'a'},mode:'worker' as const};
+  expect(await workerQuestionBridge.contributorDecide!(params)).toEqual({mode:'worker',resumed:false,queued:true});
+  expect(await workerQuestionBridge.contributorDecide!(params)).toEqual({mode:'worker',resumed:false,queued:true});
+ }
+ expect(records()).toHaveLength(3);expect(new Set(records().map((r:any)=>r.supplementId)).size).toBe(3);
+ expect(records().map((r:any)=>r.answer).sort()).toEqual(['Alice late hint','bob late hint','carol late hint']);
+ writeJson(join(workerRoot,job.jobId+'.json'),{...readJson(join(workerRoot,job.jobId+'.json')),status:'completed'});await dispatch();await dispatch();
+ expect(records().every((r:any)=>r.status==='dispatched')).toBe(true);
+ for(const record of records())expect(readJson(join(workerRoot,record.supplementId+'.json')).resumeSessionId).toBe(job.resumeSessionId);
+});
+
+it('retains an approved contributor request for retry when reply persistence fails',async()=>{
+ const provenance={...p,chatType:'group'},question={...q};delete question.answer;delete question.resumeReason;
+ writeJson(join(workerRoot,job.jobId+'.json'),{...job,provenance,status:'awaiting_user',contextRequest:question,questions:[question]});
+ const source={taskId:'bob-task',revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId:'bob',chatType:'group',kind:'group_context',sourceMessageIds:['hint'],attachments:[]};
+ const pending=await jobs.requestContributor(job.jobId,p.sessionKey,q.questionId,'B hint',{senderId:'bob',accountId:'a'},source,completion.authorizeReply);
+ const params={jobId:job.jobId,requestId:pending.request.requestId,provenance:provenance as any,actor:{senderId:'alice',accountId:'a'},mode:'worker' as const};
+ const original=jobs.reply;const reply=vi.spyOn(jobs,'reply').mockRejectedValueOnce(Error('temporary storage failure'));
+ await expect(workerQuestionBridge.contributorDecide!(params)).rejects.toThrow('temporary storage failure');
+ expect(readJson(join(workerRoot,job.jobId+'.json')).contributorApprovals[0].status).toBe('approved');
+ reply.mockImplementation(original);
+ expect(await workerQuestionBridge.contributorDecide!(params)).toEqual({mode:'worker',resumed:true});
+ expect(readJson(join(workerRoot,job.jobId+'.json')).status).toBe('queued');reply.mockRestore();
+});
+
+it('retains prior same-session hint sources in later children without inheriting one-shot approval',async()=>{
+ const provenance={...p,chatType:'group'},question={...q};delete question.answer;delete question.resumeReason;
+ writeJson(join(workerRoot,job.jobId+'.json'),{...job,provenance,status:'awaiting_user',contextRequest:question,questions:[question]});
+ const entries=[];
+ for(const senderId of ['bob','carol']){
+  const source={taskId:senderId,revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId,chatType:'group',kind:'group_context',sourceMessageIds:[senderId+'-hint'],attachments:[]};
+  entries.push(await jobs.requestContributor(job.jobId,p.sessionKey,q.questionId,senderId+' late hint',{senderId,accountId:'a'},source,completion.authorizeReply));
+ }
+ const saved=readJson(join(workerRoot,job.jobId+'.json'));delete saved.contextRequest;writeJson(join(workerRoot,job.jobId+'.json'),{...saved,status:'running',questions:[q],heartbeatAt:Date.now()});
+ for(const entry of entries)await workerQuestionBridge.contributorDecide!({jobId:job.jobId,requestId:entry.request.requestId,provenance:provenance as any,actor:{senderId:'alice',accountId:'a'},mode:entry.request.source.senderId==='bob'?'once':'worker'});
+ writeJson(join(workerRoot,job.jobId+'.json'),{...readJson(join(workerRoot,job.jobId+'.json')),status:'completed'});await dispatch();
+ const children=records().map((record:any)=>readJson(join(workerRoot,record.supplementId+'.json')));
+ const later=children.find((child:any)=>child.provenance.attachmentSources.length===2)!;expect(later).toBeDefined();expect(later.provenance.attachmentSources.map((source:any)=>source.senderId).sort()).toEqual(['bob','carol']);
+ expect(later.contributorApprovals.map((approval:any)=>approval.mode)).toEqual(['worker']);
+ // Another late continuation must check both earlier sources before dispatch.
+ const denied=records().find((record:any)=>record.supplementId===later.jobId)!;
+ writeJson(join(workerRoot,'supplements',denied.supplementId+'.json'),{...denied,status:'accepted',childJobId:undefined});
+ await jobs.processSupplements(job.jobId,p.sessionKey,(source:any)=>!source.attachmentSources?.some((entry:any)=>entry.senderId==='bob'),async()=>{});
+ expect(records().find((record:any)=>record.supplementId===denied.supplementId)?.status).toBe('suppressed');
+});
+
+it('suppresses recalled contributor input before observing its answer in Main',async()=>{
+ const provenance={...p,chatType:'group'},question={...q};delete question.answer;delete question.resumeReason;
+ writeJson(join(workerRoot,job.jobId+'.json'),{...job,provenance,status:'awaiting_user',contextRequest:question,questions:[question]});
+ const source={taskId:'bob-task',revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId:'bob',chatType:'group',kind:'group_context',sourceMessageIds:['hint'],attachments:[]};
+ const pending=await jobs.requestContributor(job.jobId,p.sessionKey,q.questionId,'recalled B hint',{senderId:'bob',accountId:'a'},source,completion.authorizeReply);
+ const saved=readJson(join(workerRoot,job.jobId+'.json'));delete saved.contextRequest;writeJson(join(workerRoot,job.jobId+'.json'),{...saved,status:'running',questions:[q],heartbeatAt:Date.now()});
+ await workerQuestionBridge.contributorDecide!({jobId:job.jobId,requestId:pending.request.requestId,provenance:provenance as any,actor:{senderId:'alice',accountId:'a'},mode:'once'});
+ const observe=vi.fn();await jobs.processSupplements(job.jobId,p.sessionKey,(p:any)=>!p.attachmentSources?.some((s:any)=>s.senderId==='bob'),observe);
+ expect(observe).not.toHaveBeenCalled();expect(records()[0].status).toBe('suppressed');
+});

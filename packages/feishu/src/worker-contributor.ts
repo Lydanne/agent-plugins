@@ -30,11 +30,12 @@ export function readContributorCard(stateDir:string,id:string):Card|undefined{
 function save(stateDir:string,card:Card){const db=database(stateDir);try{db.prepare('INSERT OR REPLACE INTO cards VALUES (?,?)').run(card.request.requestId,JSON.stringify(card));}finally{db.close();}}
 export function renderContributorCard(card:Card):Record<string,unknown>{
  const p=card.provenance,r=card.request;
- const elements:Record<string,unknown>[]=[md(`<at id="${p.senderId}"></at>老师，<at id="${r.source.senderId}"></at>老师希望补充您的任务。`),md(('任务：'+card.jobId+'\n补充内容：'+Array.from(r.answer).slice(0,1800).join('')).replace(/</g,'&lt;').replace(/>/g,'&gt;'))];
+ const excerpt=Array.from(r.answer),shortened=excerpt.length>1800;
+ const elements:Record<string,unknown>[]=[md(`<at id="${p.senderId}"></at>老师，<at id="${r.source.senderId}"></at>老师希望补充您的任务。`),md(('任务：'+card.jobId+'\n补充内容'+(shortened?'（摘录）':'')+'：'+excerpt.slice(0,1800).join('')+(shortened?'\n（完整补充已保存；本卡只展示摘录，可查看本卡所回复的原补充消息。）':'')).replace(/</g,'&lt;').replace(/>/g,'&gt;'))];
  if(card.mode){
   elements.push(md('您已选择：'+modes[card.mode]+'。'+(card.resumed?'当前补充已交回原 Worker。':card.queued?'补充已保存，将在原 Worker 当前轮次结束后接续。':'授权已保存；当前补充尚未恢复执行，请查看原任务状态。')));
  }else{
-  elements.push(md('允许一次：仅当前补充。\n一直允许：同账号、同群、同会话中，今后允许该同事补充您发起的 Worker 任务。\n允许这轮（Worker）：仅当前 Worker 任务的后续补充。'));
+  elements.push(md('允许一次：仅当前补充。\n一直允许：同账号、同群中，今后允许该同事补充您发起的 Worker 任务。\n允许这轮（Worker）：仅当前 Worker 任务的后续补充。'));
   elements.push(...(['once','always','worker'] as const).map(mode=>({tag:'button',text:text(modes[mode]),type:mode==='worker'?'primary':'default',behaviors:[{type:'callback',value:createFeishuCardInteractionEnvelope({k:'button',a:WORKER_CONTRIBUTOR_APPROVE,m:{requestId:r.requestId,mode},c:{u:p.senderId,h:p.chatId,s:p.sessionKey,e:r.expiresAt,t:'group'}})}]})));
   elements.push(md('仅原提问者可确认；确认前不会据此恢复 Worker。不操作即不授权。'));
  }
@@ -52,7 +53,7 @@ export async function presentContributorApproval(params:{cfg:ClawdbotConfig;stat
   if(card.creationState==='uncertain')throw Error('Contributor card delivery is uncertain; inspect before retrying');
   card={...card,creationState:'uncertain'};save(stateDir,card);
   try{
-   const result=await sendCardFeishu({cfg,accountId:card.provenance.accountId,to:'chat:'+card.provenance.chatId,replyToMessageId:card.request.source.sourceMessageIds[0],replyInThread:card.provenance.replyInThread??false,card:renderContributorCard(card)});
+   const result=await sendCardFeishu({cfg,accountId:card.provenance.accountId,to:'chat:'+card.provenance.chatId,replyToMessageId:card.request.source.sourceMessageIds[0],replyInThread:card.provenance.replyInThread??false,card:renderContributorCard(card),preserveInteractiveControls:true});
    if(!result.messageId)throw Error('Missing contributor card receipt');
    save(stateDir,{...card,messageId:result.messageId,creationState:undefined});return {interactive:true};
   }catch(error){if(isFeishuCardValidationRejection(error))save(stateDir,{...card,creationState:'retryable'});throw error;}
@@ -72,6 +73,6 @@ export async function handleContributorAction(params:{cfg:ClawdbotConfig;stateDi
    const outcome=await workerQuestionBridge.contributorDecide({jobId:card.jobId,requestId:id,provenance:card.provenance,actor:{senderId:event.operator.open_id,accountId},mode});
    card.mode=mode;card.resumed=outcome.resumed;card.queued=outcome.queued;save(stateDir,card);
   }
-  await editMessageFeishu({cfg,accountId,messageId:card.messageId!,card:renderContributorCard(card)});
+  await editMessageFeishu({cfg,accountId,messageId:card.messageId!,card:renderContributorCard(card),preserveInteractiveControls:true});
  });
 }

@@ -13,6 +13,9 @@ import {mkdirSync,readFileSync,writeFileSync,appendFileSync,renameSync,existsSyn
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
+function mainReplyFor({questionId,question,answer,answerValues,attachmentSource}){
+ return {questionId,question,answer,...(answerValues?{answerValues}:{}),...(attachmentSource?.kind==='group_context'?{contributorContext:{senderId:attachmentSource.senderId,sourceMessageIds:attachmentSource.sourceMessageIds,policy:'同群成员提供的待核验线索，不代表原请求人的决策或授权，不扩大原 task/constraints。'}}:{})};
+}
 export function readJson(path){return JSON.parse(readFileSync(path,'utf8'));}
 export function writeJson(path,value){const tmp=path+'.'+randomUUID();writeFileSync(tmp,JSON.stringify(value),{mode:0o600});renameSync(tmp,path);}
 export function requestKeyFor(params,scope,provenance){return createHash('sha256').update(JSON.stringify([scope,params.topic,params.task,params.context,params.constraints,params.requestId??'',provenance?.accountId,provenance?.senderId,...(provenance?.attachments?.length?[{attachments:attachmentIdentity(provenance.attachments)}]:[]),...(requestedQueueId(params)==='long'?[{taskClass:'long'}]:requestedQueueId(params)&&requestedQueueId(params)!=='short'?[{queueId:requestedQueueId(params)}]:[]),...(params.thinkingLevel?[params.thinkingLevel]:[]),...(params.modelId!==undefined?[{modelId:params.modelId}]:[]),...(params.useWorkspace===true?[{useWorkspace:true}]:[]),...(params.responsibility!==undefined?[{responsibility:params.responsibility}]:[]),...((params.repository??(params.projectId?'projects/'+params.projectId:undefined))&&params.repository!=='project'?[params.repository??'projects/'+params.projectId]:[])])).digest('hex');}
@@ -98,7 +101,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
  function resumeLocked(job,request,answer,metadata) {
   const jobId=job.jobId,questionId=job.contextRequest.questionId,requestFile=join(root,jobId+'.request.json');
     const questions=job.questions.map(q=>q.questionId===questionId?{...q,answer,...metadata,answeredAt:Date.now()}:q);
-    request.resumeParams={...request.params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
+    request.resumeParams={...request.params,mainReplies:questions.filter(q=>q.answer!==undefined).map(mainReplyFor)};
     writeJson(requestFile,request);
     const attachmentSource=metadata.attachmentSource;
     const attachmentSources=attachmentSource?[...(job.provenance?.attachmentSources??[]),{...attachmentSource,questionId}]:undefined;
@@ -231,26 +234,40 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   const deadline=Date.now()+seconds*1000;
   for(;;){tick();const j=get(jobId,scope);if(!active.has(j.status)||Date.now()>=deadline)return view(j);await new Promise(r=>setTimeout(r,200));}
  }
- function contributorKey(job,source){return createHash('sha256').update(JSON.stringify([job.provenance.accountId,job.provenance.chatId,job.provenance.sessionKey,job.provenance.senderId,source.senderId])).digest('hex');}
+ function contributorKey(job,source){
+  const p=job.provenance,agentId=job.agentId??p.agentId??job.project?.agentId??/^agent:([^:]+):/.exec(p.sessionKey??'')?.[1];
+  const agentScope=agentId?['agent',agentId]:['legacy-session',p.sessionKey];
+  return createHash('sha256').update(JSON.stringify([p.accountId,p.chatId,agentScope,p.senderId,source.senderId])).digest('hex');
+ }
+ function contributorSourceIdentity(source){
+  return JSON.stringify([source.taskId,source.revision,source.accountId,source.chatId,source.sessionKey,source.senderId,source.kind,source.chatType,[...source.sourceMessageIds].sort(),attachmentIdentity(source.attachments)]);
+ }
  function contributorPermission(job,source,approvalId,questionId){
   const key=contributorKey(job,source),grantsFile=join(root,'contributor-grants.json');
   const grant=existsSync(grantsFile)?readJson(grantsFile)[key]:undefined;
   if(grant?.mode==='always'&&grant.approvedBy===job.provenance.senderId)return true;
-  return (job.contributorApprovals??[]).some(r=>r.status==='approved'&&r.source.senderId===source.senderId&&r.approvedBy===job.provenance.senderId&&(r.mode==='worker'||r.mode==='once'&&r.requestId===approvalId&&r.questionId===questionId&&JSON.stringify(r.source)===JSON.stringify(source)));
+  return (job.contributorApprovals??[]).some(r=>r.status==='approved'&&r.source.senderId===source.senderId&&r.approvedBy===job.provenance.senderId&&(r.mode==='worker'||r.mode==='once'&&r.requestId===approvalId&&r.questionId===questionId&&contributorSourceIdentity(r.source)===contributorSourceIdentity(source)));
  }
  return {
   contributorRequest(jobId,scope,requestId){const job=get(jobId,scope),request=job.contributorApprovals?.find(r=>r.requestId===requestId);if(!request)throw Error('Contributor approval request not found');return {job:view(job),request};},
   async requestContributor(jobId,scope,questionId,answer,requester,source,authorize){
    const release=await acquireLock(lock);
    try{
-    const job=get(jobId,scope),bound=attachmentSupplement(job.provenance,source),q=job.contextRequest??job.questions?.find(q=>q.questionId===questionId);
+    const job=get(jobId,scope),bound=attachmentSupplement(job.provenance,source),q=job.contextRequest?.questionId===questionId?job.contextRequest:job.questions?.find(q=>q.questionId===questionId);
     if(bound.kind!=='group_context'||bound.senderId!==requester?.senderId||bound.accountId!==requester?.accountId)throw Error('Contributor source mismatch');
     if(typeof answer!=='string'||!answer.trim()||answer.length>16000)throw Error('Invalid contributor context');
     if(!q||q.questionId!==questionId||q.requestKind==='plugin'||!['optional','required'].includes(q.waitKind??'required'))throw Error('Contributor context cannot answer decisions or authorization');
     if(!authorize({...job.provenance,attachmentSources:[...(job.provenance.attachmentSources??[]),bound]}))throw Error('Contributor or original source is no longer current');
-    const prior=job.contributorApprovals?.find(r=>r.source.senderId===bound.senderId&&JSON.stringify(r.source)===JSON.stringify(bound)&&r.questionId===questionId);
+    const prior=job.contributorApprovals?.find(r=>r.source.senderId===bound.senderId&&contributorSourceIdentity(r.source)===contributorSourceIdentity(bound)&&r.questionId===questionId);
     if(prior&&prior.answer!==answer)throw Error('Contributor request already saved differently');
-    if(contributorPermission(job,bound,prior?.requestId,questionId))return {approved:true,approvalId:prior?.requestId};
+    if(contributorPermission(job,bound,prior?.requestId,questionId)){
+     if(prior)return {approved:true,approvalId:prior.requestId,request:prior};
+     if(q.expiresAt<=Date.now()||['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))||(!waiting.has(job.status)&&q.resumeReason!=='user_wait_timeout'))throw Error('No matching pending or timed-out question');
+     if((job.contributorApprovals?.length??0)>=64)throw Error('Contributor approval request limit reached');
+     const request={requestId:randomUUID(),questionId,source:bound,answer,status:'approved',mode:'inherited',approvedBy:job.provenance.senderId,createdAt:Date.now(),expiresAt:q.expiresAt};
+     writeJson(join(root,jobId+'.json'),{...job,contributorApprovals:[...(job.contributorApprovals??[]),request]});
+     return {approved:true,approvalId:request.requestId,request};
+    }
     if(!waiting.has(job.status)||job.contextRequest?.questionId!==questionId||q.expiresAt<=Date.now()||existsSync(join(root,jobId+'.cancel')))throw Error('No matching pending question');
     if(prior)return {approved:false,request:prior};
     const pending=job.contributorApprovals?.find(r=>r.source.senderId===bound.senderId&&r.status==='pending'&&r.expiresAt>Date.now());
@@ -331,7 +348,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const release=await acquireLock(lock);
    try {
     const job=get(jobId,scope);
-    const question=job.contextRequest??job.questions?.find(q=>q.questionId===questionId);
+    const question=job.contextRequest?.questionId===questionId?job.contextRequest:job.questions?.find(q=>q.questionId===questionId);
     const groupSource=answerMetadata.attachmentSource?.kind==='group_context'?attachmentSupplement(job.provenance,answerMetadata.attachmentSource):undefined;
     const groupReply=!waitingForUser&&groupSource&&groupSource.senderId===requester?.senderId&&groupSource.accountId===requester?.accountId&&question?.requestKind!=='plugin'&&['optional','required'].includes(question?.waitKind??'required')&&contributorPermission(job,groupSource,answerMetadata.contributorApprovalId,questionId);
     if(hasSourceProvenance(job.provenance)&&(!requester?.senderId||requester.senderId!==job.provenance.senderId||requester.accountId!==job.provenance.accountId)&&!groupReply)throw Error('Only the task requester Main can reply to decisions or authorization; group context requires a trusted same-chat source');
@@ -375,10 +392,10 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const saved=question&&savedBeforeDeadline(question,metadata.userSubmittedAt);
     if(!authorize(job.provenance)||!question||(!saved&&(['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))||question.expiresAt<=Date.now()))||question.resumeReason!=='user_wait_timeout'||question.answer===undefined)throw Error('Task cannot reopen this question');
     const directory=join(root,'supplements');mkdirSync(directory,{recursive:true,mode:0o700});
-    const prior=readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).map(f=>({name:f,record:readJson(join(directory,f))})).find(({name,record:s})=>name===s.supplementId+'.json'&&s.jobId===jobId&&s.originalQuestionId===questionId)?.record;
+    const prior=readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).map(f=>({name:f,record:readJson(join(directory,f))})).find(({name,record:s})=>name===s.supplementId+'.json'&&s.jobId===jobId&&s.originalQuestionId===questionId&&(s.contributorApprovalId??null)===(metadata.contributorApprovalId??null))?.record;
     if(prior)return prior;
     const {answer,answerValues,answerSource,answeredAt,timeoutRequestedAt,resumeReason,waitingForUserAt,...fields}=question;
-    const id=randomUUID(),record={supplementId:id,jobId,originalQuestionId:questionId,scope:job.scope,provenance:job.provenance,question:{...fields,questionId:id,createdAt:saved?(question.createdAt??0):Date.now()},status:'waiting',createdAt:Date.now()};
+    const id=randomUUID(),record={supplementId:id,jobId,originalQuestionId:questionId,...(metadata.contributorApprovalId?{contributorApprovalId:metadata.contributorApprovalId}:{}),scope:job.scope,provenance:job.provenance,question:{...fields,questionId:id,createdAt:saved?(question.createdAt??0):Date.now()},status:'waiting',createdAt:Date.now()};
     writeJson(join(directory,id+'.json'),record);return record;
    }finally{release();}
   },
@@ -394,6 +411,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     const saved=s&&savedBeforeDeadline(s.question,metadata.userSubmittedAt);
     if(!s||!authorize(job.provenance)||(!saved&&(['cancelled','failed','timed_out','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))))throw Error('Supplement is no longer valid');
     if(typeof answer!=='string'||!answer.trim()||answer.length>16000)throw Error('Invalid supplement');
+    if((s.contributorApprovalId??null)!==(metadata.contributorApprovalId??null))throw Error('Contributor supplement binding mismatch');
     const source=metadata.attachmentSource?attachmentSupplement(job.provenance,metadata.attachmentSource):undefined;
     if(source&&(!contributorPermission(job,source,metadata.contributorApprovalId,s.originalQuestionId)||s.question.requestKind==='plugin'||!['optional','required'].includes(s.question.waitKind??'required')||!authorize({...job.provenance,attachmentSources:[...(job.provenance.attachmentSources??[]),source]})))throw Error('Contributor supplement permission is no longer valid');
     if(metadata.answerValues)validateContextAnswers(s.question,metadata.answerValues);
@@ -422,14 +440,21 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(s.status==='suppressed'&&s.reason==='source_invalid'&&s.notificationSuppressed===true)continue;
     if(['blocked','suppressed'].includes(s.status)){await observe(terminalEvent());continue;}
     if(!['waiting','accepted','dispatched'].includes(s.status))continue;
-    await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,answer:s.answer,childJobId:s.childJobId});
+    // Do not disclose a contributor's recalled hint to Main before validating it.
+    const observationCurrent=!s.attachmentSource||authorize({...s.provenance,attachmentSources:[...(s.provenance.attachmentSources??[]),s.attachmentSource]})===true;
+    if(observationCurrent)await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,answer:s.answer,childJobId:s.childJobId});
     if(s.status!=='accepted')continue;
     const release=await acquireLock(lock);
     try{
      const job=get(jobId,scope);s=readJson(join(directory,name));if(s.status!=='accepted')continue;
      const fail=(status,reason)=>{s={...s,status,reason,finishedAt:Date.now()};writeJson(join(directory,name),s);};
      // Expiry limits admission, not execution of an already accepted answer.
-     const provenance=s.attachmentSource?{...job.provenance,attachmentSources:[...(job.provenance.attachmentSources??[]),{...s.attachmentSource,questionId:s.originalQuestionId}]}:job.provenance;
+     // Every continuation shares the original CLI session. Earlier dispatched
+     // hints can remain in its history even though their parent report is immutable.
+     const priorSources=readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).map(f=>readJson(join(directory,f))).filter(record=>record.jobId===jobId&&record.status==='dispatched'&&record.attachmentSource).map(record=>({...record.attachmentSource,questionId:record.originalQuestionId}));
+     const sources=[...(job.provenance.attachmentSources??[]),...priorSources,...(s.attachmentSource?[{...s.attachmentSource,questionId:s.originalQuestionId}]:[])];
+     const uniqueSources=[...new Map(sources.map(source=>[JSON.stringify(source),source])).values()];
+     const provenance=uniqueSources.length?{...job.provenance,attachmentSources:uniqueSources}:job.provenance;
      const authorized=authorize(provenance);
      if(authorized===false){s={...s,notificationSuppressed:true};fail('suppressed','source_invalid');continue;}
      if(authorized!==true)continue;
@@ -459,9 +484,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      const sessionId=output?.sessionId??job.resumeSessionId??job.sessionId;
      if(!sessionId){fail('blocked','original_session_missing');continue;}
      const childId=s.supplementId,params={...request.params,requestId:'supplement:'+s.supplementId};
-     const question={...s.question,answer,answerSource:s.answerSource,answerValues:s.answerValues,answerMessageId:s.answerMessageId,answeredAt:s.acceptedAt};
+     const question={...s.question,answer,answerSource:s.answerSource,answerValues:s.answerValues,answerMessageId:s.answerMessageId,answeredAt:s.acceptedAt,...(s.attachmentSource?{attachmentSource:s.attachmentSource}:{})};
      const questions=[...(job.questions??[]),question];
-     const resumeParams={...params,mainReplies:questions.filter(q=>q.answer!==undefined).map(({questionId,question,answer,answerValues})=>({questionId,question,answer,...(answerValues?{answerValues}:{})}))};
+     const resumeParams={...params,mainReplies:questions.filter(q=>q.answer!==undefined).map(mainReplyFor)};
      const child={...queueFields(taskClassOf(job)),queueConfig:job.queueConfig,agentId:agentOf(job),timeoutMs:job.timeoutMs,jobId:childId,parentJobId:jobId,supplementId:s.supplementId,requestKey:requestKeyFor(params,scope,job.provenance),scope:job.scope,provenance,contributorApprovals:job.contributorApprovals?.filter(r=>r.status==='approved'&&r.mode==='worker'),topic:job.topic,taskSummary:job.taskSummary,...projectFields(request.runtime),...modelFields(request.runtime),tags:job.tags,resourceKeys:job.resourceKeys,questions,resumeSessionId:sessionId,resumePending:true,continuationPriority:1,schedulerVersion:1,queueSequence:job.queueSequence,status:'queued',createdAt:Date.now(),heartbeatAt:Date.now(),notification:{state:'pending',eventKey:randomUUID()}};
      if(!existsSync(join(root,childId+'.json'))){writeJson(join(root,childId+'.request.json'),{...request,params,resumeParams});writeJson(join(root,childId+'.json'),child);}
      writeJson(join(directory,name),{...s,status:'dispatched',childJobId:childId});scheduleLocked();

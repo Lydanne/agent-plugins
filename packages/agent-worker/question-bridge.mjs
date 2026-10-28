@@ -10,19 +10,7 @@ export function registerQuestionBridge(api,jobs,completionBridge){
  const contributorDecide=async params=>{
   const {job}=contributorRead(params),authorize=p=>completionBridge.authorizeReply?.(p)===true;
   const request=await jobs.decideContributor(job.jobId,params.provenance.sessionKey,params.requestId,params.actor,params.mode,authorize);
-  let resumed;
-  try{resumed=await jobs.reply(job.jobId,params.provenance.sessionKey,request.questionId,request.answer,{senderId:request.source.senderId,accountId:request.source.accountId},authorize,false,undefined,{answerSource:'main_context',attachmentSource:request.source,contributorApprovalId:request.requestId});}
-  catch{
-   const latest=jobs.status(job.jobId,params.provenance.sessionKey),q=latest.questions?.find(q=>q.questionId===request.questionId);
-   if(q?.resumeReason==='user_wait_timeout'){
-    const supplement=await jobs.openSupplement(job.jobId,params.provenance.sessionKey,request.questionId,authorize,{userSubmittedAt:request.createdAt});
-    await jobs.submitSupplement(job.jobId,params.provenance.sessionKey,supplement.supplementId,request.answer,{answerSource:'main_context',userSubmittedAt:request.createdAt,attachmentSource:request.source,contributorApprovalId:request.requestId},authorize);
-    return {mode:request.mode,resumed:false,queued:true};
-   }
-   return {mode:request.mode,resumed:false};
-  }
-  await contextPresentation(completionBridge.contextState,{jobId:job.jobId,questionId:request.questionId,provenance:resumed.provenance,status:'resumed'});
-  return {mode:request.mode,resumed:true};
+  return continueContributor(jobs,job,request,authorize,completionBridge);
  };
  const verify=({jobId,questionId,provenance},{allowSaved=false}={})=>{
   const job=jobs.status(jobId,provenance.sessionKey);
@@ -65,4 +53,23 @@ export function waitingPresentationInstruction(presentation){
  return presentation.interactive
   ?'原任务已等待用户，交互卡片已成功投递。卡片本身就是提问；直接结束当前轮次，不发送聊天消息，不重复发送投递确认、填写提示、问题正文或完成提醒。应用内加急由宿主处理，不推测或向用户说明加急是否成功。收到有效补充后 reply，不创建新的 run。'
   :'原任务已等待用户，但交互卡片未成功投递。请立即用普通文字列出待补充字段与可选项，请原用户直接回复；不要让用户确认卡片是否存在，不代选、不使用默认答案。收到有效补充后 reply，不创建新的 run。可再次 await_user 重试更新原卡片。';
+}
+
+/** Apply an admitted contribution identically for a card decision or inherited permission. */
+export async function continueContributor(jobs,job,request,authorize,completionBridge){
+  let resumed;
+  try{resumed=await jobs.reply(job.jobId,job.provenance.sessionKey,request.questionId,request.answer,{senderId:request.source.senderId,accountId:request.source.accountId},authorize,false,undefined,{answerSource:'main_context',attachmentSource:request.source,contributorApprovalId:request.requestId});}
+  catch(error){
+   const latest=jobs.status(job.jobId,job.provenance.sessionKey),q=latest.questions?.find(q=>q.questionId===request.questionId);
+   if(q?.resumeReason==='user_wait_timeout'){
+    const supplement=await jobs.openSupplement(job.jobId,job.provenance.sessionKey,request.questionId,authorize,{userSubmittedAt:request.createdAt,contributorApprovalId:request.requestId});
+    await jobs.submitSupplement(job.jobId,job.provenance.sessionKey,supplement.supplementId,request.answer,{answerSource:'main_context',userSubmittedAt:request.createdAt,attachmentSource:request.source,contributorApprovalId:request.requestId},authorize);
+    return {mode:request.mode,resumed:false,queued:true};
+   }
+   if(q?.answer!==undefined&&q.contributorApprovalId===request.requestId)resumed=latest;
+   else if(!q||q.answer!==undefined||!['awaiting_main','awaiting_user'].includes(latest.status)||latest.contextRequest?.questionId!==request.questionId)return {mode:request.mode,resumed:false};
+   else throw error;
+  }
+  await contextPresentation(completionBridge.contextState,{jobId:job.jobId,questionId:request.questionId,provenance:resumed.provenance,status:'resumed'});
+  return {mode:request.mode,resumed:true};
 }

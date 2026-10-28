@@ -551,13 +551,15 @@ type SendFeishuCardParams = {
   replyInThread?: boolean;
   allowTopLevelReplyFallback?: boolean;
   accountId?: string;
+  /** Host-owned control cards must retain callbacks; their prose is never file-delivery input. */
+  preserveInteractiveControls?: boolean;
 };
 
 export async function sendCardFeishu(params: SendFeishuCardParams): Promise<FeishuSendResult> {
   const { cfg, to, card, replyToMessageId, replyInThread, allowTopLevelReplyFallback, accountId } =
     params;
   const { client, receiveId, receiveIdType } = resolveFeishuSendTarget({ cfg, to, accountId });
-  const document=await prepareFeishuDocumentDelivery({cfg,accountId,to,text:documentCardText(card)});
+  const document=params.preserveInteractiveControls?undefined:await prepareFeishuDocumentDelivery({cfg,accountId,to,text:documentCardText(card)});
   const content = JSON.stringify(document ? documentLinkCard(document.text) : card);
 
   const directParams = { receiveId, receiveIdType, content, msgType: "interactive" };
@@ -586,6 +588,8 @@ export async function editMessageFeishu(params: {
   accountId?: string;
   /** Trusted delivery context used to recover a persisted card after restart. */
   mentionScope?: FeishuMentionScope;
+  /** Keep control-card content literal instead of exporting paths found in it. */
+  preserveInteractiveControls?: boolean;
 }): Promise<{ messageId: string; contentType: "post" | "interactive"; mentionedUserIds: string[] }> {
   const { cfg, messageId, accountId } = params;
   let {text,card}=params;
@@ -602,7 +606,7 @@ export async function editMessageFeishu(params: {
 
   const client = createFeishuClient(account);
   const body=card?documentCardText(card):text ?? "";
-  if(account.config.documentDelivery?.enabled !== false && findLocalFileReferences(body,account.config.documentDelivery?.workspaceDir ?? account.config.workspaceSync?.root ?? cfg.agents?.defaults?.workspace).length) {
+  if(!(card&&params.preserveInteractiveControls) && account.config.documentDelivery?.enabled !== false && findLocalFileReferences(body,account.config.documentDelivery?.workspaceDir ?? account.config.workspaceSync?.root ?? cfg.agents?.defaults?.workspace).length) {
     const target=await getMessageFeishu({cfg,messageId,accountId});
     if(!target?.chatId)throw Error("Cannot resolve edited message document recipient");
     const document=await prepareFeishuDocumentDelivery({cfg,accountId,to:"chat:"+target.chatId,text:body});
