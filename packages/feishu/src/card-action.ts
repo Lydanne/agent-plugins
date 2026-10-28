@@ -1,3 +1,4 @@
+import {WORKER_CONTRIBUTOR_APPROVE} from './worker-contributor.js';
 import {workerQuestionBridge,WORKER_QUESTION_SUBMIT,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN} from './worker-question.js';
 // Feishu plugin module implements card action behavior.
 import {
@@ -374,6 +375,12 @@ export async function handleFeishuCardAction(params: {
         `feishu[${account.accountId}]: handling structured card action ${envelope.a} from ${event.operator.open_id}`,
       );
 
+      if(envelope.a===WORKER_CONTRIBUTOR_APPROVE){
+        if(!workerQuestionBridge.contributorAction)throw Error('Contributor approval adapter unavailable');
+        await workerQuestionBridge.contributorAction({cfg,event,accountId:account.accountId});
+        completeFeishuCardAction(event.token,account.accountId);return;
+      }
+
       if(envelope.a===WORKER_QUESTION_SUBMIT||envelope.a===WORKER_QUESTION_CANCEL||envelope.a===WORKER_QUESTION_REOPEN){
         if(!workerQuestionBridge.action)throw Error('Worker question adapter is unavailable');
         await workerQuestionBridge.action({cfg,event,accountId:account.accountId});
@@ -497,7 +504,7 @@ export async function handleFeishuCardAction(params: {
     });
     completeFeishuCardAction(event.token, account.accountId);
   } catch (err) {
-    if(decoded.kind==='structured'&&[WORKER_QUESTION_SUBMIT,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN].includes(decoded.envelope.a))processedCardActions.delete(`${account.accountId}:${event.token.trim()}`);
+    if(decoded.kind==='structured'&&[WORKER_QUESTION_SUBMIT,WORKER_QUESTION_CANCEL,WORKER_QUESTION_REOPEN,WORKER_CONTRIBUTOR_APPROVE].includes(decoded.envelope.a))processedCardActions.delete(`${account.accountId}:${event.token.trim()}`);
     else completeFeishuCardAction(event.token, account.accountId);
     throw err;
   }

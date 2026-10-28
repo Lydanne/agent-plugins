@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {randomUUID,createHash} from 'node:crypto';
 import plugin,{query} from './index.mjs';
-import {readJson,writeJson,requestKeyFor} from './jobs.mjs';
+import {readJson,writeJson,requestKeyFor,createJobs} from './jobs.mjs';
 import {registerAgentRepoService} from './dist/agent-repo-api.mjs';
 import {completionBridge} from './completion.mjs';
 import {hasSourceProvenance,sourceTaskBridge} from './source-tasks.mjs';
@@ -135,6 +135,12 @@ for(const scenario of ['accepted','decision','authorization','plugin','private',
    await assert.rejects(query(reply,context));assert.deepEqual(readJson(join(root,id+'.json')),initial);return;
   }
   for(const answer of [undefined,'','   '])await assert.rejects(query({...reply,answer},context));
+  const pending=JSON.parse((await query(reply,context)).content[0].text);
+  assert.equal(pending.accepted,false);assert.equal(pending.permissionPending,true);
+  assert.equal(readJson(join(root,id+'.json')).status,'awaiting_user');
+  const permission=readJson(join(root,id+'.json')).contributorApprovals[0];
+  const jobs=createJobs({root,node:process.execPath,worker:'unused'});
+  await jobs.decideContributor(id,scope,permission.requestId,{senderId:'alice',accountId:'a'},'worker',()=>true);
   assert.equal(JSON.parse((await query(reply,context)).content[0].text).accepted,true);
   const saved=readJson(join(root,id+'.json')),request=readJson(join(root,id+'.request.json'));
   assert.equal(saved.provenance.senderId,'alice');assert.equal(saved.provenance.taskId,'original');

@@ -1,3 +1,4 @@
+import {readContributorCard} from './worker-contributor.js';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,rmSync,readdirSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
@@ -71,4 +72,34 @@ it.each(['request_only','child_saved','dispatch_saved'])('replays crash boundary
  expect(records()).toHaveLength(1);expect(records()[0].status).toBe('dispatched');
  const child=readJson(childPath);expect(child.jobId).toBe(originalChild.jobId);expect(child.resumeSessionId).toBe(originalChild.resumeSessionId);expect(child.requestKey).toBe(originalChild.requestKey);expect(child.resourceKeys).toEqual(originalChild.resourceKeys);
  expect(readJson(requestPath)).toEqual(originalRequest);expect(readdirSync(workerRoot).filter(name=>name.endsWith('.json')&&!name.endsWith('.request.json'))).toHaveLength(2);
+});
+
+for(const mode of ['once','worker','always'] as const)it('real adapters require A approval before B context and retain '+mode+' scope',async()=>{
+ const provenance={...p,chatType:'group' as const},question={...q};delete question.answer;delete question.resumeReason;
+ const current={...job,provenance,status:'awaiting_user',contextRequest:question,questions:[question]};writeJson(join(workerRoot,job.jobId+'.json'),current);
+ const source={taskId:'bob-task',revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId:'bob',chatType:'group',kind:'group_context',sourceMessageIds:['hint'],attachments:[]};
+ const pending=await jobs.requestContributor(job.jobId,p.sessionKey,q.questionId,'pending hint',{senderId:'bob',accountId:'a'},source,completion.authorizeReply);
+ expect(readJson(join(workerRoot,job.jobId+'.json')).status).toBe('awaiting_user');
+ expect(await completion.contributorApproval({jobId:job.jobId,provenance,request:pending.request})).toEqual({interactive:true});
+ const card=readContributorCard(root,pending.request.requestId)!;
+ const action={operator:{open_id:'alice'},token:'trusted-token',context:{chat_id:'chat',open_message_id:card.messageId},action:{value:{a:'worker.contributor.approve',m:{requestId:pending.request.requestId,mode}}}};
+ await workerQuestionBridge.contributorAction!({cfg:{},accountId:'a',event:action as any});
+ const resumed=readJson(join(workerRoot,job.jobId+'.json'));expect(resumed.status).toBe('queued');expect(resumed.provenance.senderId).toBe('alice');expect(resumed.provenance.attachmentSources[0].senderId).toBe('bob');
+ expect(readJson(join(workerRoot,job.jobId+'.request.json')).resumeParams.mainReplies.at(-1).answer).toBe('pending hint');
+ await workerQuestionBridge.contributorAction!({cfg:{},accountId:'a',event:action as any});expect(records()).toHaveLength(0);
+ const next={...question,questionId:randomUUID()};writeJson(join(workerRoot,job.jobId+'.json'),{...resumed,status:'awaiting_user',contextRequest:next,questions:[...resumed.questions,next]});
+ const permission=await jobs.requestContributor(job.jobId,p.sessionKey,next.questionId,'next hint',{senderId:'bob',accountId:'a'},{...source,taskId:'next-bob-task',sourceMessageIds:['next-hint']},completion.authorizeReply);
+ expect(permission.approved).toBe(mode!=='once');
+});
+it('approval after user-wait timeout queues B hint for the original session without interrupting running work',async()=>{
+ const provenance={...p,chatType:'group'},question={...q};delete question.answer;delete question.resumeReason;
+ writeJson(join(workerRoot,job.jobId+'.json'),{...job,provenance,status:'awaiting_user',contextRequest:question,questions:[question]});
+ const source={taskId:'bob-task',revision:0,accountId:'a',chatId:'chat',sessionKey:p.sessionKey,senderId:'bob',chatType:'group',kind:'group_context',sourceMessageIds:['hint'],attachments:[]};
+ const pending=await jobs.requestContributor(job.jobId,p.sessionKey,q.questionId,'late B hint',{senderId:'bob',accountId:'a'},source,completion.authorizeReply);
+ const saved=readJson(join(workerRoot,job.jobId+'.json'));delete saved.contextRequest;writeJson(join(workerRoot,job.jobId+'.json'),{...saved,status:'running',questions:[q],heartbeatAt:Date.now()});
+ const outcome=await workerQuestionBridge.contributorDecide!({jobId:job.jobId,requestId:pending.request.requestId,provenance:provenance as any,actor:{senderId:'alice',accountId:'a'},mode:'worker'});
+ expect(outcome).toEqual({mode:'worker',resumed:false,queued:true});expect(records()).toHaveLength(1);await dispatch();expect(records()[0].status).toBe('accepted');
+ writeJson(join(workerRoot,job.jobId+'.json'),{...readJson(join(workerRoot,job.jobId+'.json')),status:'completed'});await dispatch();
+ const supplement=records()[0],child=readJson(join(workerRoot,supplement.supplementId+'.json'));expect(child.resumeSessionId).toBe(job.resumeSessionId);expect(child.provenance.attachmentSources[0].senderId).toBe('bob');expect(child.contributorApprovals[0].mode).toBe('worker');
+ expect(readJson(join(workerRoot,child.jobId+'.request.json')).resumeParams.constraints).toBe('read only');
 });

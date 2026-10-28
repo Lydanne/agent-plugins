@@ -1,3 +1,4 @@
+import {presentContributorApproval,handleContributorAction,type ContributorEvent} from './worker-contributor.js';
 import {splitCompletionReportLink,hasCloudReportLink} from "./completion-report-link.js";
 import {getAgentScopedMediaLocalRoots} from "openclaw/plugin-sdk/media-runtime";
 import {completionPayloadForMain} from "./completion-payload.js";
@@ -48,7 +49,7 @@ export type CompletionEvent = {type: "agent_worker.completed" | "codex_query.com
  createdAt?: number; startedAt?: number; finishedAt?: number};
 type Callbacks = {signal?: AbortSignal; beforeSend: () => void; onReceipt: (receipt: unknown) => void};
 type ContextCardState={jobId:string;questionId:string;provenance:Provenance;status:"awaiting_user"|"resumed";contextRequest?:Question};
-type Bridge = {observe?:(event:{jobId:string;provenance:Provenance;kind:string;supplementId?:string;childJobId?:string;[key:string]:unknown})=>Promise<void>;recoverContextCards?:()=>Promise<void>;contextState?: (event:ContextCardState)=>Promise<{interactive:boolean}|void>;authorizeReply?: (provenance:Provenance)=>boolean; deliver?: (event: CompletionEvent, callbacks: Callbacks) => Promise<{suppressed?: boolean; reason?: string}>};
+type Bridge = {contributorApproval?:(event:ContributorEvent)=>Promise<{interactive:boolean}>;observe?:(event:{jobId:string;provenance:Provenance;kind:string;supplementId?:string;childJobId?:string;[key:string]:unknown})=>Promise<void>;recoverContextCards?:()=>Promise<void>;contextState?: (event:ContextCardState)=>Promise<{interactive:boolean}|void>;authorizeReply?: (provenance:Provenance)=>boolean; deliver?: (event: CompletionEvent, callbacks: Callbacks) => Promise<{suppressed?: boolean; reason?: string}>};
 const symbol = Symbol.for("ada.codex-completion.v1");
 const state = globalThis as typeof globalThis & {[symbol]?: Bridge};
 const bridge = state[symbol] ??= {};
@@ -302,6 +303,8 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
   const cfg=runtime.config.current();const storePath=runtime.agent.session.resolveStorePath(cfg.session?.store,{agentId});
   return !p.sessionId||runtime.agent.session.getSessionEntry({storePath,agentId,sessionKey:p.sessionKey,readConsistency:"latest"})?.sessionId===p.sessionId;
  };
+ const contributorApproval:NonNullable<Bridge['contributorApproval']>=event=>presentContributorApproval({cfg:runtime.config.current() as ClawdbotConfig,stateDir:runtime.state.resolveStateDir(),event,authorize:authorizeReply});
+ const contributorAction:NonNullable<typeof workerQuestionBridge.contributorAction>=params=>handleContributorAction({...params,stateDir:runtime.state.resolveStateDir()});
  const continueQuestion=(input:QuestionCard):Promise<QuestionCard>=>serializeQuestion(JSON.stringify([runtime.state.resolveStateDir(),input.jobId,input.question.questionId,'create']),async()=>{
   let card=readQuestionCard(runtime.state.resolveStateDir(),input.question.questionId)??input;
   if(card.jobId!==input.jobId||!authorizeReply(card.provenance))throw Error('Original task authorization is no longer current');
@@ -529,9 +532,9 @@ export function registerCodexCompletion(api: OpenClawPluginApi) {
    if(card?.messageId)bindAsyncTaskCard(runtime.state.resolveStateDir(),event.provenance,[event.childJobId],{messageId:card.messageId});
   }
  };
- api.registerService({id: "feishu-codex-completion", start: async () => {bridge.observe=observe;workerQuestionBridge.pendingSubmissions=pendingSubmissions;workerQuestionBridge.submission=submission;workerQuestionBridge.action=action;workerQuestionBridge.textReply=textReply;workerQuestionBridge.submit=submit;workerQuestionBridge.authorize=authorizeReply;bridge.deliver = deliver;bridge.authorizeReply=authorizeReply;bridge.contextState=contextState;bridge.recoverContextCards=recoverContextCards;
+ api.registerService({id: "feishu-codex-completion", start: async () => {bridge.contributorApproval=contributorApproval;workerQuestionBridge.contributorAction=contributorAction;bridge.observe=observe;workerQuestionBridge.pendingSubmissions=pendingSubmissions;workerQuestionBridge.submission=submission;workerQuestionBridge.action=action;workerQuestionBridge.textReply=textReply;workerQuestionBridge.submit=submit;workerQuestionBridge.authorize=authorizeReply;bridge.deliver = deliver;bridge.authorizeReply=authorizeReply;bridge.contextState=contextState;bridge.recoverContextCards=recoverContextCards;
    await recoverContextCards();
 
   },
-  stop: () => {if(workerQuestionBridge.pendingSubmissions===pendingSubmissions)workerQuestionBridge.pendingSubmissions=undefined;if(bridge.observe===observe)bridge.observe=undefined;if(bridge.recoverContextCards===recoverContextCards)bridge.recoverContextCards=undefined;if(workerQuestionBridge.submission===submission)workerQuestionBridge.submission=undefined;if(workerQuestionBridge.action===action)workerQuestionBridge.action=undefined;if(workerQuestionBridge.textReply===textReply)workerQuestionBridge.textReply=undefined;if(workerQuestionBridge.submit===submit)workerQuestionBridge.submit=undefined;if(workerQuestionBridge.authorize===authorizeReply)workerQuestionBridge.authorize=undefined;if (bridge.deliver === deliver) bridge.deliver = undefined;if(bridge.authorizeReply===authorizeReply)bridge.authorizeReply=undefined;if(bridge.contextState===contextState)bridge.contextState=undefined;}});
+  stop: () => {if(bridge.contributorApproval===contributorApproval)bridge.contributorApproval=undefined;if(workerQuestionBridge.contributorAction===contributorAction)workerQuestionBridge.contributorAction=undefined;if(workerQuestionBridge.pendingSubmissions===pendingSubmissions)workerQuestionBridge.pendingSubmissions=undefined;if(bridge.observe===observe)bridge.observe=undefined;if(bridge.recoverContextCards===recoverContextCards)bridge.recoverContextCards=undefined;if(workerQuestionBridge.submission===submission)workerQuestionBridge.submission=undefined;if(workerQuestionBridge.action===action)workerQuestionBridge.action=undefined;if(workerQuestionBridge.textReply===textReply)workerQuestionBridge.textReply=undefined;if(workerQuestionBridge.submit===submit)workerQuestionBridge.submit=undefined;if(workerQuestionBridge.authorize===authorizeReply)workerQuestionBridge.authorize=undefined;if (bridge.deliver === deliver) bridge.deliver = undefined;if(bridge.authorizeReply===authorizeReply)bridge.authorizeReply=undefined;if(bridge.contextState===contextState)bridge.contextState=undefined;}});
 }
