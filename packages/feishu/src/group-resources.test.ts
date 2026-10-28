@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ResolvedFeishuAccount } from "./types.js";
-import { resolveGroupResources, invalidateGroupResources } from "./group-resources.js";
+import { resolveGroupResources, invalidateGroupResources, currentGroupResources } from "./group-resources.js";
 import { groupContextEventHandlers } from "./group-context-events.js";
 import { feishuGroupNameCache } from "./bot-group-name-state.js";
 const mocks = vi.hoisted(() => ({ client: vi.fn(), message: vi.fn() }));
@@ -65,11 +65,11 @@ it("marks capped Pin lists, truncated text and unavailable message bodies as par
 it("does not call errors empty results and allows one resource to succeed independently", async () => {
   client.docx.chatAnnouncement.get.mockRejectedValue(new Error("permission denied"));
   const result = await resolveGroupResources(params());
-  expect(result.announcement).toEqual({ status: "unavailable" });
+  expect(result.announcement).toMatchObject({ status: "unavailable", error: { reason: "network_error", retryable: true } });
   expect(result.pins.status).toBe("available");
   invalidateGroupResources(account.accountId, chatId);
   client.im.pin.list.mockResolvedValue({ code: 999, data: { items: [], has_more: false } });
-  expect((await resolveGroupResources(params())).pins).toEqual({ status: "unavailable", items: [] });
+  expect((await resolveGroupResources(params())).pins).toMatchObject({ status: "unavailable", items: [], error: { code: 999, reason: "api_error" } });
 });
 it("distinguishes a readable empty announcement and Pin list", async () => {
   client.docx.chatAnnouncementBlock.list.mockResolvedValue({ code: 0, data: { items: [], has_more: false } });
@@ -111,7 +111,7 @@ it("does not restore an invalidated in-flight cache entry", async () => {
   const pending = resolveGroupResources(params());
   invalidateGroupResources(account.accountId, chatId);
   release({ code: 0, data: { items: [], has_more: false } });
-  await pending;
+  expect((await pending).pins).toMatchObject({ status: "unavailable", items: [], error: { reason: "invalidated" } });
   await resolveGroupResources(params());
   expect(client.im.pin.list).toHaveBeenCalledTimes(2);
 });
@@ -132,4 +132,83 @@ it("marks announcement page caps and malformed legacy content as incomplete", as
   client.docx.chatAnnouncement.get.mockResolvedValue({ code: 0, data: { announcement_type: "doc", revision_id: 1 } });
   client.im.chatAnnouncement.get.mockResolvedValue({ code: 0, data: { content: "bad json", revision: "1" } });
   expect((await resolveGroupResources(params())).announcement.status).toBe("unavailable");
+});
+
+it("keeps successful Pin bodies when another body times out under the shared deadline", async () => {
+  vi.useFakeTimers();
+  client.im.pin.list.mockResolvedValue({ code: 0, data: { items: [{ message_id: "ready" }, { message_id: "slow" }], has_more: false } });
+  mocks.message.mockImplementation(({ messageId }: { messageId: string }) => messageId === "slow" ? new Promise(() => {}) :
+    Promise.resolve({ messageId, chatId, content: "ready text", contentType: "text" }));
+  const pending = resolveGroupResources(params());
+  await vi.advanceTimersByTimeAsync(6000);
+  const result = await pending;
+  expect(result.announcement.status).toBe("available");
+  expect(result.pins).toMatchObject({ status: "partial", hasMore: false, items: [
+    { status: "available", message: { content: "ready text" } },
+    { status: "unavailable", error: { reason: "timeout", retryable: true } },
+  ] });
+});
+it("shares the six-second deadline between Pin listing and bodies", async () => {
+  vi.useFakeTimers();
+  client.im.pin.list.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve({ code: 0, data: { items: [{ message_id: "slow" }], has_more: false } }), 5000)) as never);
+  mocks.message.mockImplementation(() => new Promise(() => {}));
+  const pending = resolveGroupResources(params());
+  await vi.advanceTimersByTimeAsync(6000);
+  expect((await pending).pins.items[0]).toMatchObject({ status: "unavailable", error: { reason: "timeout" } });
+});
+it("retains text and hyperlink targets without fetching their contents", async () => {
+  client.docx.chatAnnouncementBlock.list.mockResolvedValue({ code: 0, data: { items: [{ text: { elements: [
+    { text_run: { content: "业务入口", text_element_style: { link: { url: "https://example.test/business" } } } },
+    { text_run: { content: "https://example.test/same", text_element_style: { link: { url: "https://example.test/same" } } } },
+  ] } }], has_more: false } });
+  expect((await resolveGroupResources(params())).announcement).toMatchObject({ status: "available", text: "业务入口 (https://example.test/business)https://example.test/same" });
+});
+it("preserves earlier announcement pages and safe diagnostics when a later page fails", async () => {
+  client.docx.chatAnnouncementBlock.list
+    .mockResolvedValueOnce({ code: 0, data: { items: [{ text: { elements: [{ text_run: { content: "first page" } }] } }], has_more: true, page_token: "next" } })
+    .mockRejectedValueOnce({ response: { status: 500, data: { code: 12345, msg: "secret" } }, config: { headers: { Authorization: "SECRET_TOKEN" } } });
+  const result = await resolveGroupResources(params());
+  expect(result.announcement).toMatchObject({ status: "partial", text: "first page", error: { reason: "api_error", code: 12345, retryable: true } });
+  expect(JSON.stringify(result)).not.toContain("secret");
+  expect(JSON.stringify(result)).not.toContain("SECRET_TOKEN");
+});
+it("retains earlier pages on timeout and starts no further page reads after the deadline", async () => {
+  vi.useFakeTimers();
+  client.docx.chatAnnouncementBlock.list
+    .mockResolvedValueOnce({ code: 0, data: { items: [{ text: { elements: [{ text_run: { content: "first" } }] } }], has_more: true, page_token: "next" } })
+    .mockImplementationOnce(() => new Promise(() => {}) as never);
+  const pending = resolveGroupResources(params());
+  await vi.advanceTimersByTimeAsync(6000);
+  expect((await pending).announcement).toMatchObject({ status: "partial", text: "first", error: { reason: "timeout", retryable: true } });
+  expect(client.docx.chatAnnouncementBlock.list).toHaveBeenCalledTimes(2);
+});
+it("distinguishes permission denial, missing membership and network failures without leaking error text", async () => {
+  const secret = "PRIVATE_TOKEN";
+  client.docx.chatAnnouncement.get.mockRejectedValue({ response: { status: 400, data: { code: 99991672, msg: secret } }, config: { headers: { Authorization: secret } } });
+  client.im.pin.list.mockResolvedValue({ code: 230002, msg: secret });
+  const result = await resolveGroupResources(params());
+  expect(result.announcement.error).toEqual({ reason: "permission_denied", code: 99991672, retryable: false, requiredScope: "im:chat.announcement:read" });
+  expect(result.pins.error).toEqual({ reason: "not_in_chat", code: 230002, retryable: false });
+  expect(JSON.stringify(result)).not.toContain(secret);
+});
+it("does not deliver a recalled Pin while waiting for the announcement or after assembly", async () => {
+  let release!: (response: unknown) => void;
+  client.docx.chatAnnouncement.get.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }) as never);
+  const pending = resolveGroupResources(params());
+  // Allow the Pin body to finish before the recall invalidates this snapshot.
+  await vi.waitFor(() => expect(mocks.message).toHaveBeenCalledOnce());
+  await groupContextEventHandlers(account.accountId)["im.chat.updated_v1"]({ chat_id: chatId });
+  release({ code: 0, data: { announcement_type: "docx", revision_id: 2 } });
+  expect((await pending).pins).toMatchObject({ status: "unavailable", items: [], error: { reason: "invalidated" } });
+  const fresh = await resolveGroupResources(params());
+  expect(fresh.pins.items[0].message?.content).toBe("Pin 中的群用途");
+  invalidateGroupResources(account.accountId, chatId);
+  expect(currentGroupResources(fresh).pins).toMatchObject({ status: "unavailable", items: [], error: { reason: "invalidated" } });
+});
+it("never splits a UTF-16 surrogate pair at either text limit", async () => {
+  client.docx.chatAnnouncementBlock.list.mockResolvedValue({ code: 0, data: { items: [{ text: { elements: [{ text_run: { content: "a".repeat(11999) + "😀" } }] } }], has_more: false } });
+  mocks.message.mockImplementation(async ({ messageId }: { messageId: string }) => ({ messageId, chatId, content: "a".repeat(1999) + "😀", contentType: "text" }));
+  const result = await resolveGroupResources(params());
+  expect(result.announcement.text).toBe("a".repeat(11999));
+  expect(result.pins.items[0].message?.content).toBe("a".repeat(1999));
 });

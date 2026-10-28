@@ -1,3 +1,4 @@
+import { invalidateGroupContext } from "./group-context-events.js";
 import { prepareHistory } from "./input-context.js";
 const contextSdk = vi.hoisted(() => ({getSessionEntry: vi.fn(), readCodexSessionContext: vi.fn(), readTranscriptStatsSync: vi.fn()}));
 vi.mock('openclaw/plugin-sdk/codex-session-transcript-runtime', () => ({readCodexSessionContext: (scope: unknown, read: (messages: unknown[]) => unknown) => read(contextSdk.readCodexSessionContext(scope) ?? [])}));
@@ -2130,7 +2131,7 @@ describe("handleFeishuMessage command authorization", () => {
     });
     mockGetMessageFeishu.mockImplementation(async ({ messageId }: { messageId: string }) => ({
       messageId, chatId, senderId: messageId === "allowed-pin" ? "ou_sender_1" : "ou_foreign", senderType: "user", contentType: "text",
-      content: messageId === "allowed-pin" ? "本群默认约定" : "HIDDEN_PIN_BODY",
+      content: messageId === "allowed-pin" ? "本群默认约定 $& $` $' $$" : "HIDDEN_PIN_BODY",
     }));
     await dispatchMessage({
       cfg: createFeishuTestConfig({ appId: "cli_test", appSecret: "test-secret", groupPolicy: "open", requireMention: false,
@@ -2142,8 +2143,46 @@ describe("handleFeishuMessage command authorization", () => {
     expect(info.announcement.text).toBe("默认测试环境");
     expect(info.pins.hiddenByPolicy).toBe(1);
     expect(info.pins.items).toHaveLength(1);
-    expect(info.pins.items[0].message.content).toBe("本群默认约定");
+    expect(info.pins.items[0].message.content).toBe("本群默认约定 $& $` $' $$");
     expect(BodyForAgent).not.toContain("HIDDEN_PIN_BODY");
+  });
+
+  it.each([false, true])("drops group snapshots invalidated before model dispatch (broadcast=%s)", async broadcast => {
+    const chatId = `oc_resource_dispatch_guard_${broadcast}`;
+    mockCreateFeishuClient.mockReturnValue({
+      docx: {
+        chatAnnouncement: { get: vi.fn().mockResolvedValue({ code: 0, data: { announcement_type: "docx", revision_id: 1 } }) },
+        chatAnnouncementBlock: { list: vi.fn().mockResolvedValue({ code: 0, data: { items: [{ text: { elements: [{ text_run: { content: "默认测试环境" } }] } }], has_more: false } }) },
+      },
+      im: {
+        chat: { get: vi.fn().mockResolvedValue({ code: 0, data: { name: "群资料测试", description: "用途" } }) },
+        pin: { list: vi.fn().mockResolvedValue({ code: 0, data: { items: [{ message_id: "allowed-pin" }, { message_id: "hidden-pin" }], has_more: false } }) },
+      },
+    });
+    mockGetMessageFeishu.mockImplementation(async ({ messageId }: { messageId: string }) => ({
+      messageId, chatId, senderId: messageId === "allowed-pin" ? "ou_sender_1" : "ou_foreign", senderType: "user", contentType: "text",
+      content: messageId === "allowed-pin" ? "本群默认约定" : "HIDDEN_PIN_BODY",
+    }));
+    mockLoadMentionHistory.mockResolvedValue(prepareHistory([{ messageId: "old-history", senderId: "ou_sender_1", content: "earlier", contentType: "text" }]));
+    contextSdk.getSessionEntry.mockReturnValue({ sessionId: "guarded-context", updatedAt: Date.now() });
+    contextSdk.readTranscriptStatsSync.mockReturnValue({ sizeBytes: 1000, eventCount: 1 });
+    contextSdk.readCodexSessionContext.mockImplementation(() => { invalidateGroupContext("default", chatId); return []; });
+    await dispatchMessage({
+      cfg: createFeishuTestConfig({ appId: "cli_test", appSecret: "test-secret", groupPolicy: "open", requireMention: false,
+        resolveSenderNames: false, contextVisibility: "allowlist", groups: { [chatId]: { allowFrom: ["ou_sender_1"] } } },
+        broadcast ? { broadcast: { [chatId]: ["main"] }, agents: { list: [{ id: "main" }] } } : {}),
+      event: createFeishuTestEvent({ messageId: `resources-dispatch-guard-${broadcast}`, chatId, chatType: "group", senderOpenId: "ou_sender_1", text: "@_bot hello",
+        message: { mentions: [{ key: "@_bot", id: { open_id: "context-bot" }, name: "Bot", tenant_key: "" }] } }),
+      botOpenId: "context-bot",
+    });
+    expect(contextSdk.readCodexSessionContext).toHaveBeenCalled();
+    const text = lastMockCallArg<{ ctx: { agentText: string } }>(mockDispatchReplyFromConfig).ctx.agentText;
+    const info = JSON.parse(text.split("[GroupInfo]\n")[1].split("\n")[0]);
+    expect(info.status).toBe("unavailable");
+    expect(info.announcement).toMatchObject({ status: "unavailable", error: { reason: "invalidated" } });
+    expect(info.pins).toMatchObject({ status: "unavailable", items: [], error: { reason: "invalidated" } });
+    expect(text).not.toContain("本群默认约定");
+    expect(text).not.toContain("默认测试环境");
   });
 
   it("continues group dispatch with explicit unavailable metadata on lookup failure", async () => {

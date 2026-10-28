@@ -10,6 +10,11 @@ import type { ResolvedFeishuAccount } from "./types.js";
 const GROUP_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
 const GROUP_NAME_CACHE_MAX_SIZE = 500;
 const pendingReads = new Map<string, symbol>();
+const snapshots = new WeakMap<FeishuGroupInfo, object>();
+
+export function isGroupInfoCurrent(accountId: string, chatId: string, info: FeishuGroupInfo): boolean {
+  return snapshots.get(info) === feishuGroupNameCache.get(`${accountId}:${chatId}`) && snapshots.has(info);
+}
 
 export function invalidateGroupInfo(accountId: string, chatId: string): void {
   const key = `${accountId}:${chatId}`;
@@ -48,7 +53,9 @@ function setCacheEntry(key: string, info: FeishuGroupInfo): void {
   const expiresAt = resolveExpiresAtMsFromDurationMs(GROUP_NAME_CACHE_TTL_MS);
   feishuGroupNameCache.delete(key);
   if (expiresAt !== undefined) {
-    feishuGroupNameCache.set(key, { ...info, expiresAt });
+    const entry = { ...info, expiresAt };
+    feishuGroupNameCache.set(key, entry);
+    snapshots.set(info, entry);
   }
 }
 
@@ -69,6 +76,7 @@ export async function resolveGroupInfo(params: {
     const expiresAt = asDateTimestampMs(cached.expiresAt);
     if (now !== undefined && expiresAt !== undefined && expiresAt > now) {
       const { expiresAt: _, ...info } = cached;
+      snapshots.set(info, cached);
       return info;
     }
     feishuGroupNameCache.delete(cacheKey);
@@ -92,10 +100,9 @@ export async function resolveGroupInfo(params: {
     info = { status: "unavailable", fetchedAt: Date.now() };
   }
 
-  if (pendingReads.get(cacheKey) === readVersion) {
-    setCacheEntry(cacheKey, info);
-    pendingReads.delete(cacheKey);
-  }
+  if (pendingReads.get(cacheKey) !== readVersion) return { status: "unavailable", fetchedAt: info.fetchedAt };
+  setCacheEntry(cacheKey, info);
+  pendingReads.delete(cacheKey);
   evictGroupNameCache();
   return info;
 }

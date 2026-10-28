@@ -77,8 +77,8 @@ import {
   resolveFeishuGroupSession,
   resolveFeishuMediaList,
 } from "./bot-content.js";
-import { resolveGroupResources } from "./group-resources.js";
-import { resolveGroupInfo } from "./bot-group-name.js";
+import { resolveGroupResources, currentGroupResources, type GroupPins } from "./group-resources.js";
+import { resolveGroupInfo, isGroupInfoCurrent } from "./bot-group-name.js";
 import { resolveFeishuBotName } from "./bot-name.js";
 import { resolveFeishuSenderName, type FeishuPermissionError } from "./bot-sender-name.js";
 import { createFeishuClient } from "./client.js";
@@ -1511,6 +1511,7 @@ export async function handleFeishuMessage(params: {
     const summaryConfig = {...feishuCfg?.historySummary,
       triggerChars:feishuCfg?.historySummary?.triggerChars ?? Math.min(feishuCfg?.mentionHistory?.maxChars ?? 12000,feishuCfg?.quoteChain?.maxChars ?? 24000)};
     const taskPeopleByAgent = new Map<string,TaskPeople>();
+    const groupContextGuards = new Map<string, (body: string) => string>();
     const buildCtxPayloadForAgent = async (
       agentId: string,
       agentSessionKey: string,
@@ -1521,7 +1522,7 @@ export async function handleFeishuMessage(params: {
         resolveCurrentGroupInfo(),
         isGroup ? (groupResourcesPromise ??= resolveGroupResources({ cfg: effectiveCfg, account, chatId: ctx.chatId })) : undefined,
       ]);
-      const visiblePins = [];
+      const visiblePins: GroupPins["items"] = [];
       let hiddenPins = 0;
       for (const pin of resources?.pins.items ?? []) {
         if (pin.message && !await shouldIncludeFetchedGroupContextMessage({
@@ -1532,9 +1533,23 @@ export async function handleFeishuMessage(params: {
         visiblePins.push(pin);
       }
       const groupName = groupInfo?.name;
-      const groupContext = groupInfo
-        ? renderContextData("GroupInfo", { accountId: account.accountId, chatId: ctx.chatId, ...groupInfo, ...(resources ? { fetchedResourcesAt: resources.fetchedAt, announcement: resources.announcement, pins: { ...resources.pins, items: visiblePins, hiddenByPolicy: hiddenPins } } : {}) }) + "\n"
-        : "";
+      const renderGroupContext = () => {
+        if (!groupInfo) return "";
+        const metadata = isGroupInfoCurrent(account.accountId, ctx.chatId, groupInfo) ? groupInfo : {
+          status: "unavailable", fetchedAt: groupInfo.fetchedAt,
+        };
+        const currentResources = resources ? currentGroupResources(resources) : undefined;
+        const pins = currentResources?.pins === resources?.pins
+          ? { ...currentResources?.pins, items: visiblePins, hiddenByPolicy: hiddenPins }
+          : currentResources?.pins;
+        return renderContextData("GroupInfo", { accountId: account.accountId, chatId: ctx.chatId, ...metadata,
+          ...(currentResources ? { fetchedResourcesAt: currentResources.fetchedAt, announcement: currentResources.announcement, pins } : {}),
+        }) + "\n";
+      };
+      const groupContext = renderGroupContext();
+      // Recheck after async context preparation: a recall/update must not deliver
+      // a snapshot invalidated while history deduplication or summarization ran.
+      groupContextGuards.set(agentSessionKey, body => body.replace(groupContext, () => renderGroupContext()));
       const threadContext = await resolveThreadContextForAgent(agentId, agentSessionKey, groupName);
       const contextBinding = {
         agentId,
@@ -1621,7 +1636,7 @@ export async function handleFeishuMessage(params: {
         },
         message: {
           body: combinedBody,
-          bodyForAgent: mergeHistoryContext(activeWindowContext + messageBody.replace('[MessageId]', peopleContext + '\n[MessageId]').replace(`\n${CURRENT_HEADER}\n`, `${groupContext}${buildRelatedPeopleContext({
+          bodyForAgent: mergeHistoryContext(activeWindowContext + messageBody.replace('[MessageId]', () => peopleContext + '\n[MessageId]').replace(`\n${CURRENT_HEADER}\n`, () => `${groupContext}${buildRelatedPeopleContext({
             sender: isGroup && !peopleContext && ctx.senderType !== "bot" && event.sender.sender_id.open_id
               ? {name: ctx.senderName ?? null, open_id: event.sender.sender_id.open_id} : undefined,
             targets: (ctx.mentionTargets ?? []).filter(target => !taskPeopleByAgent.get(agentId)?.mentions.some(person => person.openId === target.openId)),
@@ -1956,6 +1971,7 @@ export async function handleFeishuMessage(params: {
               cfg, isThread:isTopicSessionForThread,botAppId:account.appId,botOpenId,
               deduplicateOlder:feishuCfg?.mentionHistory?.deduplicateOlder});
             agentCtx.BodyForAgent = await summarizeFeishuHistory(agentCtx.BodyForAgent, summaryConfig, agentId);
+            agentCtx.BodyForAgent = groupContextGuards.get(agentSessionKey)?.(agentCtx.BodyForAgent) ?? agentCtx.BodyForAgent;
             agentCtx.agentText = agentCtx.BodyForAgent;
           }
           let variant: BroadcastInboundVariant;
@@ -2231,6 +2247,7 @@ export async function handleFeishuMessage(params: {
           if (lease?.signal.aborted) return;
           // buildContext has already finalized these canonical fields. Keep them
           // in sync after source rebuilding, steering and history deduplication.
+          if (ctxPayload.BodyForAgent) ctxPayload.BodyForAgent = groupContextGuards.get(route.sessionKey)?.(ctxPayload.BodyForAgent) ?? ctxPayload.BodyForAgent;
           ctxPayload.agentText = ctxPayload.BodyForAgent;
           ctxPayload.rawText = ctxPayload.RawBody;
           ctxPayload.commandText = ctxPayload.CommandInterpretationSuppressed ? "" : ctxPayload.CommandBody;

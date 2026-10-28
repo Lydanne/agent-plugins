@@ -202,7 +202,7 @@ describe("resolveGroupName", () => {
     const pending = resolveGroupInfo({ account, chatId: "oc_updating", log });
     invalidateGroupInfo(account.accountId, "oc_updating");
     release({ name: "old" });
-    await pending;
+    expect(await pending).toMatchObject({ status: "unavailable" });
     mockGetChatInfo.mockResolvedValue({ name: "new", description: "updated defaults" });
     expect((await resolveGroupInfo({ account, chatId: "oc_updating", log })).name).toBe("new");
     expect(mockGetChatInfo).toHaveBeenCalledTimes(2);
