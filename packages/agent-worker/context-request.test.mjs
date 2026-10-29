@@ -70,7 +70,8 @@ test('waiting releases capacity but reserves its topic, can cancel and expires w
   const other=await jobs.run({...f.params,topic:'other'},f.scope);assert.equal(other.status,'running');
   assert.equal(jobs.cancel(f.id,f.scope,f.provenance).status,'cancelled');
   await assert.rejects(jobs.reply(f.id,f.scope,'wrong','今天',f.provenance));
-  const waiting=await ask({...f,id:f.id});waiting.contextRequest.expiresAt=0;writeJson(join(f.root,f.id+'.json'),waiting);jobs.tick();assert.equal(jobs.status(f.id,f.scope).status,'timed_out');
+  const freshId=randomUUID();writeJson(join(f.root,freshId+'.json'),{...readJson(join(f.root,f.id+'.json')),jobId:freshId,status:'running'});
+  const waiting=await ask({...f,id:freshId});waiting.contextRequest.expiresAt=0;writeJson(join(f.root,freshId+'.json'),waiting);jobs.tick();assert.equal(jobs.status(freshId,f.scope).status,'timed_out');
  }finally{f.close();}
 });
 
@@ -302,7 +303,7 @@ for(const blocked of ['authorization','cancel','binding','main','answered'])test
   writeJson(file,j);
   if(blocked==='cancel')writeFileSync(join(f.root,f.id+'.cancel'),'cancel');
   if(blocked==='binding'){const p=join(f.root,f.id+'.request.json'),r=readJson(p);r.params.task='tampered';writeJson(p,r);}
-  jobs.tick();assert.equal(readJson(file).status,j.status);
+  jobs.tick();assert.equal(readJson(file).status,blocked==='cancel'?'cancelled':j.status);
   assert.equal(readJson(file).questions[0].answer,undefined);
  }finally{f.close();}
 });

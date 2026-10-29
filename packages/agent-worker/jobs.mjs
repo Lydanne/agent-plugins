@@ -39,7 +39,7 @@ const agentOf=job=>job.agentId??job.provenance?.agentId??job.project?.agentId??'
 const sameQueue=(a,b)=>(a.provenance?.automation&&b.provenance?.automation||agentOf(a)===agentOf(b))&&taskClassOf(a)===taskClassOf(b);
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger,sourceCurrent=()=>true}) {
  const lock=join(root,'scheduler-lock');
  let timer;
  const workspaceOperations=new Set();
@@ -76,16 +76,16 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   return j;
  }
  function view(j){const {scope,request,...result}=j;return {...result,...queueFields(taskClassOf(j))};}
- function cancelMatching(matches) {
+ function cancelMatching(matches,candidates) {
   mkdirSync(root,{recursive:true,mode:0o700});
   const ids=[];
-  for (const file of readdirSync(root).filter(x=>/^[0-9a-f-]{36}\.json$/i.test(x))) {
-   const job=readJson(join(root,file));
+  for (const job of candidates??files()) {
    // Inspect stored state, not the derived 'unknown' heartbeat projection: a
    // temporarily lost worker must see cancellation if it later comes back.
    if ((active.has(job.status)||job.status==='unknown'||waiting.has(job.status)) && matches(job.provenance,job)) {
+    writeFileSync(join(root,job.jobId+'.cancel'),'source-recalled',{mode:0o600});
     if(waiting.has(job.status))terminalJob({...job,status:'cancelled',finishedAt:Date.now(),notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined});
-    else writeFileSync(join(root,job.jobId+'.cancel'),'source-recalled',{mode:0o600}); ids.push(job.jobId);
+    ids.push(job.jobId);
    }
   }
   return ids;
@@ -141,7 +141,22 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   });
  }
  function scheduleLocked(){
+  const stored=files();
+  const withheld=new Set();
+  // Reconcile durable channel authority even when the recall callback was missed
+  // (restart, late admission or failed cancellation I/O). Only an explicit false
+  // revokes running work; an unavailable adapter holds queued work for retry.
+  cancelMatching((p,job)=>{
+   if(!hasSourceProvenance(p)||p.automation||existsSync(join(root,job.jobId+'.cancel')))return false;
+   let current;
+   try{current=sourceCurrent(p,job);}catch(error){logger?.error?.('Worker source validation unavailable: '+error.message);}
+   if(current!==true)withheld.add(job.jobId);
+   return current===false;
+  },stored);
   const all=files();
+  for(const job of all.filter(j=>(queued(j)||waiting.has(j.status))&&existsSync(join(root,j.jobId+'.cancel')))){
+   Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);
+  }
   for(const job of all.filter(j=>waiting.has(j.status)&&j.contextRequest?.expiresAt<=Date.now())){
    const submitted=getUserTimeoutSubmission(job);
    if(submitted&&savedBeforeDeadline(job.contextRequest,submitted.userSubmittedAt))continue;
@@ -178,9 +193,6 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    Object.assign(job,resumeLocked(job,request,answer,metadata));
    delete job.contextRequest;delete job.finishedAt;delete job.result;
   }
-  for(const job of all.filter(queued)){
-   if(existsSync(join(root,job.jobId+'.cancel'))){Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);}
-  }
   for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&(!j.workspaceSettled||j.workspaceRelease==='blocked')&&(!j.workspaceReleaseRetryAt||j.workspaceReleaseRetryAt<=Date.now()))){
    if(workspaceOperations.has(job.jobId)||!settleWorkspace||all.some(other=>sameWorkspace(job,other)&&(settlementActive(other)||pendingSteering(other))))continue;
    const processFile=join(root,job.jobId+'.process.json');
@@ -213,6 +225,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   for(const job of pending){
    const file=join(root,job.jobId+'.json');
    if(existsSync(join(root,job.jobId+'.cancel'))){terminalJob({...job,status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});continue;}
+   if(withheld.has(job.jobId))continue;
    if(all.some(other=>sameWorkspace(other,job)&&(settlementActive(other)||workspaceOperations.has(other.jobId))))continue;
    // A saved guide belongs to the finishing task's next boundary. Do not let
    // an independent same-session run race ahead before collaboration admits it.
@@ -428,7 +441,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    }
    const processFile=join(root,jobId+'.process.json');
    if(j.provenance?.automation&&existsSync(processFile)&&processAlive(readJson(processFile).pid)){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});return {...view(j),status:'cancelling'};}
-   if(waiting.has(stored.status)){terminalJob({...stored,status:'cancelled',finishedAt:Date.now(),notification:stored.notification?{state:'pending',eventKey:randomUUID()}:undefined});return view(get(jobId,scope));}
+   if(waiting.has(stored.status)){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});terminalJob({...stored,status:'cancelled',finishedAt:Date.now(),notification:stored.notification?{state:'pending',eventKey:randomUUID()}:undefined});return view(get(jobId,scope));}
    if(active.has(stored.status)||stored.status==='unknown'){writeFileSync(join(root,jobId+'.cancel'),'cancel',{mode:0o600});return {...view(j),status:j.status==='unknown'?'unknown':'cancelling',note:'Cancellation requested; business operations already accepted externally are not rolled back.'};}return view(j);},
   awaitUser(jobId,scope,questionId,requester,authorize,knownValues){return this.reply(jobId,scope,questionId,undefined,requester,authorize,true,knownValues);},
   async reply(jobId,scope,questionId,answer,requester,authorize=()=>true,waitingForUser=false,knownValues,answerMetadata={}){
