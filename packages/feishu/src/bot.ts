@@ -2140,6 +2140,7 @@ export async function handleFeishuMessage(params: {
       ].map(source=>({...source,...(taskMedia.has(source.messageId)?{attachments:taskMedia.get(source.messageId)!.map(media=>({kind:media.kind,...(media.resourceId?{resourceId:media.resourceId}:{}),...(media.path?{path:media.path}:{}),...(media.contentType?{contentType:media.contentType}:{}),availability:media.path?"available" as const:"unavailable" as const}))}:{})})));
       let sourceTask = !steering && ctx.senderType !== "bot" && !isControlTurn ? makeSourceTask() : undefined;
       let attemptedRevision: number | undefined;
+      let asyncDispatchAccepted = false;
       const originalPayload = { ...ctxPayload };
       const executeRevision = async () => {
         let lease = sourceTask?.begin();
@@ -2197,7 +2198,7 @@ export async function handleFeishuMessage(params: {
             cfg: effectiveCfg,
             getSourceTaskLease: () => lease,
             sourceSignal: sourceTask || steering ? sourceAbort.signal : undefined,
-            sourceCancellationReason: () => sourceTask?.remainingRequests().length ? "部分任务消息已撤回，已请求停止旧执行，将按剩余消息重新核对和调整。" : "任务依据的消息已全部撤回，已请求停止本轮执行；已发生的外部操作不会自动回滚。",
+            sourceCancellationReason: () => sourceTask?.remainingRequests().length ? "部分任务消息已撤回，对应来源已撤销；已受理的后台任务不会自动重派。" : "任务依据的消息已全部撤回，已请求停止本轮执行；已发生的外部操作不会自动回滚。",
             agentId: route.agentId,
             runtime: runtime as RuntimeEnv,
             chatId: ctx.chatId,
@@ -2412,7 +2413,7 @@ export async function handleFeishuMessage(params: {
                   await dispatchTurn();
                 },
                 cancel: async (reason) => {
-                  await cancelQueuedCard?.(lease?.signal.aborted ? (sourceTask?.remainingRequests().length ? "部分任务消息已撤回，正在按剩余消息调整。" : "任务依据的消息已全部撤回，已请求停止本轮执行；已发生的外部操作不会自动回滚。") : reason === "cancelled" ? "本条请求已取消。" : "本条请求处理失败，请查看错误说明。");
+                  await cancelQueuedCard?.(lease?.signal.aborted ? (sourceTask?.remainingRequests().length ? "部分任务消息已撤回，对应来源已撤销；已受理的后台任务不会自动重派。" : "任务依据的消息已全部撤回，已请求停止本轮执行；已发生的外部操作不会自动回滚。") : reason === "cancelled" ? "本条请求已取消。" : "本条请求处理失败，请查看错误说明。");
                   // Explicit cancellation consumes this admitted message, not a retry.
                   if (!turnAdoptionLifecycle?.abortSignal.aborted) {
                     turnAdoptionLifecycle?.onAdoptionFinalizing();
@@ -2426,14 +2427,16 @@ export async function handleFeishuMessage(params: {
           } else {
             await dispatchTurn();
           }
-        } finally { releaseSteerOwner?.(); }
+        } finally { asyncDispatchAccepted ||= lease?.asyncDispatchAccepted === true; releaseSteerOwner?.(); }
       };
       try {
         for (;;) {
           try { await executeRevision(); }
           catch (error) { if (!sourceTask || sourceTask.revision === attemptedRevision) throw error; }
           finally { sourceTask?.endRevision(); }
-          if (!sourceTask || sourceTask.stopped.signal.aborted || sourceTask.revision === attemptedRevision) break;
+          // A durable Worker admission must never be replayed on withdrawal,
+          // including when its acknowledgement arrived after the source aborted.
+          if (asyncDispatchAccepted || !sourceTask || sourceTask.stopped.signal.aborted || sourceTask.revision === attemptedRevision) break;
         }
       } finally { sourceTask?.close(); }
     }

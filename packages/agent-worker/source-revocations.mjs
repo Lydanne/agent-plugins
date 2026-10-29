@@ -7,9 +7,8 @@ export function messageSource(accountId,chatId,messageId){if([accountId,chatId,m
 function dependencies(job){
  const p=job.provenance;if(!p)return [];
  const sources=[p,...(p.attachmentSources??[])];
- const refs=sources.flatMap(source=>Array.isArray(source.sourceRefs)?source.sourceRefs:[]);
- refs.push(...sources.flatMap(source=>typeof source.accountId==='string'&&typeof source.chatId==='string'?(source.sourceMessageIds??[]).map(id=>messageSource(source.accountId,source.chatId,id)):[]));
- if(typeof p.accountId==='string'&&typeof p.chatId==='string')for(const q of job.questions??[])if(q.answerSource==='user_text'&&q.answerMessageId)refs.push(messageSource(p.accountId,p.chatId,q.answerMessageId));
+ const refs=sources.flatMap(source=>Array.isArray(source.sourceRefs)?source.sourceRefs:typeof source.accountId==='string'&&typeof source.chatId==='string'?(source.sourceMessageIds??[]).map(id=>messageSource(source.accountId,source.chatId,id)):[]);
+ if(!Array.isArray(p.sourceRefs)&&typeof p.accountId==='string'&&typeof p.chatId==='string')for(const q of job.questions??[])if(q.answerSource==='user_text'&&q.answerMessageId)refs.push(messageSource(p.accountId,p.chatId,q.answerMessageId));
  return refs;
 }
 export function createSourceRevocations(root){

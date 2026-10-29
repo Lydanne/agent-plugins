@@ -40,6 +40,12 @@ type Bridge = {
 const symbol = Symbol.for("ada.source-tasks.v1");
 const globalState = globalThis as typeof globalThis & { [symbol]?: Bridge };
 export const sourceTaskBridge = globalState[symbol] ??= { leases: new Map(), recalls: new Set() };
+// A known trusted withdrawal must fail closed even if its SQLite write fails.
+// Keep failed writes across plugin reloads, isolated by the owning state directory.
+const failedRecallSymbol=Symbol.for('ada.feishu-failed-recalls.v1');
+const failedRecallState=globalThis as typeof globalThis & {[failedRecallSymbol]?:Set<string>};
+const failedRecalls=failedRecallState[failedRecallSymbol]??=new Set<string>();
+const failedRecallKey=(stateDir:string,event:RecallIdentity)=>JSON.stringify([stateDir,event.accountId,event.chatId,event.messageId]);
 const tasks = new Set<SourceTask>();
 export const sourceLeaseKey = (accountId: string, sessionKey: string) => JSON.stringify([accountId, sessionKey]);
 
@@ -63,6 +69,8 @@ function database(stateDir?: string) {
   }catch(error){try{db.exec('ROLLBACK');}catch{}db.close();throw error;}
 }
 export function isTaskSourceRecalled(event: RecallIdentity, stateDir?:string): boolean {
+  stateDir??=getFeishuRuntime().state.resolveStateDir();
+  if(failedRecalls.has(failedRecallKey(stateDir,event)))return true;
   const db = database(stateDir);
   try { return Boolean(db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(event.accountId, event.chatId, event.messageId)); }
   finally { db.close(); }
@@ -71,6 +79,8 @@ export function isTaskSourceRecalled(event: RecallIdentity, stateDir?:string): b
 /** Called only by the authenticated channel event dispatcher, never from model text. */
 export function recallTaskSource(event: RecallIdentity): void {
   if (!event.accountId || !event.chatId || !event.messageId) throw Error("Incomplete recall identity");
+  const stateDir=getFeishuRuntime().state.resolveStateDir();
+  const recallKey=failedRecallKey(stateDir,event);failedRecalls.add(recallKey);
   const failures: unknown[] = [];
   let persisted=false;
   try{
@@ -79,7 +89,7 @@ export function recallTaskSource(event: RecallIdentity): void {
       db.exec('BEGIN IMMEDIATE');
       db.prepare('INSERT OR IGNORE INTO recalls VALUES (?,?,?,?)').run(event.accountId,event.chatId,event.messageId,Date.now());
       db.prepare('INSERT INTO worker_recall_outbox(account,chat,message,at) VALUES (?,?,?,?) ON CONFLICT(account,chat,message) DO UPDATE SET delivered=0').run(event.accountId,event.chatId,event.messageId,Date.now());
-      db.exec('COMMIT');persisted=true;
+      db.exec('COMMIT');persisted=true;failedRecalls.delete(recallKey);
     } catch(error) {try{db.exec('ROLLBACK');}catch{}throw error;}
     finally { db.close(); }
   }catch(error){failures.push(error);}
@@ -205,6 +215,7 @@ export class SourceTask {
 
 /** Completion events remain reference results, never new business authorization. */
 export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds"|"attachmentSources">, stateDir?: string): boolean {
+ stateDir??=getFeishuRuntime().state.resolveStateDir();
  const db = database(stateDir);
  try {
   const valid=(source:TaskAttachmentSource)=>{
@@ -212,12 +223,12 @@ export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|
    const row = db.prepare("SELECT metadata FROM tasks WHERE id=?").get(source.taskId) as {metadata: string} | undefined;
    if (!row) return false;
    const current = JSON.parse(row.metadata);
-   if (current.revision !== source.revision || current.status === "cancelled" || current.accountId !== source.accountId || current.chatId !== source.chatId || current.sessionKey !== source.sessionKey || current.senderId !== source.senderId) return false;
+   if (!Number.isSafeInteger(source.revision) || source.revision<0 || !Number.isSafeInteger(current.revision) || source.revision>current.revision || current.status === "cancelled" || current.accountId !== source.accountId || current.chatId !== source.chatId || current.sessionKey !== source.sessionKey || current.senderId !== source.senderId) return false;
    const effective=current.sourceMessageIds.filter((id:string)=>!(current.withdrawnMessageIds??[]).includes(id));
    // A submitted Worker keeps its immutable dependency snapshot. Later added
-   // sources do not revoke it; withdrawn dependencies and revision changes do.
+   // sources or their withdrawal do not revoke unrelated admitted dependencies.
    if (!source.sourceMessageIds.length || source.sourceMessageIds.some(id=>!effective.includes(id))) return false;
-   return source.sourceMessageIds.every(messageId => !db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(source.accountId, source.chatId, messageId));
+   return source.sourceMessageIds.every(messageId => !failedRecalls.has(failedRecallKey(stateDir!,{...source,messageId})) && !db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(source.accountId, source.chatId, messageId));
   };
   if(!valid(p))return false;
   if(p.attachmentSources!==undefined&&(!Array.isArray(p.attachmentSources)||p.attachmentSources.length>64))return false;

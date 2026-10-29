@@ -688,6 +688,25 @@ describe("handleFeishuMessage ACP routing", () => {
     expect(sourceTaskBridge.leases.size).toBe(0);
   });
 
+  it.each([false,true])("does not replay an admitted Worker after partial withdrawal (late acknowledgement=%s)",async lateAcknowledgement=>{
+    const cfg=createFeishuTestConfig({dmPolicy:"open"});
+    const a="accepted-partial-a-"+lateAcknowledgement,b="accepted-partial-b-"+lateAcknowledgement;
+    mockDispatchInboundMessage.mockImplementationOnce(async()=>{
+      const lease=sourceTaskBridge.leases.values().next().value!;
+      if(!lateAcknowledgement)lease.asyncDispatchAccepted=true;
+      recallTaskSource({accountId:"default",chatId:"oc_dm",messageId:a});
+      if(lateAcknowledgement){
+        // The Worker receipt is durable even though stale-source validation of
+        // its card handoff rejects the tool response before Main can finish.
+        lease.asyncDispatchAccepted=true;throw Error("Source was withdrawn before receipt handoff");
+      }
+      return {queuedFinal:false,counts:{final:0}};
+    });
+    await dispatchMessage({cfg,sourceMessages:[{messageId:a,text:"withdrawn input"},{messageId:b,text:"retained input"}],event:createFeishuTestEvent({messageId:b,chatId:"oc_dm",senderOpenId:"ou_sender_1",text:"withdrawn input\nretained input"})});
+    expect(mockDispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(sourceTaskBridge.leases.size).toBe(0);
+  });
+
   it("removes a recalled queued task without starting it or overtaking the running task",async()=>{
     const cfg=createFeishuTestConfig({dmPolicy:"open",workingCard:{enabled:true}});
     const cards: ReturnType<typeof mockCreateFeishuReplyDispatcher>[]=[];

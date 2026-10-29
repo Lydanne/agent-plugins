@@ -11,5 +11,7 @@ process.on('message',invocation=>{
  let child;
  try{child=spawn(invocation.command,invocation.args,{stdio:['inherit','inherit','inherit']});}catch{return stop();}
  child.once('error',error=>{process.stderr.write(error.message+'\n');process.exit(1);});
- child.once('exit',(code,signal)=>{process.removeListener('disconnect',stop);process.exit(signal?1:code??1);});
+ // Keep the group leader and disconnect guard alive until the owner receives
+ // the CLI result and terminates this whole group, including lingering children.
+ child.once('exit',(code,signal)=>{process.send({type:'execution_exit',code,signal},error=>{if(error)stop();});});
 });

@@ -26,8 +26,10 @@ export function taskProvenance(lease) {
 export function rememberAsyncJob(lease, job) {
  if (!lease || !job.jobId || !job.notification ||
      ['accountId','chatId','sessionKey','senderId'].some(key=>job.provenance?.[key] !== lease[key])) return;
- taskProvenance(lease);
+ // Durable acceptance is an execution fact even if the source was withdrawn
+ // while admission awaited I/O. Record it before rejecting stale card ownership.
  lease.asyncDispatchAccepted = true;
+ taskProvenance(lease);
  // An idempotent retry ends dispatch but cannot acquire the old task's card.
  if (job.provenance.taskId !== lease.taskId || job.provenance.revision !== lease.revision) return;
  lease.asyncJobIds ??= [];
@@ -37,7 +39,7 @@ export function rememberAsyncJob(lease, job) {
 /** Continue presentation on the current human turn without replacing business provenance. */
 export function rememberAsyncContinuation(lease,job,questionId) {
  if(!lease || !job.notification || !job.provenance || ['accountId','chatId','sessionKey','senderId'].some(key=>job.provenance[key]!==lease[key]))return false;
- taskProvenance(lease);lease.asyncDispatchAccepted=true;lease.asyncContinuations??=[];
+ lease.asyncDispatchAccepted=true;taskProvenance(lease);lease.asyncContinuations??=[];
  lease.asyncUserQuestions=lease.asyncUserQuestions?.filter(item=>item.jobId!==job.jobId||item.questionId!==questionId);
  if(!lease.asyncContinuations.some(item=>item.jobId===job.jobId&&item.questionId===questionId))lease.asyncContinuations.push({jobId:job.jobId,questionId,provenance:job.provenance});
  return true;

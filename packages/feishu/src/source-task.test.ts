@@ -1,10 +1,11 @@
+import {DatabaseSync} from 'node:sqlite';
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
 import {mkdtempSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 const state = vi.hoisted(() => ({dir: "", unavailable:false}));
 vi.mock("./runtime.js", () => ({getFeishuRuntime: () => {if(state.unavailable)throw Error("Feishu runtime not initialized");return {state:{resolveStateDir:()=>state.dir}};}}));
-import {SourceTask, recallTaskSource, sourceTaskBridge, isCompletionSourceCurrent} from "./source-task.js";
+import {SourceTask, recallTaskSource, sourceTaskBridge, isCompletionSourceCurrent, isTaskSourceRecalled} from "./source-task.js";
 const scope={accountId:"a", chatId:"c", sessionKey:"s", senderId:"u"};
 it('supplemental attachment recall suppresses completed results as well as future replies',()=>{
  const original=new SourceTask(scope,[{messageId:'original',text:'inspect'}]);opened.push(original);const p=original.begin();original.activate();original.close();
@@ -149,4 +150,26 @@ it('keeps the remaining revision deliverable and an existing dependency snapshot
  t.add({messageId:'added',text:'new reference'});
  expect(isCompletionSourceCurrent(snapshot,state.dir)).toBe(true);
  expect(isCompletionSourceCurrent({...snapshot,sourceMessageIds:['forged']},state.dir)).toBe(false);
+});
+it('retains an admitted snapshot when only an unused additive source is withdrawn',()=>{
+ const t=task([{messageId:'original',text:'original task'}]),lease=t.begin();t.activate();
+ const snapshot={...lease,sourceMessageIds:[...lease.sourceMessageIds]};
+ t.add({messageId:'unused',text:'later reference'});recallTaskSource({...scope,messageId:'unused'});
+ expect(isCompletionSourceCurrent(snapshot,state.dir)).toBe(true);
+ expect(isCompletionSourceCurrent({...snapshot,revision:t.revision+1},state.dir)).toBe(false);
+ expect(isCompletionSourceCurrent({...snapshot,revision:-1},state.dir)).toBe(false);
+ recallTaskSource({...scope,messageId:'original'});expect(isCompletionSourceCurrent(snapshot,state.dir)).toBe(false);
+});
+it('known withdrawals fail closed after a settled task and a failed recall transaction',()=>{
+ const t=task([{messageId:'original',text:'original task'}]),snapshot=t.begin();t.activate();t.close();
+ const db=new DatabaseSync(join(state.dir,'feishu-source-tasks','tasks.sqlite'));
+ db.exec("CREATE TRIGGER reject_recall BEFORE INSERT ON recalls BEGIN SELECT RAISE(ABORT,'fixture failed write'); END");
+ try{
+  expect(()=>recallTaskSource({...scope,messageId:'original'})).toThrow();
+  expect(isTaskSourceRecalled({...scope,messageId:'original'},state.dir)).toBe(true);
+  expect(isTaskSourceRecalled({...scope,accountId:'other',messageId:'original'},state.dir)).toBe(false);
+  expect(isCompletionSourceCurrent(snapshot,state.dir)).toBe(false);
+  db.exec('DROP TRIGGER reject_recall');recallTaskSource({...scope,messageId:'original'});
+  expect(isCompletionSourceCurrent(snapshot,state.dir)).toBe(false);
+ }finally{db.close();}
 });

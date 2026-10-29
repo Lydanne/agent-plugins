@@ -137,9 +137,8 @@ export async function executeQuery(params,context={},runtime=configuration){
    return await new Promise((resolve,reject)=>{
   const invocation=hermesCommand(config,{refresh,threadId,outputSchemaPath,prompt}),args=invocation.args;
   const child=spawn(process.execPath,[fileURLToPath(new URL('./execution-supervisor.mjs',import.meta.url))],{cwd,detached:true,stdio:['pipe','pipe','pipe','ipc'],env:{...workerEnvironment(),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})}});
-  if(child.pid)context.onProgress?.({executionPid:child.pid});
   const decoder=new StringDecoder('utf8');
-  let out='',size=0,failed; const messages=[];
+  let out='',size=0,failed,executionExit; const messages=[];
   const stop=()=>{try{process.kill(-child.pid,'SIGKILL')}catch{}};
   const abort=()=>{failed=Error('Codex query cancelled');stop();};
   context.signal?.addEventListener('abort',abort,{once:true});
@@ -157,10 +156,15 @@ export async function executeQuery(params,context={},runtime=configuration){
    }catch{}}
   });
   child.on('error',e=>{clearTimeout(timer);reject(e)});
-  child.on('close',code=>{clearTimeout(timer);context.signal?.removeEventListener('abort',abort);if(failed||code!==0)return reject(failed??Error(explainQueryError(stderr || 'Codex exited with code '+code).message));if(!messages.length)return reject(Error('Codex returned no final response'));resolve(messages.at(-1))});
+  child.on('message',event=>{if(!executionExit&&event?.type==='execution_exit'&&(event.code===null||Number.isInteger(event.code))&&(event.signal===null||typeof event.signal==='string')){executionExit=event;stop();}});
+  child.on('close',code=>{clearTimeout(timer);context.signal?.removeEventListener('abort',abort);const exitCode=executionExit?.code??code;if(failed||!executionExit||executionExit.signal||exitCode!==0)return reject(failed??Error(explainQueryError(stderr || 'Codex exited with code '+exitCode).message));if(!messages.length)return reject(Error('Codex returned no final response'));resolve(messages.at(-1))});
   child.stdin.on('error',()=>{});
-  child.send({command:invocation.command,args},error=>{if(error&&!failed){failed=error;stop();}});
-  child.stdin.end(invocation.stdin);
+  try{
+   if(child.pid)context.onProgress?.({executionPid:child.pid});
+   context.signal?.throwIfAborted();
+   child.send({command:invocation.command,args},error=>{if(error&&!failed){failed=error;stop();}});
+   child.stdin.end(invocation.stdin);
+  }catch(error){failed=error;stop();}
  });
   }finally{if(schemaDirectory)await rm(schemaDirectory,{recursive:true,force:true});}
  };

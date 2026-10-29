@@ -138,3 +138,12 @@ test('one cancellation write failure does not prevent cancellation attempts for 
   rmSync(join(f.root,broken+'.cancel'),{recursive:true});jobs.tick();assert.equal(f.marked(broken),true);
  }finally{f.close();}
 });
+test('explicit provider references override legacy message identifiers, including native answer metadata',()=>{
+ const f=fixture(),jobs=createJobs({root:f.root,node:process.execPath,worker:'/unused'});
+ const source={namespace:'other-provider',scope:'tenant/chat',id:'request'};
+ try{
+  const id=f.seed('running',{provenance:{...f.provenance,sourceRefs:[source]},questions:[{answerSource:'user_text',answerMessageId:'request'}]});
+  jobs.cancelSources({...f.provenance,messageId:'request'});assert.equal(f.marked(id),false);
+  jobs.invalidateSources({apiVersion:1,eventId:'other-provider-recall',reason:'recalled',sources:[source]});assert.equal(f.marked(id),true);
+ }finally{f.close();}
+});

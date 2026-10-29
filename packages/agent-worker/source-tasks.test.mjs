@@ -122,3 +122,23 @@ test('background provenance preserves authenticated conversation type without ch
   lease.chatType='unexpected';assert.equal(Object.hasOwn(taskProvenance(lease),'chatType'),false);
  }finally{sourceTaskBridge.leases.delete(key);}
 });
+test('durable asynchronous acceptance after withdrawal prevents replay without acquiring stale card ownership',()=>{
+ const controller=new AbortController();
+ const lease={taskId:'task',revision:0,accountId:'a',chatId:'c',sessionKey:'s',senderId:'u',sourceMessageIds:['m'],signal:controller.signal};
+ sourceTaskBridge.leases.set(JSON.stringify(['a','s']),lease);
+ try{
+  const provenance=taskProvenance(lease);controller.abort();
+  assert.throws(()=>rememberAsyncJob(lease,{jobId:'accepted',notification:{state:'pending'},provenance}));
+  assert.equal(lease.asyncDispatchAccepted,true);assert.equal(lease.asyncJobIds,undefined);
+ }finally{sourceTaskBridge.leases.clear();}
+});
+test('durable asynchronous continuation after withdrawal prevents replay without binding a stale continuation card',()=>{
+ const controller=new AbortController();
+ const lease={taskId:'answer-turn',revision:0,accountId:'a',chatId:'c',sessionKey:'s',senderId:'u',sourceMessageIds:['answer'],signal:controller.signal};
+ sourceTaskBridge.leases.set(JSON.stringify(['a','s']),lease);
+ try{
+  const provenance={...taskProvenance(lease),taskId:'original'};controller.abort();
+  assert.throws(()=>rememberAsyncContinuation(lease,{jobId:'resumed',notification:{state:'pending'},provenance},'q'));
+  assert.equal(lease.asyncDispatchAccepted,true);assert.equal(lease.asyncContinuations,undefined);
+ }finally{sourceTaskBridge.leases.clear();}
+});
