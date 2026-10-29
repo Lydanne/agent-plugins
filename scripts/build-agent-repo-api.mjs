@@ -20,3 +20,5 @@ await writeFile('dist/diagnostics-api.mjs',(await readFile(new URL('../packages/
 await copyFile(new URL('../packages/agent-worker/timing.mjs',import.meta.url),'dist/worker-timing.mjs');
 
 for(const name of ['workspace-pool.mjs','workspace-lock.mjs'])await copyFile(new URL('../packages/agent-repo-api/'+name,import.meta.url),'dist/'+name);
+
+await copyFile(new URL('../packages/agent-repo-api/worker-source.mjs',import.meta.url),'dist/worker-source-api.mjs');

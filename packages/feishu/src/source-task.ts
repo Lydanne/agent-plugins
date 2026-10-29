@@ -1,3 +1,5 @@
+import {revokeWorkerSources,type SourceRevocation} from '../../agent-repo-api/worker-source.mjs';
+import type {OpenClawPluginApi} from 'openclaw/plugin-sdk/channel-entry-contract';
 import type {TaskPeople} from './people-directory.js';
 import { renderContextData, renderSection } from "./context-sections.js";
 import { createHash } from "node:crypto";
@@ -45,11 +47,20 @@ function database(stateDir?: string) {
   const file = join(stateDir ?? getFeishuRuntime().state.resolveStateDir(), "feishu-source-tasks", "tasks.sqlite");
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
+  try{
   chmodSync(file, 0o600);
   db.exec(`PRAGMA busy_timeout=3000;
     CREATE TABLE IF NOT EXISTS recalls (account TEXT, chat TEXT, message TEXT, at INTEGER, PRIMARY KEY(account,chat,message));
     CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, metadata TEXT NOT NULL, updated INTEGER NOT NULL);`);
+  if ((db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version < 1) {
+    db.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE IF NOT EXISTS worker_recall_outbox (account TEXT,chat TEXT,message TEXT,at INTEGER,delivered INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(account,chat,message));
+      CREATE INDEX IF NOT EXISTS worker_recall_pending ON worker_recall_outbox(delivered,at,account,chat,message);
+      INSERT OR IGNORE INTO worker_recall_outbox(account,chat,message,at) SELECT account,chat,message,at FROM recalls;
+      PRAGMA user_version=1; COMMIT;`);
+  }
   return db;
+  }catch(error){try{db.exec('ROLLBACK');}catch{}db.close();throw error;}
 }
 export function isTaskSourceRecalled(event: RecallIdentity, stateDir?:string): boolean {
   const db = database(stateDir);
@@ -60,19 +71,57 @@ export function isTaskSourceRecalled(event: RecallIdentity, stateDir?:string): b
 /** Called only by the authenticated channel event dispatcher, never from model text. */
 export function recallTaskSource(event: RecallIdentity): void {
   if (!event.accountId || !event.chatId || !event.messageId) throw Error("Incomplete recall identity");
-  const db = database();
-  try { db.prepare("INSERT OR IGNORE INTO recalls VALUES (?,?,?,?)").run(event.accountId, event.chatId, event.messageId, Date.now()); }
-  finally { db.close(); }
-  // Repeat events intentionally reattempt background cancellation after an I/O failure.
-  // In-memory invalidation is idempotent and runs before any asynchronous cleanup.
   const failures: unknown[] = [];
+  let persisted=false;
+  try{
+    const db=database();
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      db.prepare('INSERT OR IGNORE INTO recalls VALUES (?,?,?,?)').run(event.accountId,event.chatId,event.messageId,Date.now());
+      db.prepare('INSERT INTO worker_recall_outbox(account,chat,message,at) VALUES (?,?,?,?) ON CONFLICT(account,chat,message) DO UPDATE SET delivered=0').run(event.accountId,event.chatId,event.messageId,Date.now());
+      db.exec('COMMIT');persisted=true;
+    } catch(error) {try{db.exec('ROLLBACK');}catch{}throw error;}
+    finally { db.close(); }
+  }catch(error){failures.push(error);}
+  // A failed channel write must not prevent live cancellation or an independent
+  // Worker from persisting the trusted revocation. Ingress still receives failure
+  // and retries until the channel record/outbox is durable as well.
   for (const task of tasks) {
     try { task.recall(event); } catch (error) { failures.push(error); }
   }
   for (const handler of sourceTaskBridge.recalls) {
     try { handler(event); } catch (error) { failures.push(error); }
   }
+  try { if(persisted)flushWorkerSourceRecalls(undefined,event);else revokeWorkerSources(workerRevocation([event])); } catch(error) { failures.push(error); }
   if (failures.length) throw new AggregateError(failures, "Background recall cancellation failed");
+}
+
+function workerRevocation(events:RecallIdentity[]):SourceRevocation {
+  const sources=events.map(event=>({namespace:'message',scope:JSON.stringify([event.accountId,event.chatId]),id:event.messageId}));
+  return {apiVersion:1,eventId:'messages:'+createHash('sha256').update(JSON.stringify(sources)).digest('hex'),reason:'source-recalled',sources};
+}
+/** Channel-owned durable delivery. Unavailable Worker endpoints retain the event. */
+export function flushWorkerSourceRecalls(stateDir?:string,priority?:RecallIdentity):void {
+  const db=database(stateDir);
+  try {
+    const rows=(priority
+      ?db.prepare('SELECT account,chat,message FROM worker_recall_outbox WHERE delivered=0 AND account=? AND chat=? AND message=?').all(priority.accountId,priority.chatId,priority.messageId)
+      :db.prepare('SELECT account,chat,message FROM worker_recall_outbox WHERE delivered=0 ORDER BY at,account,chat,message LIMIT 100').all()) as {account:string;chat:string;message:string}[];
+    if(!rows.length)return;
+    const receipt=revokeWorkerSources(workerRevocation(rows.map(row=>({accountId:row.account,chatId:row.chat,messageId:row.message}))));
+    if(!receipt.accepted)return;
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      const acknowledge=db.prepare('UPDATE worker_recall_outbox SET delivered=1 WHERE account=? AND chat=? AND message=?');
+      for(const row of rows)acknowledge.run(row.account,row.chat,row.message);
+      db.exec('COMMIT');
+    }catch(error){try{db.exec('ROLLBACK');}catch{}throw error;}
+  } finally {db.close();}
+}
+export function registerSourceRecallDelivery(api:OpenClawPluginApi):void {
+  let timer:ReturnType<typeof setInterval>|undefined;
+  const flush=()=>{try{flushWorkerSourceRecalls(api.runtime.state.resolveStateDir());}catch{api.logger.warn('Worker source revocation delivery pending; will retry');}};
+  api.registerService({id:'feishu-source-recall-delivery',start:()=>{if(timer)return;flush();timer=setInterval(flush,1000);timer.unref();},stop:()=>{clearInterval(timer);timer=undefined;}});
 }
 
 export class SourceTask {
@@ -164,7 +213,10 @@ export function isCompletionSourceCurrent(p: Pick<TaskLease,"taskId"|"revision"|
    if (!row) return false;
    const current = JSON.parse(row.metadata);
    if (current.revision !== source.revision || current.status === "cancelled" || current.accountId !== source.accountId || current.chatId !== source.chatId || current.sessionKey !== source.sessionKey || current.senderId !== source.senderId) return false;
-   if (current.sourceMessageIds.length !== source.sourceMessageIds.length || current.sourceMessageIds.some((id: string) => !source.sourceMessageIds.includes(id))) return false;
+   const effective=current.sourceMessageIds.filter((id:string)=>!(current.withdrawnMessageIds??[]).includes(id));
+   // A submitted Worker keeps its immutable dependency snapshot. Later added
+   // sources do not revoke it; withdrawn dependencies and revision changes do.
+   if (!source.sourceMessageIds.length || source.sourceMessageIds.some(id=>!effective.includes(id))) return false;
    return source.sourceMessageIds.every(messageId => !db.prepare("SELECT 1 FROM recalls WHERE account=? AND chat=? AND message=?").get(source.accountId, source.chatId, messageId));
   };
   if(!valid(p))return false;

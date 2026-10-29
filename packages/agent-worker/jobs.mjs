@@ -1,3 +1,4 @@
+import {createSourceRevocations,messageSource} from './source-revocations.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {resolveTaskQueues,requestedQueueId,queueFields} from './task-queues.mjs';
 import {processAlive} from './dist/workspace-pool.mjs';
@@ -39,7 +40,8 @@ const agentOf=job=>job.agentId??job.provenance?.agentId??job.project?.agentId??'
 const sameQueue=(a,b)=>(a.provenance?.automation&&b.provenance?.automation||agentOf(a)===agentOf(b))&&taskClassOf(a)===taskClassOf(b);
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger,sourceCurrent=()=>true}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger}) {
+ const revocations=createSourceRevocations(root);
  const lock=join(root,'scheduler-lock');
  let timer;
  const workspaceOperations=new Set();
@@ -78,16 +80,19 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
  function view(j){const {scope,request,...result}=j;return {...result,...queueFields(taskClassOf(j))};}
  function cancelMatching(matches,candidates) {
   mkdirSync(root,{recursive:true,mode:0o700});
-  const ids=[];
+  const ids=[],failures=[];
   for (const job of candidates??files()) {
    // Inspect stored state, not the derived 'unknown' heartbeat projection: a
    // temporarily lost worker must see cancellation if it later comes back.
    if ((active.has(job.status)||job.status==='unknown'||waiting.has(job.status)) && matches(job.provenance,job)) {
-    writeFileSync(join(root,job.jobId+'.cancel'),'source-recalled',{mode:0o600});
-    if(waiting.has(job.status))terminalJob({...job,status:'cancelled',finishedAt:Date.now(),notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined});
-    ids.push(job.jobId);
+    try{
+     writeFileSync(join(root,job.jobId+'.cancel'),'source-recalled',{mode:0o600});
+     if(waiting.has(job.status))terminalJob({...job,status:'cancelled',finishedAt:Date.now(),notification:job.notification?{state:'pending',eventKey:randomUUID()}:undefined});
+     ids.push(job.jobId);
+    }catch(error){failures.push(error);}
    }
   }
+  if(failures.length)throw new AggregateError(failures,'Worker cancellation persistence incomplete');
   return ids;
  }
  function terminalJob(job,request) {
@@ -142,17 +147,8 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
  }
  function scheduleLocked(){
   const stored=files();
-  const withheld=new Set();
-  // Reconcile durable channel authority even when the recall callback was missed
-  // (restart, late admission or failed cancellation I/O). Only an explicit false
-  // revokes running work; an unavailable adapter holds queued work for retry.
-  cancelMatching((p,job)=>{
-   if(!hasSourceProvenance(p)||p.automation||existsSync(join(root,job.jobId+'.cancel')))return false;
-   let current;
-   try{current=sourceCurrent(p,job);}catch(error){logger?.error?.('Worker source validation unavailable: '+error.message);}
-   if(current!==true)withheld.add(job.jobId);
-   return current===false;
-  },stored);
+  const revoked=revocations.revokedJobs(stored);
+  cancelMatching((_p,job)=>revoked.has(job.jobId),stored);
   const all=files();
   for(const job of all.filter(j=>(queued(j)||waiting.has(j.status))&&existsSync(join(root,j.jobId+'.cancel')))){
    Object.assign(job,{status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});terminalJob(job);
@@ -225,7 +221,6 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   for(const job of pending){
    const file=join(root,job.jobId+'.json');
    if(existsSync(join(root,job.jobId+'.cancel'))){terminalJob({...job,status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()});continue;}
-   if(withheld.has(job.jobId))continue;
    if(all.some(other=>sameWorkspace(other,job)&&(settlementActive(other)||workspaceOperations.has(other.jobId))))continue;
    // A saved guide belongs to the finishing task's next boundary. Do not let
    // an independent same-session run race ahead before collaboration admits it.
@@ -390,7 +385,16 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   tick,
   start(){if(timer)return;tick();timer=setInterval(()=>{try{tick();}catch(error){logger?.error?.('Codex scheduler: '+error.message);}},500);timer.unref();},
   stop(){clearInterval(timer);timer=undefined;},
-  cancelSources(event) {return cancelMatching((p,job)=>p?.accountId===event.accountId && p?.chatId===event.chatId && (p.sourceMessageIds?.includes(event.messageId)||p.attachmentSources?.some(source=>source.sourceMessageIds?.includes(event.messageId))||job.questions?.some(q=>q.answerSource==='user_text'&&q.answerMessageId===event.messageId)));},
+  invalidateSources(event){
+   const input=revocations.record(event);
+   const all=files(),revoked=revocations.revokedJobs(all);
+   const jobIds=cancelMatching((_p,job)=>revoked.has(job.jobId),all);
+   return {accepted:true,eventId:input.eventId,jobIds};
+  },
+  cancelSources(event){
+   const source=messageSource(event.accountId,event.chatId,event.messageId);
+   return this.invalidateSources({apiVersion:1,eventId:'message:'+createHash('sha256').update(JSON.stringify(source)).digest('hex'),reason:'source-recalled',sources:[source]}).jobIds;
+  },
   cancelTask(taskId,revision) {return cancelMatching(p=>p?.taskId===taskId && p?.revision===revision);},
   list(scope,options={}){return this.search(scope,options).jobs;},
   search(scope,{limit=10,query='',projectId,repository}={}){

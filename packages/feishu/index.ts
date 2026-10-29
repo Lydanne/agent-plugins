@@ -1,3 +1,4 @@
+import {registerSourceRecallDelivery} from './src/source-task.js';
 import {registerScheduledRequestAdapter} from './src/scheduled-request.js';
 // Feishu plugin entrypoint registers its OpenClaw integration.
 import {
@@ -40,6 +41,7 @@ export default defineBundledChannelEntry({
     registerFeishuPeopleTool(api);
     registerFeishuPeopleGroupSync(api);
     registerCodexCompletion(api);
+    registerSourceRecallDelivery(api);
     registerScheduledRequestAdapter(api);
     registerDocumentBackground(api);
     registerFeishuSubagentHooks(api);

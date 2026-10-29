@@ -123,7 +123,7 @@ test('detached workers consume persisted configuration even after the scheduling
 test('registration uses configured storage',async t=>{
  const config=await fixture(t),factories=[],services=[];
  plugin.register({pluginConfig:config,logger:console,registerService:s=>services.push(s),registerTool:f=>factories.push(f)});
- assert.equal(factories.length,1);assert.deepEqual(services.map(service=>service.id),['agent-worker-automation','agent-worker-diagnostics','agent-worker-scheduled-status','agent-worker-scheduler','agent-worker-questions','agent-worker-collaboration','agent-worker-completion']);
+ assert.equal(factories.length,1);assert.deepEqual(services.map(service=>service.id),['agent-worker-automation','agent-worker-diagnostics','agent-worker-scheduled-status','agent-worker-scheduler','agent-worker-questions','agent-worker-collaboration','agent-worker-completion','agent-worker-source-control']);
  const tool=factories[0]({sessionKey:'plain-conversation'});
  const response=await tool.execute('',{action:'run',topic:'registered',task:'read',context:'none',constraints:'read only',waitSeconds:5});
  assert.equal(JSON.parse(response.content[0].text).status,'completed');
@@ -278,4 +278,18 @@ test('configurable queue catalog validates IDs, defaults, limits and legacy migr
  const result=JSON.parse((await tool.execute('',{action:'queues'})).content[0].text);
  assert.equal(result.defaultQueueId,'build');assert.equal(result.queues.find(q=>q.id==='build').hermesVariables.model,'gpt-6.1-sol');
  await assert.rejects(tool.execute('',{action:'reply',queueId:'build'}),/QUEUE_SELECTION_INVALID/);
+});
+
+test('source-control endpoint follows plugin service lifecycle without adding channel recall listeners',async t=>{
+ const {revokeWorkerSources}=await import('../agent-repo-api/worker-source.mjs');
+ const {sourceTaskBridge}=await import('./source-tasks.mjs');
+ const config=await fixture(t),services=[];
+ const before=sourceTaskBridge.recalls.size;
+ plugin.register({pluginConfig:config,registerService:s=>services.push(s),registerTool(){}});
+ const control=services.find(service=>service.id==='agent-worker-source-control');
+ const event={apiVersion:1,eventId:'lifecycle',reason:'recalled',sources:[{namespace:'test',scope:'scope',id:'source'}]};
+ assert.equal(revokeWorkerSources(event).accepted,false);
+ control.start();control.start();assert.equal(revokeWorkerSources(event).accepted,true);
+ control.stop();assert.equal(revokeWorkerSources(event).accepted,false);
+ assert.equal(sourceTaskBridge.recalls.size,before);
 });

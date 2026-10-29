@@ -23,6 +23,10 @@
     "./diagnostics": {
       "types": "./diagnostics.d.mts",
       "import": "./diagnostics.mjs"
+    },
+    "./worker-source": {
+      "types": "./worker-source.d.mts",
+      "import": "./worker-source.mjs"
     }
   },
   "files": [
@@ -40,10 +44,12 @@
     "diagnostics.mjs",
     "diagnostics.d.mts",
     "workspace-pool.mjs",
-    "workspace-lock.mjs"
+    "workspace-lock.mjs",
+    "worker-source.mjs",
+    "worker-source.d.mts"
   ],
   "scripts": {
-    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs",
+    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs && node --check worker-source.mjs",
     "test": "node --test *.test.mjs",
     "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck entities.type-test.mts diagnostics.type-test.mts"
   },

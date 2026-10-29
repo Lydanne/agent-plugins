@@ -141,3 +141,12 @@ it('validates a different group contributor independently and invalidates recall
  recallTaskSource({...scope,messageId:'group-hint'});
  expect(isCompletionSourceCurrent(bound,state.dir)).toBe(false);expect(isCompletionSourceCurrent(p,state.dir)).toBe(true);
 });
+
+it('keeps the remaining revision deliverable and an existing dependency snapshot valid after additive sources',()=>{
+ const t=task();t.begin();t.activate();recallTaskSource({...scope,messageId:'one'});t.endRevision();
+ const next=t.begin();t.activate();expect(isCompletionSourceCurrent(next,state.dir)).toBe(true);
+ const snapshot={...next,sourceMessageIds:[...next.sourceMessageIds]};
+ t.add({messageId:'added',text:'new reference'});
+ expect(isCompletionSourceCurrent(snapshot,state.dir)).toBe(true);
+ expect(isCompletionSourceCurrent({...snapshot,sourceMessageIds:['forged']},state.dir)).toBe(false);
+});
