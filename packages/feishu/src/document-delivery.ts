@@ -198,11 +198,27 @@ export function resolveDocumentPermissionRecipient(to:string,context?:DocumentRe
  }
  return {memberType:kind==="chat_id"?"openchat":kind==="open_id"?"openid":"userid",memberId:target};
 }
+export type WorkerReportTitle = {sessionName?: string; finishedAt?: number};
+
+/** Use bound Worker metadata, never infer a session name from report contents. */
+export function reportDocumentTitle(filename: string, template?: string, workerReport?: WorkerReportTitle): string {
+  if (!workerReport) return (template ?? "{filename}").replaceAll("{filename}", filename).slice(0,200);
+  const sessionName = workerReport.sessionName?.replace(/\s+/g," ").trim() || "Worker报告";
+  const timestamp = workerReport.finishedAt;
+  const date = new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"})
+    .format(typeof timestamp === "number" && Number.isFinite(timestamp) && Math.abs(timestamp)<=8.64e15 ? timestamp : Date.now());
+  // Reserve room for the date even when the session name reaches the title limit.
+  if (!template || template === "{filename}") return sessionName.slice(0,189)+" "+date;
+  const values:Record<string,string> = {filename,sessionName,date};
+  return template.replace(/\{(filename|sessionName|date)\}/g,(_,key:string)=>values[key]).slice(0,200);
+}
+
 export type DeliveryParams = {
   cfg: ClawdbotConfig; accountId?: string; to: string; text?: string; mediaUrls?: string[];
   workspaceDir?: string; mediaLocalRoots?: readonly string[]; mediaAccess?: OutboundMediaAccess;
   mediaReadFile?: OutboundMediaAccess["readFile"]; signal?: AbortSignal;
   existingDocumentId?: string;
+  workerReport?: WorkerReportTitle;
   confirmedGrant?: ConfirmedDocumentGrant;
   recipientContext?: DocumentRecipientContext;
   onFailure?: (failure:DocumentDeliveryFailure)=>void;
@@ -321,7 +337,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   }
   let markdown = replaceLocalReferences(params.text ?? "",refs);
   if(!files.length && !skipped.length)return {text:markdown || "引用的本地文件不存在，已跳过上传。",mediaUrls:[]};
-  const title = (config?.titleTemplate ?? "{filename}").replaceAll("{filename}",files[0]?.name ?? basename(skipped[0].path)).slice(0,200);
+  const title = reportDocumentTitle(files[0]?.name ?? basename(skipped[0].path),config?.titleTemplate,params.workerReport);
   let sqlBundle = "";
   for (const file of files) {
     if(file.content===undefined)continue;
@@ -343,7 +359,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   // This expanded body belongs only in the document. Upload failure must never
   // turn a quoted report, source file or role manual into additional chat prose.
   const exceedsTextLimit=markdown.length > (config?.maxTextChars ?? 200000);
-  const key=createHash("sha256").update(JSON.stringify([account.accountId,account.appId,params.to,[params.recipientContext?.chatId,params.recipientContext?.chatType,params.recipientContext?.senderId],config,params.existingDocumentId,params.confirmedGrant,params.text,markdown,files.map(file=>[file.name,createHash("sha256").update(file.buffer).digest("hex")])])).digest("hex");
+  const key=createHash("sha256").update(JSON.stringify([account.accountId,account.appId,params.to,[params.recipientContext?.chatId,params.recipientContext?.chatType,params.recipientContext?.senderId],config,title,params.existingDocumentId,params.confirmedGrant,params.text,markdown,files.map(file=>[file.name,createHash("sha256").update(file.buffer).digest("hex")])])).digest("hex");
   const existing=prepared.get(key);
   if(existing){const result=await existing;params.signal?.throwIfAborted();captureFeishuSendAuthority()?.();return result;}
   const operation = (async()=>{

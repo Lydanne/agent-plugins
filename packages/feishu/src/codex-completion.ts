@@ -156,11 +156,12 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      const existingResult=binding?prepareAsyncCardResult(stateDir,binding,finalText,accountConfig):undefined;
      const canStage=!existingResult || (existingResult.fits && Buffer.byteLength(existingResult.combined,"utf8")<20000);
      let staged,stagingFailed=false;
+     const workerReport={sessionName:event.topic?.trim() || event.request?.taskSummary || event.request?.task,finishedAt:event.finishedAt ?? Date.now()};
      try {
-      staged=canStage ? await stageBackgroundDocument({cfg:completionCfg,accountId:p.accountId,agentId,stateDir,source:p,sessionId,completionJobId:event.jobId,to:"chat:"+p.chatId,text:finalText,
+      staged=canStage ? await stageBackgroundDocument({cfg:completionCfg,accountId:p.accountId,agentId,stateDir,source:p,sessionId,completionJobId:event.jobId,to:"chat:"+p.chatId,text:finalText,workerReport,
        mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal}) : undefined;
      } catch {signal.throwIfAborted();stagingFailed=true;}
-     const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,
+     const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,workerReport,
       mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal});
      if (!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
      let deliveryText=document?.text ?? finalText;

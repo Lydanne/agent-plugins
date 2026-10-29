@@ -4466,7 +4466,7 @@
         },
         "documentDelivery.titleTemplate": {
           "label": "文档标题模板 / Document title template",
-          "help": "支持 {filename}。 / Supports {filename}."
+          "help": "支持 {filename}；Worker 报告默认使用会话名称和北京时间完成日期，自定义模板还支持 {sessionName}、{date}。 / Supports {filename}; Worker reports default to session name and Beijing completion date, with {sessionName} and {date} available in custom templates."
         },
         "documentDelivery.linkTemplate": {
           "label": "聊天链接模板 / Chat link template",
@@ -5364,7 +5364,7 @@
         },
         "accounts.*.documentDelivery.titleTemplate": {
           "label": "文档标题模板 / Document title template",
-          "help": "支持 {filename}。 / Supports {filename}."
+          "help": "支持 {filename}；Worker 报告默认使用会话名称和北京时间完成日期，自定义模板还支持 {sessionName}、{date}。 / Supports {filename}; Worker reports default to session name and Beijing completion date, with {sessionName} and {date} available in custom templates."
         },
         "accounts.*.documentDelivery.linkTemplate": {
           "label": "聊天链接模板 / Chat link template",

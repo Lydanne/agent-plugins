@@ -306,12 +306,12 @@ it('passes account presentation settings through actual async delivery and overs
 
 it('replaces asynchronous local-file results with a document link before editing the original task card',async()=>{
  const prepare=vi.spyOn(documentDelivery,'prepareFeishuDocumentDelivery').mockResolvedValue({text:'[Report](https://feishu.cn/docx/doc)',documentId:'doc',url:'https://feishu.cn/docx/doc',mediaUrls:[]});
- const privateEvent={...event,provenance:{...event.provenance,chatType:'p2p' as const,senderId:'ou_requester'}};
+ const privateEvent={...event,finishedAt:1793203500000,provenance:{...event.provenance,chatType:'p2p' as const,senderId:'ou_requester'}};
  try {
   bindAsyncTaskCard(cardStateDir,privateEvent.provenance,[event.jobId],{messageId:'original-card'});
   mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:'[Report](/tmp/report.md)',mediaUrls:['/tmp/evidence.csv']},{kind:'final'}));
   await deliverCodexCompletion(privateEvent,{beforeSend:vi.fn(),onReceipt:vi.fn()});
-  expect(prepare).toHaveBeenCalledWith(expect.objectContaining({text:'[Report](/tmp/report.md)',mediaUrls:['/tmp/evidence.csv'],agentId:'main',mediaRuntime:runtime.media,recipientContext:expect.objectContaining({chatType:'p2p',senderId:'ou_requester'})}));
+  expect(prepare).toHaveBeenCalledWith(expect.objectContaining({text:'[Report](/tmp/report.md)',mediaUrls:['/tmp/evidence.csv'],agentId:'main',mediaRuntime:runtime.media,workerReport:{sessionName:event.topic,finishedAt:1793203500000},recipientContext:expect.objectContaining({chatType:'p2p',senderId:'ou_requester'})}));
   expect(JSON.stringify(mocks.edit.mock.calls)).toContain('https://feishu.cn/docx/doc');expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain('/tmp/');
   expect(readAsyncTaskCard(cardStateDir,event.jobId,privateEvent.provenance)?.result).toBe('[Report](https://feishu.cn/docx/doc)');
  } finally {prepare.mockRestore();}
@@ -442,7 +442,8 @@ it('acknowledges the summarized completion on its original card before handing u
  const prepare=vi.spyOn(documentDelivery,'prepareFeishuDocumentDelivery');
  try {
   bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original-card'});
-  const receipt=vi.fn();await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:receipt});
+  const receipt=vi.fn();await deliverCodexCompletion({...event,topic:'订单导出排查',finishedAt:1793203500000},{beforeSend:vi.fn(),onReceipt:receipt});
+  expect(stage).toHaveBeenCalledWith(expect.objectContaining({workerReport:{sessionName:'订单导出排查',finishedAt:1793203500000}}));
   expect(prepare).not.toHaveBeenCalled();expect(mocks.edit).toHaveBeenCalledOnce();
   expect(JSON.stringify(mocks.edit.mock.calls)).toContain('[完整报告](https://feishu.cn/docx/status)');expect(receipt).toHaveBeenCalledWith(expect.objectContaining({messageId:'original-card'}));
   expect(activate).toHaveBeenCalledWith(cardStateDir,expect.objectContaining({id:'stage'}),'original-card',false,'',false);

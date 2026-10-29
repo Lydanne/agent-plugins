@@ -225,7 +225,7 @@ Object.assign(sharedHints, {
   "documentDelivery.maxTotalMb": hint("总附件大小上限 MB / Maximum total size MB", "未配置保留默认；账号配置覆盖全局。 / Unset values preserve defaults; account settings override global settings."),
   "documentDelivery.maxTextChars": hint("正文字符上限 / Maximum document characters", "未配置保留默认；账号配置覆盖全局。 / Unset values preserve defaults; account settings override global settings."),
   "documentDelivery.textExtensions": hint("正文导入扩展名 / Text import extensions", "未配置保留默认；账号配置覆盖全局。 / Unset values preserve defaults; account settings override global settings."),
-  "documentDelivery.titleTemplate": hint("文档标题模板 / Document title template", "支持 {filename}。 / Supports {filename}."),
+  "documentDelivery.titleTemplate": hint("文档标题模板 / Document title template", "支持 {filename}；Worker 报告默认使用会话名称和北京时间完成日期，自定义模板还支持 {sessionName}、{date}。 / Supports {filename}; Worker reports default to session name and Beijing completion date, with {sessionName} and {date} available in custom templates."),
   "documentDelivery.linkTemplate": hint("聊天链接模板 / Chat link template", "支持 {title}、{url}；不要省略 {url}。 / Supports {title}, {url}; retain {url}."),
   "documentDelivery.grantToTarget": hint("向目标聊天授权 / Grant target access", "默认向目标聊天或用户授予查看权限，不启用公开链接。 / Grant the target chat or user access without public sharing."),
   "documentDelivery.permission": hint("目标查看权限 / Target permission", "未配置保留默认；账号配置覆盖全局。 / Unset values preserve defaults; account settings override global settings."),

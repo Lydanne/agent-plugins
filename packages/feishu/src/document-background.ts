@@ -17,6 +17,7 @@ import {workingResultCard} from "./working-card.js";
 import {readAsyncTaskCard,prepareAsyncCardResult,acceptAsyncCardResult} from "./async-task-card.js";
 import {runFeishuWorkingTurn} from "./working-turn-queue.js";
 import {withinCardTableLimit} from "./presentation-card.js";
+import {reportDocumentTitle} from "./document-delivery.js";
 
 type Source=Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds">;
 type Job={reportInReminder?:boolean;confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"staging_failed"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
@@ -55,7 +56,7 @@ export async function stageBackgroundDocument(params:DeliveryParams & {stateDir:
   const client=createFeishuClient(account);
   const recipient=config?.grantToTarget!==false?resolveDocumentPermissionRecipient(params.to,params.source):undefined;
   return withFeishuRequestContext(check,async()=>{
-    const title=(config?.titleTemplate ?? "{filename}").replaceAll("{filename}",basename(localPaths[0])).slice(0,200);
+    const title=reportDocumentTitle(basename(localPaths[0]),config?.titleTemplate,params.workerReport);
     check();const doc=await createDoc(client,title,config?.folderToken,{grantToRequester:false});
     const url=(config?.urlBase ?? (account.domain==="lark"?"https://www.larksuite.com":"https://feishu.cn")).replace(/\/$/,"")+"/docx/"+doc.document_id;
     const job:Job={id:randomUUID(),source:params.source,agentId:params.agentId,sessionId:params.sessionId,text:params.text ?? "",mediaUrls:params.mediaUrls,documentId:doc.document_id,url,workspaceDir,completionJobId:params.completionJobId,status:"draft"};

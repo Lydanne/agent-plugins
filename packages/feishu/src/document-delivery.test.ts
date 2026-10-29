@@ -12,7 +12,7 @@ vi.mock("./accounts.js",()=>({resolveFeishuRuntimeAccount:mocks.account}));
 vi.mock("./docx.js",()=>({createDoc:mocks.create,writeDoc:mocks.write}));
 vi.mock("./runtime.js",()=>({getFeishuRuntime:()=>({media:{loadWebMedia:mocks.load}})}));
 vi.mock("./client.js",()=>({createFeishuClient:()=>({im:{message:{create:mocks.messageCreate,reply:mocks.messageReply,get:mocks.messageGet,patch:mocks.messagePatch}},docx:{documentBlockChildren:{create:mocks.childrenCreate,get:mocks.childrenGet},documentBlock:{patch:mocks.patch}},drive:{media:{uploadAll:mocks.upload},permissionMember:{create:mocks.permission}}})}));
-import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient} from "./document-delivery.js";
+import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient,reportDocumentTitle} from "./document-delivery.js";
 import {withFeishuSendContext} from "./send-context.js";
 import {createFeishuClient} from "./client.js";
 import {sendMessageFeishu,sendCardFeishu,editMessageFeishu} from "./send.js";
@@ -25,6 +25,30 @@ beforeEach(()=>{
  mocks.childrenGet.mockResolvedValue({code:0,data:{items:[{block_type:23,block_id:"inner-file"}]}});
  mocks.messageCreate.mockResolvedValue({code:0,data:{message_id:"message-test"}});mocks.messageReply.mockResolvedValue({code:0,data:{message_id:"reply-test"}});mocks.messagePatch.mockResolvedValue({code:0});mocks.messageGet.mockResolvedValue({code:0,data:{items:[{message_id:"original",chat_id:"oc_target",msg_type:"text",body:{content:"{}"}}]}});
  mocks.upload.mockResolvedValue({file_token:"file-token"});mocks.patch.mockResolvedValue({code:0});mocks.permission.mockResolvedValue({code:0});
+});
+describe("Worker report titles",()=>{
+ const finishedAt=Date.parse('2026-10-28T16:05:00Z');
+ it('uses the session name and completion date in Beijing time, reserving the date within 200 characters',()=>{
+  expect(reportDocumentTitle('report.md',undefined,{sessionName:'  订单导出\n排查  ',finishedAt})).toBe('订单导出 排查 2026-10-29');
+  const title=reportDocumentTitle('report.md','{filename}',{sessionName:'长'.repeat(250),finishedAt});
+  expect(title).toHaveLength(200);expect(title.endsWith(' 2026-10-29')).toBe(true);
+ });
+ it('keeps ordinary file titles and custom templates, substituting each placeholder only once',()=>{
+  expect(reportDocumentTitle('report.md')).toBe('report.md');
+  expect(reportDocumentTitle('report.md','Result {filename}',{sessionName:'任务',finishedAt})).toBe('Result report.md');
+  expect(reportDocumentTitle('report.md','{sessionName} {date} {filename}',{sessionName:'名称含{date}',finishedAt})).toBe('名称含{date} 2026-10-29 report.md');
+ });
+ it('falls back safely for missing names or invalid completion timestamps',()=>{
+  vi.spyOn(Date,'now').mockReturnValue(finishedAt);
+  try {
+   for(const timestamp of [undefined,NaN,Infinity,1e20])expect(reportDocumentTitle('report.md',undefined,{sessionName:' ',finishedAt:timestamp})).toBe('Worker报告 2026-10-29');
+  } finally {vi.mocked(Date.now).mockRestore();}
+ });
+ it('uses Worker titles during direct upload and does not share cached documents across session names or dates',async()=>{
+  const input={cfg:{},to:'chat:oc_target',text:'[报告](/workspace/report.md)'};
+  for(const workerReport of [{sessionName:'订单排查',finishedAt},{sessionName:'导出排查',finishedAt},{sessionName:'导出排查',finishedAt:finishedAt+86400000}])await prepareFeishuDocumentDelivery({...input,workerReport});
+  expect(mocks.create.mock.calls.map(call=>call[1])).toEqual(['订单排查 2026-10-29','导出排查 2026-10-29','导出排查 2026-10-30']);
+ });
 });
 describe("local artifact detection",()=>{
  it("finds only explicit local Markdown links and ignores prose and code paths",()=>{

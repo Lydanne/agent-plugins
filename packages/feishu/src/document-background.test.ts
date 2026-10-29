@@ -41,6 +41,16 @@ it("creates a readable target-scoped placeholder without loading the full report
  expect(mocks.write).toHaveBeenCalledWith(expect.anything(),"cloud",expect.stringContaining("上传中"),expect.any(Number),expect.any(Number));
  expect(mocks.permission).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({member_type:"openchat",member_id:"chat"}),params:{type:"docx",need_notification:false}}));
  expect(mocks.prepare).not.toHaveBeenCalled();expect(rows()[0].status).toBe("draft");
+ expect(mocks.create).toHaveBeenCalledWith(expect.anything(),'report.md',undefined,{grantToRequester:false});
+});
+it('names the placeholder after its Worker session and Beijing completion date before uploading',async()=>{
+ const workerReport={sessionName:'订单导出排查',finishedAt:Date.parse('2026-10-28T16:05:00Z')};
+ const pending=(await stageBackgroundDocument({cfg:{},stateDir:root,source,agentId:'main',sessionId:'current',to:'chat:chat',text:`总结 [报告](${file})`,workerReport}))!;
+ expect(mocks.create).toHaveBeenCalledWith(expect.anything(),'订单导出排查 2026-10-29',undefined,{grantToRequester:false});
+ activateBackgroundDocument(root,pending,'original');start();
+ await vi.waitFor(()=>expect(rows()[0].status).toBe('done'));
+ expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({existingDocumentId:'cloud'}));
+ expect(mocks.create).toHaveBeenCalledOnce();
 });
 it.each(['p2p','private'] as const)('shares a %s placeholder with its trusted requester and carries the same grant into upload',async chatType=>{
  const privateSource={...source,chatType,senderId:'ou_requester'};
