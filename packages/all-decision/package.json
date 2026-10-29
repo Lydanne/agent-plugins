@@ -1,0 +1,17 @@
+{
+  "name": "all-decision",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AllDecision: cloud decision providers for OpenClaw",
+  "engines": { "node": ">=24.19.0" },
+  "openclaw": {
+    "extensions": ["./index.mjs"],
+    "compat": { "pluginApi": ">=2026.10.8" }
+  },
+  "scripts": {
+    "build": "node --check index.mjs && node --check configuration.mjs && node --check provider.mjs && node --check transport.mjs && node --check providers/openai.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "files": ["index.mjs", "configuration.mjs", "provider.mjs", "transport.mjs", "providers", "openclaw.plugin.json", "README.md"]
+}

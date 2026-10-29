@@ -50,6 +50,8 @@ importers:
 
   packages/agent-worker: {}
 
+  packages/all-decision: {}
+
   packages/feishu:
     dependencies:
       '@larksuiteoapi/node-sdk':

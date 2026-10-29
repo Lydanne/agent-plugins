@@ -1,0 +1,120 @@
+{
+  "id": "all-decision",
+  "name": "AllDecision",
+  "version": "0.1.0",
+  "description": "统一接入云厂商决策模型；首版支持 OpenAI Decisions。",
+  "categories": [
+    "models"
+  ],
+  "enabledByDefault": false,
+  "contracts": {
+    "decisionProviders": [
+      "all-decision"
+    ]
+  },
+  "decisionModels": [
+    {
+      "provider": "all-decision",
+      "id": "openai/gpt-6-luna",
+      "name": "AllDecision · OpenAI GPT-6 Luna",
+      "capabilities": {
+        "questionTypes": [
+          "boolean",
+          "choice",
+          "score"
+        ],
+        "maxQuestions": 256,
+        "maxChoiceAlternatives": 255,
+        "maxScoreLevels": 10,
+        "requiresBooleanCriteria": false,
+        "confidence": "provider-specific"
+      }
+    }
+  ],
+  "configContracts": {
+    "secretInputs": {
+      "paths": [
+        {
+          "path": "providers.openai.apiKey",
+          "expected": "string",
+          "ownerKind": "capability"
+        }
+      ]
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "providers": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "openai": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "baseUrl": {
+                "type": "string",
+                "format": "uri",
+                "default": "https://api.openai.com/v1"
+              },
+              "apiKey": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source",
+                  "provider",
+                  "id"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "store",
+                      "env",
+                      "file",
+                      "exec"
+                    ]
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "providers": {
+      "label": "云厂商 / Cloud providers"
+    },
+    "providers.openai": {
+      "label": "OpenAI Decisions"
+    },
+    "providers.openai.enabled": {
+      "label": "启用 OpenAI / Enable OpenAI"
+    },
+    "providers.openai.baseUrl": {
+      "label": "API 地址 / API base URL",
+      "help": "默认 https://api.openai.com/v1。必须为 HTTPS，不能包含凭证、查询参数或片段。"
+    },
+    "providers.openai.apiKey": {
+      "label": "API 密钥引用 / API key SecretRef",
+      "sensitive": true,
+      "help": "在宿主 Secrets 中配置引用；仅读取当前已准备的 SecretRef，不读取聊天订阅登录态。"
+    }
+  }
+}
