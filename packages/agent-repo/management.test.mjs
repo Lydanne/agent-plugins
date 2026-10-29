@@ -85,3 +85,24 @@ test('task cards open the selected schedule and retain history navigation',async
  click(f.container,'关闭');ctx.host.sessions.rows=[{key:'agent:other:feishu:group:test-group',label:'错误群名'}];click(f.container,'刷新任务');await settle();
  assert.match(f.container.querySelector('.ar-task-card').textContent,/群名称未获取/);assert.ok(!f.container.querySelector('.ar-task-card').textContent.includes('错误群名'));
 });
+
+test('task cards expose confirmed stop, start and delete actions for the selected plan',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();
+ const plans=[{id:'a',name:'Active',status:'enabled',enabled:true},{id:'b',name:'Paused',status:'paused',enabled:false}].map(p=>({...p,revision:'v1',sourceValid:true,chatId:'group',requester:'User',projectId:'demo',task:'Summarize',constraints:'Read only',schedule:{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}}));
+ ctx.props.section='tasks';ctx.host.connection.canWrite=true;
+ ctx.host.request=async(method,p)=>{calls.push(p);return {ok:true,result:p.actionId==='projects-scheduleCatalog'?{available:true,tasks:plans,operations:[]}:p.actionId==='projects-scheduleManage'?{status:'succeeded',id:p.payload.id}:p.actionId==='projects-list'?{...catalog,scheduledTasks:plans.map(t=>({...t,taskId:'scheduled-request:'+t.id,type:'scheduled-request',nativeAvailable:true,scope:{label:'Group'},records:[]}))}:{}};};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
+ for(const [label,id,action] of [['停止Active','a','pause'],['开始Paused','b','resume'],['删除Paused','b','remove']]){
+  f.container.querySelector(`[aria-label="${label}"]`).click();await settle();
+  assert.match(f.container.querySelector('dialog').textContent,/确认/);
+  const before=calls.filter(c=>c.actionId==='projects-scheduleManage').length;
+  click(f.container,'确认执行');await settle();
+  const writes=calls.filter(c=>c.actionId==='projects-scheduleManage');assert.equal(writes.length,before+1);
+  assert.equal(writes.at(-1).payload.id,id);assert.equal(writes.at(-1).payload.action,action);assert.equal(writes.at(-1).agentId,'main');
+  click(f.container,'关闭');
+ }
+ f.container.querySelector('[aria-label="查看Paused"]').click();await settle();click(f.container,'管理此任务');await settle();
+ assert.equal(f.container.querySelectorAll('dialog').length,1);assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'Paused');
+ click(f.container,'关闭');ctx.host.connection.canWrite=false;ctx.notify();await settle();
+ for(const label of ['停止Active','开始Paused','删除Paused'])assert.equal(f.container.querySelector(`[aria-label="${label}"]`).disabled,true);
+});

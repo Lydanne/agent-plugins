@@ -536,7 +536,7 @@
 .ar-schedule-form details{padding:12px 0;border-block:1px solid #8882}
 .ar-schedule-form summary{cursor:pointer}
 .ar-schedule-manager .ar-schedule-primary{background:#496d63;color:#fff;border-color:#496d63;padding:9px 16px;justify-self:start}
-.ar-schedule-manager .ar-schedule-danger{color:#ac4545}
+.ar-panel .ar-schedule-danger,.ar-schedule-manager .ar-schedule-danger{color:#ac4545}
 .ar-schedule-manager button:disabled{opacity:.45;cursor:not-allowed}
 .ar-schedule-manager :is(input,select):focus-visible{outline:2px solid #5685ad;outline-offset:2px}
 .ar-schedule-manager .ar-schedule-preview{padding:10px 12px;background:#6d8ea110;border-radius:6px;font-size:13px;margin:12px 0}
@@ -561,7 +561,7 @@
 .ar-management .ar-task-row-top strong{font-size:16px;font-weight:600;line-height:1.5}
 .ar-management .ar-task-row-meta{font-size:13px;line-height:1.7;margin-top:6px}
 .ar-management .ar-task-row-bottom{display:flex;flex-direction:column;align-items:flex-start;gap:8px;border-top:1px solid var(--ar-line);padding-top:16px;margin-top:18px;font-size:12px}
-.ar-management .ar-task-card-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px;border-top:1px solid var(--ar-line);font-size:12px}
+.ar-management .ar-task-card-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:12px;padding:12px 20px;border-top:1px solid var(--ar-line);font-size:12px}
 .ar-management .ar-task-card-actions button{font-size:13px;padding:6px 12px}
 .ar-management .ar-sync-heading{justify-content:space-between}
 .ar-management .ar-sync-heading>.ar-meta{font-size:13px}
