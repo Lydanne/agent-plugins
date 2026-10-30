@@ -29,6 +29,7 @@ export function graphDatabase(root){
    db.prepare('INSERT INTO graph_meta VALUES(?,?)').run('migration-v2',now());
  });
  migrateDatabase(db,'graph-recycle-v1',()=>{if(db.prepare("SELECT 1 FROM graph_meta WHERE key='recycle-v1'").get())return;for(const row of db.prepare("SELECT value FROM graph_nodes WHERE status='deleted'").all()){const node=JSON.parse(row.value);if(!node.legacyPersonId&&!db.prepare('SELECT 1 FROM recycle_items WHERE id=?').get(node.id))recyclePut(db,{id:node.id,kind:'entity',name:node.name,revision:node.revision});}db.prepare('INSERT OR IGNORE INTO graph_meta VALUES(?,?)').run('recycle-v1',now());});
+ migrateDatabase(db,'graph-sync-runs-v1',()=>db.exec('CREATE TABLE graph_sync_runs(source_id TEXT NOT NULL,request_id TEXT NOT NULL,started_at TEXT NOT NULL,status TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(source_id,request_id));CREATE INDEX graph_sync_runs_latest ON graph_sync_runs(source_id,started_at DESC)'));
  return db;
  }catch(e){db.close();throw e;}
 }
