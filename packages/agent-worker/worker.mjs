@@ -9,6 +9,7 @@ import {appendFileSync,statSync,existsSync,rmSync,realpathSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {readJson,writeJson} from './jobs.mjs';
+import {CONTEXT_REPLY_VALIDITY_MS} from './context-request.mjs';
 import {executeQuery} from './index.mjs';
 
 export async function runWorker({root,id,params,scope,runtime,execute=executeQuery,pollMs=1000}) {
@@ -65,7 +66,11 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
    const count=questions.filter(question=>(question.requestKind??'context')===kind).length;
    if(count>=(kind==='plugin'?50:5))throw Error(kind==='plugin'?'Plugin request limit reached':'Context question limit reached');
    if(typeof output.sessionId!=='string')throw Error('Context request has no Worker session');
-   const question={...output.contextRequest,questionId:randomUUID(),createdAt:Date.now(),expiresAt:Date.now()+24*60*60*1000};
+   const replyTimeout=runtime?.mainReplyTimeoutMs;
+   if(replyTimeout!==undefined&&(!Number.isInteger(replyTimeout)||replyTimeout<60000||replyTimeout>CONTEXT_REPLY_VALIDITY_MS))throw Error('Invalid mainReplyTimeoutMs execution snapshot');
+   const createdAt=Date.now(),question={...output.contextRequest,questionId:randomUUID(),createdAt,expiresAt:createdAt+(replyTimeout??CONTEXT_REPLY_VALIDITY_MS)};
+   // Old admitted execution snapshots keep their original 24-hour contract.
+   if(replyTimeout!==undefined)question.mainReplyTimeoutMs=replyTimeout;else delete question.mainReplyTimeoutMs;
    job.questions=[...(job.questions??[]),question];job.contextRequest=question;job.resumeSessionId=output.sessionId;job.status='awaiting_main';job.progress=question.question;await holdJobWorkspace(runtime??{});if(job.provenance?.automation){checkCancellation();controller.signal.throwIfAborted();}
    if(job.notification)job.notification={state:'pending',eventKey:question.questionId,createdAt:Date.now()};
    recordEvent({event:'worker.context_request',time:Date.now(),...question});

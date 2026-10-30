@@ -197,6 +197,7 @@ Codex 范本结构如下，参数依据 [Codex 非交互模式](https://learn.ch
 | `hermesTemplates` | 按 ID 管理 CLI 命令和参数模板；默认 codex。 |
 | `approvalMode` | 默认 `dangerously-bypass-approvals-and-sandbox`；可选 `read-only`、`workspace-write`。技能刷新轮次始终只读。 |
 | `taskQueues`、`defaultQueueId` | 按 ID 添加的队列配置与默认队列；默认 short 和 long。 |
+| `mainReplyTimeoutMs` | 等待 Main 回复时限，默认 1800000 毫秒（30 分钟），范围 60000–86400000；新任务保存执行快照，既有任务不追溯修改。 |
 | `timeoutMs` | 短任务执行总时限，默认 1800000 毫秒（30 分钟）；新任务累计各执行轮次，排队及等待补充时间不计入。 |
 | `longTimeoutMs` | 长任务执行总时限，默认 10800000 毫秒（3 小时）。 |
 | `executorInstructions`、`businessDataPolicy` | 完整替换执行器职责与业务数据展示规则；默认限制业务写入范围并禁止 Git 写操作；`{projectDir}` 在执行和委派提示中替换为当前 `cwd`。 |
@@ -476,7 +477,7 @@ Main 调用同一个工具：`{"action":"reply","jobId":"原任务 ID","question
 
 等待用户输入超过 3 分钟时，宿主先重新核验来源，投递 timeoutRequestedAt 给 Main，最多给予 60 秒核对确定信息；Main 已知则 reply，未知则跳过，不能再次等待。Main 未及时处理时宿主自动在原 jobId/CLI 会话中续接；缺失信息标为未知，跳过依赖该信息或新增授权的步骤，继续原授权内可完成的工作。超时不是用户回答或许可，不自动选择账号、不重做已执行操作；记录 answerSource=user_wait_timeout 和审计事件。已有 awaiting_user 记录按持久化 waitingForUserAt 计算，重启不重置计时；没有可验证来源或授权服务时保持等待。
 
-等待时释放执行槽位及业务资源锁，但保留同聊天同 topic 的顺序约束。问题 24 小时有效，每个 job 的普通信息追问（requestKind=context，省略时默认）最多 5 次，插件请求（requestKind=plugin）单独最多 50 次，不占信息追问额度；等待可取消，来源撤回或任务修订会取消，超时形成终态。相同问题相同回答幂等，不同回答拒绝覆盖；失败、取消、超时任务不能恢复。问题与回复持久化，重启后继续调度，侧边栏显示等待状态和 Main/Worker 交互。回复不生成新业务轮次或新 job；单次恢复执行仍受配置的执行时限约束。
+等待时释放执行槽位及业务资源锁，但保留同聊天同 topic 的顺序约束。新任务的问题先等待 Main，默认 30 分钟，可通过 `mainReplyTimeoutMs` 配置；超时形成 `timed_out` 终态，保留原任务与上下文，不自动重跑、不生成代答。Main 在有效期内调用 `await_user` 后使用原等待用户策略及 24 小时回复有效期，重复调用不延长已有等待。旧执行快照和已有等待问题保留原截止时间。每个 job 的普通信息追问（requestKind=context，省略时默认）最多 5 次，插件请求（requestKind=plugin）单独最多 50 次，不占信息追问额度；等待可取消，来源撤回或任务修订会取消，超时形成终态。相同问题相同回答幂等，不同回答拒绝覆盖；失败、取消、超时任务不能恢复。问题与回复持久化，重启后继续调度，侧边栏显示等待状态和 Main/Worker 交互。回复不生成新业务轮次或新 job；单次恢复执行仍受配置的执行时限约束。
 
 此通道是结束 CLI 当前轮次后再恢复，并非执行过程中即时注入消息。Worker 不注册飞书聊天工具；这不等同于操作系统凭证隔离。
 

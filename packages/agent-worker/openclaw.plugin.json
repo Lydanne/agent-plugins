@@ -492,6 +492,13 @@
           }
         },
         "description": "自动化任务 / Automation tasks"
+      },
+      "mainReplyTimeoutMs": {
+        "type": "integer",
+        "default": 1800000,
+        "minimum": 60000,
+        "maximum": 86400000,
+        "description": "等待 Main 超时（毫秒） / Main reply timeout (ms)"
       }
     }
   },
@@ -673,6 +680,10 @@
     },
     "taskQueues.*.hermesVariables.speed": {
       "label": "速度（空值使用 CLI 默认）"
+    },
+    "mainReplyTimeoutMs": {
+      "label": "等待 Main 超时（毫秒） / Main reply timeout (ms)",
+      "help": "默认 1800000 毫秒（30 分钟），允许 1 分钟至 24 小时。新任务保存此等待 Main 时限；到期结束为 timed_out，保留上下文，不自动重跑。旧任务保留原截止时间；await_user 后继续使用原用户等待策略。"
     }
   },
   "controlUi": {

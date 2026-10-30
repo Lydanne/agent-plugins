@@ -112,12 +112,13 @@ test('detached workers consume persisted configuration even after the scheduling
  let current=config;
  const jobs=createJobs({root:join(config.state,'jobs'),node:'/nonexistent/scheduler-default-node',worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:()=>current,logger:console});
  const accepted=await jobs.run(params,scope);
- current={...config,...singleModel('changed-after-admission')};
+ current={...config,mainReplyTimeoutMs:60000,...singleModel('changed-after-admission')};
  const complete=await jobs.wait(accepted.jobId,scope,5);
  assert.equal(complete.status,'completed');
  const result=JSON.parse(complete.result.content[0].text);
  assert.equal(result.model,'fixture-model');assert.equal(result.reportDirectory,'reports/'+accepted.jobId);
  assert.equal(readJson(join(config.state,'jobs',accepted.jobId+'.request.json')).runtime.model,'fixture-model');
+ assert.equal(readJson(join(config.state,'jobs',accepted.jobId+'.request.json')).runtime.mainReplyTimeoutMs,config.mainReplyTimeoutMs);
 });
 
 test('registration uses configured storage',async t=>{
@@ -290,4 +291,10 @@ test('source-control endpoint follows plugin service lifecycle without adding ch
  control.start();control.start();assert.equal(revokeWorkerSources(event).accepted,true);
  control.stop();assert.equal(revokeWorkerSources(event).accepted,false);
  assert.equal(sourceTaskBridge.recalls.size,before);
+});
+
+test('Main reply timeout defaults to thirty minutes and rejects unsafe configuration',()=>{
+ assert.equal(resolveConfiguration().mainReplyTimeoutMs,1800000);
+ for(const value of [0,59999,86400001,1.5,'1800000'])assert.throws(()=>resolveConfiguration({mainReplyTimeoutMs:value}),/mainReplyTimeoutMs/);
+ assert.equal(resolveConfiguration({mainReplyTimeoutMs:60000}).mainReplyTimeoutMs,60000);assert.equal(resolveConfiguration({mainReplyTimeoutMs:86400000}).mainReplyTimeoutMs,86400000);
 });

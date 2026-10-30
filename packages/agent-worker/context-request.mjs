@@ -1,3 +1,4 @@
+export const CONTEXT_REPLY_VALIDITY_MS=24*60*60*1000;
 export function validatePluginCall(value){
  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!['callId','capability','arguments','purpose'].includes(k)))throw Error('Invalid plugin call');
  for(const k of ['callId','capability','purpose'])if(typeof value[k]!=='string'||!value[k].trim()||value[k].length>(k==='purpose'?1000:100))throw Error('Invalid plugin call '+k);

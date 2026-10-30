@@ -5,8 +5,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {explainQueryError} from './diagnostics.mjs';
-import {parseContextRequest,validateContextAnswers} from './context-request.mjs';
+import {parseContextRequest,validateContextAnswers,CONTEXT_REPLY_VALIDITY_MS} from './context-request.mjs';
 import {runWorker} from './worker.mjs';
+import {resolveConfiguration} from './configuration.mjs';
 import {createJobs,readJson,writeJson,requestKeyFor} from './jobs.mjs';
 import {createCompletionService,completionEvent} from './completion.mjs';
 import {createSessionInspector} from './session-inspector.mjs';
@@ -18,7 +19,7 @@ function fixture(){
  writeJson(join(root,id+'.request.json'),{params,scope});
  return {state,root,id,scope,params,provenance,close:()=>rmSync(state,{recursive:true,force:true})};
 }
-async function ask(f){return runWorker({...f,execute:async()=>({content:[{type:'text',text:JSON.stringify({contextRequest:question,sessionId:'original-thread',result:JSON.stringify({type:'request',...question})})}]})});}
+async function ask(f,runtime){return runWorker({...f,runtime,execute:async()=>({content:[{type:'text',text:JSON.stringify({contextRequest:question,sessionId:'original-thread',result:JSON.stringify({type:'request',...question})})}]})});}
 test('only explicit bounded context request protocol pauses work',()=>{
  assert.equal(explainQueryError(Error('No matching pending question')).code,'QUESTION_UNAVAILABLE');assert.equal(explainQueryError(Error('Original task authorization is no longer current')).code,'CONTEXT_REPLY_FORBIDDEN');
  assert.equal(parseContextRequest('信息不足，请确认'),undefined);assert.equal(parseContextRequest('{"type":"other"}'),undefined);
@@ -320,5 +321,33 @@ test('submitted input gets three minutes and recovery preserves its text and rec
   assert.equal(done.status,'completed');assert.equal(done.questions[0].answerSource,'user_text');
   assert.equal(done.questions[0].answerMessageId,'original-answer');assert.equal(done.questions[0].resumeReason,'user_wait_timeout');
   assert.match(done.result.params.mainReplies[0].answer,/具体时间未知/);assert.doesNotMatch(done.result.params.mainReplies[0].answer,/未收到输入/);
+ }finally{f.close();}
+});
+
+
+test('new execution snapshots bound Main waits to the configured duration and preserve legacy deadlines',async()=>{
+ for(const milliseconds of [1800000,300000]){
+  const f=fixture();try{
+   const runtime=resolveConfiguration({state:f.state,cwd:f.state,mainReplyTimeoutMs:milliseconds});const job=await ask(f,runtime),q=job.contextRequest;
+   assert.equal(q.expiresAt-q.createdAt,milliseconds);assert.equal(q.mainReplyTimeoutMs,milliseconds);
+  }finally{f.close();}
+ }
+ const f=fixture();try{const job=await ask(f);assert.equal(job.contextRequest.expiresAt-job.contextRequest.createdAt,CONTEXT_REPLY_VALIDITY_MS);assert.equal(job.contextRequest.mainReplyTimeoutMs,undefined);
+  const saved=JSON.parse(JSON.stringify(job.contextRequest));const jobs=createJobs({root:f.root,node:process.execPath,worker:'unused',getRuntime:()=>({mainReplyTimeoutMs:60000})});jobs.tick();assert.deepEqual(jobs.status(f.id,f.scope).contextRequest,saved);
+ }finally{f.close();}
+});
+test('expired Main waits finish without spawning or replaying the original task',async()=>{
+ const f=fixture();try{
+  const job=await ask(f,{state:f.state,cwd:f.state,mainReplyTimeoutMs:60000});job.contextRequest.expiresAt=Date.now()-1;job.questions[0]={...job.contextRequest};writeJson(join(f.root,f.id+'.json'),job);
+  const original=readFileSync(join(f.root,f.id+'.request.json'),'utf8'),jobs=createJobs({root:f.root,node:process.execPath,worker:'must-not-start'});jobs.tick();const after=jobs.status(f.id,f.scope);
+  assert.equal(after.status,'timed_out');assert.equal(after.questions[0].answer,undefined);assert.equal(readFileSync(join(f.root,f.id+'.request.json'),'utf8'),original);assert.ok(after.finishedAt);
+  await assert.rejects(jobs.reply(f.id,f.scope,job.contextRequest.questionId,'late',f.provenance),/cannot accept a reply/);
+ }finally{f.close();}
+});
+test('Main handoff retains user wait validity and repeated await_user does not extend it',async()=>{
+ const f=fixture();try{
+  const job=await ask(f,{state:f.state,cwd:f.state,mainReplyTimeoutMs:60000}),jobs=createJobs({root:f.root,node:process.execPath,worker:'unused'});
+  const first=await jobs.awaitUser(f.id,f.scope,job.contextRequest.questionId,f.provenance);assert.equal(first.status,'awaiting_user');assert.equal(first.contextRequest.expiresAt-first.contextRequest.waitingForUserAt,CONTEXT_REPLY_VALIDITY_MS);
+  const second=await jobs.awaitUser(f.id,f.scope,job.contextRequest.questionId,f.provenance);assert.equal(second.contextRequest.expiresAt,first.contextRequest.expiresAt);assert.equal(second.contextRequest.waitingForUserAt,first.contextRequest.waitingForUserAt);
  }finally{f.close();}
 });
