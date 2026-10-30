@@ -24,3 +24,5 @@ for(const name of ['workspace-pool.mjs','workspace-lock.mjs'])await copyFile(new
 await copyFile(new URL('../packages/agent-repo-api/worker-source.mjs',import.meta.url),'dist/worker-source-api.mjs');
 
 await copyFile(new URL('../packages/agent-repo-api/plugin-cli.mjs',import.meta.url),'dist/plugin-cli.mjs');
+
+await copyFile(new URL('../packages/agent-repo-api/worker-cli.mjs',import.meta.url),'dist/worker-cli.mjs');

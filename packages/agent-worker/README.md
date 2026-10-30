@@ -18,7 +18,7 @@
 
 Worker 对任务、业务术语、材料、证据冲突、工具用法或权限边界有疑问时，均可按 Main 协作技能向 Main 提问，不限于补参数或调用插件。先核对已有材料及可直接查证的信息，仍有疑问及时说明已知事实、实际核对结果、影响与具体协作需求；非必要疑点不阻塞独立步骤。Main 先解释或查证，确需用户决定时再询问原用户，始终沿用原任务协作协议和授权范围。
 
-Main 协作技能由 **agent-repo** 管理，Worker 不生成或安装技能。每次委派前，agent-repo 通过宿主公开的 `plugins.list` 和 `tools.catalog` 读取当前 Main Agent 的已加载插件与候选工具，生成全局 Codex 技能 `<codexHome>/skills/openclaw-main-<AgentID>/SKILL.md`（长 Agent ID 使用带哈希的短名），以及仅显式调用的 `agents/openai.yaml`。目录只包含插件/工具名称、版本、用途和通信协议，不复制配置、凭证或完整上游技能正文。工具目录是会话过滤前的候选清单，不代替实际会话授权。
+Main 协作技能由 **agent-repo** 管理，Worker 不生成或安装技能。每次委派前，agent-repo 通过宿主公开的 `plugins.list` 和 `tools.catalog` 读取当前 Main Agent 的已加载插件与候选工具，生成全局 Codex 技能 `~/.agents/skills/openclaw-main-<AgentID>/SKILL.md`（长 Agent ID 使用带哈希的短名），以及仅显式调用的 `agents/openai.yaml`。目录只包含插件/工具名称、版本、用途和通信协议，不复制配置、凭证或完整上游技能正文。工具目录是会话过滤前的候选清单，不代替实际会话授权。
 
 目录查询失败时，仅复用通过归属和内容哈希校验的上一已发布技能；没有有效版本时拒绝新任务。Main 回复先持久化并受理，再异步尝试刷新技能；刷新失败或超时不阻断回复及幂等重试，Worker 在后续轮次读取最新已完成发布的版本。
 
@@ -26,7 +26,7 @@ Main 在 `run.responsibility` 简要说明本轮职责，`task` 提供具体任�
 
 Main 可用 `agent_repo action=worker_skill` 手动刷新并查看技能描述符。不同 Agent 的技能与目录分别保存；拒绝覆盖同名非 agent-repo 管理的技能或链接目录。无 Agent Repo provider 的兼容旧模式不自动生成该技能。
 
-Worker 调用 OpenClaw 宿主插件能力必须沿用原任务的 `request → awaiting_main → Main 调用 → reply → Worker 恢复`，包括通过 `feishu_cli`、`feishu_cli_auth` 等插件入口读取技能、执行业务或认证。Worker 可以在原任务授权及自身已有权限内直接使用 Feishu CLI、读取可访问的技能和使用独立登录态；安装、更新及认证遵守原 task/constraints，不因使用 CLI 强制转交 Main。宿主启动 Worker 与执行 CLI 两个子进程边界保留独立的 `LARKSUITE_CLI_*` 配置，仍移除宿主飞书应用凭证及 Gateway token/password；插件内部凭证不下发。这不是文件系统或操作系统沙箱，运行用户仍须管理本地文件访问权限。
+Worker uses task-bound OpenClaw plugin CLI calls directly within the original task/constraints; ordinary calls do not pause for Main. The host injects OPENCLAW_WORKER_ID (a new execution UUID on each resume), OPENCLAW_JOB_ID (stable task ID), a compact OPENCLAW_WORKER_CONTEXT identity, and a short-lived local endpoint/token. `openclaw agent-worker context` reads full context from the host. `plugin list/describe/call` discovers schemas and invokes enabled plugins; dedicated plugin commands inherit the same identity automatically. The host validates the running execution, original source and original Agent/session before passing calls through tools.invoke and its policies. Only misunderstanding, decisions and new authorization go to Main; task orchestration and management remain Main-owned. Gateway/Feishu credentials are never injected into Worker. This is not an OS/filesystem sandbox; permissions for plugins without the shared adapter are not inferred.
 
 参数示例用于模型工具调用。复用已明确的同一问题 topic；尚未找到时用 list 的具体关键词发现一次，不例行加载所有历史。以下示例在无记忆工具的会话中使用 unavailable，实际部署须如实传检索结果。
 

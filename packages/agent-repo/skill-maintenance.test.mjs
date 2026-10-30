@@ -12,7 +12,7 @@ test('Main skill inspection is read-only, first generation works, partial entryp
  const root=await mkdtemp(join(tmpdir(),'main-maintenance-'));
  let dispose;
  try{
-  const api=createSkillMaintenance(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}));
+  const api=createSkillMaintenance(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),{skillsHome:root});
   dispose=registerAgentRepoService({apiVersion:1,agentId:'main',root,listProjects(){},inspectProject(){},prepareExecutionScope(){},prepareWorkerSkill:()=>publishWorkerSkill(root,'main','committed fixture')},{owner:{}});
   const before=await api.snapshot(ctx);assert.equal(before.state,'not_installed');
   const input={providerId:'agent-repo.main-skill',action:'regenerate',confirmed:true,requestId:randomUUID(),expectedRevision:before.revision};

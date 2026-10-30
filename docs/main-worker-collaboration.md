@@ -2,39 +2,28 @@
 
 本页描述当前实现；宿主与渠道都使用可信原任务绑定。Main 始终接收过程记录并核验最终结果。自然语言 constraints 与最终交付方式保持原合同。
 
-## 正常执行与结构化插件协作
+## Task-bound direct plugin CLI
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
     participant M as Main
-    participant H as 宿主
-    participant W as Worker
-    participant P as 已登记本地只读能力
-    U->>M: 目标和已知事实
-    M->>H: run(topic, projectId/repository, task, context, constraints, memory)
-    H->>H: 绑定来源、生成 requestId、解析项目与默认模型
-    H->>W: 冻结执行参数并启动
-    H-->>M: jobId + queued/running（Main 结束本轮）
-    W->>H: requestKind=plugin + pluginCall
-    Note over W,H: 当前 exec 轮结束，保存原会话
-    alt 命中已登记且符合原来源的本地只读能力
-        H-->>M: AgentWorkerObservation: plugin_requested
-        H->>P: 校验过的 person_lookup(openId)
-        P-->>H: 本地资料、来源与观察时间
-        H-->>M: AgentWorkerObservation: plugin_result
-        H->>W: 原 jobId/questionId reply 恢复
-    else 其他能力或无法确定性校验
-        H->>M: AgentWorkerRequest（含结构化参数）
-        M->>H: 原授权内调用插件并 reply
-        H->>W: 恢复原会话
+    participant H as Host
+    participant W as Worker shell
+    participant P as OpenClaw plugin
+    M->>H: Delegate original task, context and constraints
+    H->>W: workerId/jobId + per-execution task capability
+    W->>H: CLI discovery / schema / invocation
+    H->>H: Check running execution, original source and Agent/session
+    H->>P: tools.invoke policy + restored original task context
+    P-->>W: JSON result, same execution round
+    opt Understanding, decision or new authorization required
+        W->>M: Original task context request
+        M->>W: reply on original job/question
     end
-    W-->>H: 报告与实际状态
-    H->>M: AgentWorkerResult + collaboration 摘要
-    M->>U: 核验、说明未完成项并交付
+    W->>M: Completed report for verification
 ```
 
-自动路径减少 Main 模型解释与 FIFO 等待；仍有 exec 暂停/恢复成本。未知能力、写入、认证及需要判断的操作继续由 Main 处理，不提供通用工具执行器。
+Instructions and the candidate catalog are generated under ~/.agents/skills/openclaw-main-<AgentID>/; CLI references are read on demand. Worker identity is per execution, job identity is stable, and no per-job credentials enter shared skills. Ordinary plugin calls do not enter Main or create group cards. Task-bound commands cannot change their Agent/session or use arbitrary RPC/administrative actions. Unknown plugins must opt into the shared adapter; original policies still apply. The old requestKind=plugin/person_lookup path remains compatible with admitted historical tasks. Only misunderstanding, decisions or new authorization need Main collaboration.
 
 ## 超时继续与重新补充
 

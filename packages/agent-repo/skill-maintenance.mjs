@@ -6,9 +6,9 @@ import {workerSkillName} from './worker-skill.mjs';
 import {getAgentRepoService} from './dist/agent-repo-api.mjs';
 import {maintenanceContext,maintenanceRevision,MaintenanceError,createMaintenanceOperations} from './dist/maintenance-api.mjs';
 const hash=value=>createHash('sha256').update(value).digest('hex');
-export function createSkillMaintenance(getConfig){
+export function createSkillMaintenance(getConfig,{skillsHome=join(homedir(),'.agents')}={}){
  const operations=new Map();
- function location(agentId){const raw=getConfig().plugins?.entries?.['agent-worker']?.config?.codexHome??'~/.codex';if(typeof raw!=='string'||!raw.startsWith('/')&&!raw.startsWith('~/'))throw Error('Invalid Codex home');const home=raw.startsWith('~/')?join(homedir(),raw.slice(2)):raw;return join(home,'skills',workerSkillName(agentId));}
+ function location(agentId){return join(skillsHome,'skills',workerSkillName(agentId));}
  function journal(agentId){const directory=location(agentId);if(!operations.has(directory))operations.set(directory,createMaintenanceOperations(join(directory,'..','.'+workerSkillName(agentId)+'.maintenance')));return operations.get(directory);}
  async function snapshot(ctx){
   maintenanceContext(ctx);const harness=getConfig().plugins?.entries?.['agent-worker']?.config?.harness??'codex';if(harness!=='codex')return {apiVersion:1,id:'agent-repo.main-skill',label:'Main 协作技能',kind:'generated-skill',ownerLabel:'AgentRepo · 自动生成',scope:'当前 Agent · '+ctx.agentId,state:'unsupported',observedAt:new Date().toISOString(),fields:[{label:'执行器',value:String(harness)}],skills:[],actions:[]};const directory=location(ctx.agentId);let state='not_installed',revision=null,body='',publishedAt=null,entrypoint='未安装',refresh=null;

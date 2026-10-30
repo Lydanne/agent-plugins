@@ -47,7 +47,7 @@ test('public prompt hook uses trusted workspace only; explicit selection never b
  const f=await fixture(t),hooks={},services=[],codexHome=await mkdtemp(join(f.root,'../codex-home-'));t.after(()=>rm(codexHome,{recursive:true,force:true}));
  const host={plugins:{entries:{'agent-worker':{config:{codexHome}}}}};
  const runtime={gateway:{request:async(method,params)=>method==='plugins.list'?{plugins:[{id:'agent-repo',runtime:{state:'active'}}]}:{agentId:params.agentId,groups:[]}}};
- plugin.register({pluginConfig:{agents:{main:f.binding}},config:host,runtime,registerTool:()=>{},on:(name,hook)=>hooks[name]=hook,registerService:service=>services.push(service)});t.after(()=>services.forEach(s=>s.stop()));
+ plugin.register({pluginConfig:{agents:{main:f.binding}},config:host,runtime,registerTool:()=>{},on:(name,hook)=>hooks[name]=hook,registerService:service=>services.push(service)},{skillsHome:codexHome});t.after(()=>services.forEach(s=>s.stop()));
  services[0].stop();services[0].start();
  const restarted=await scopeRuntime({cwd:f.roots[1],skillContextRoot:f.root,executorInstructions:'fixture',delegationInstructions:'fixture'},{},{agentId:'main'});assert.equal(restarted.cwd,f.roots[1]);assert.equal(restarted.mainCapabilitySkill.agentId,'main');assert.ok(restarted.mainCapabilitySkill.path.startsWith(codexHome));
  const frontend=await hooks.before_prompt_build({prompt:'irrelevant path'},{agentId:'main',workspaceDir:f.roots[2]});assert.ok(frontend.appendSystemContext.includes('"repository":"projects/demo/repositories/frontend"'));

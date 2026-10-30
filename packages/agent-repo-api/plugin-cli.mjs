@@ -1,3 +1,4 @@
+import {connectWorkerCli,readWorkerCliContext} from './worker-cli.mjs';
 import {readFile} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
 
@@ -20,6 +21,7 @@ export function cliSession(options) {
 // One authenticated connection for the whole command: chunks and diagnostic
 // leases are connection-owned. Never weaken their server-side ownership checks.
 export async function connectCli(config,options,{sdk,env=process.env}={}) {
+ const worker=await connectWorkerCli(options,env);if(worker)return worker;
  sdk??=await import('openclaw/plugin-sdk/gateway-runtime');
  const timeout=Number(options.timeout??30000);
  if(!Number.isInteger(timeout)||timeout<1||timeout>3600000)throw Error('--timeout must be 1..3600000 milliseconds');
@@ -73,16 +75,16 @@ export async function sessionOutput(rpc,pluginId,prefix,action,scope,payload) {
  }
  return JSON.parse(chunks.join(''));
 }
-export function registerPluginCli(api,{pluginId,tools,actions,prefix,automation,automationClient,local},{connect=connectCli,write=value=>process.stdout.write(JSON.stringify(value)+'\n')}={}) {
+export function registerPluginCli(api,{pluginId,tools,actions,prefix,automation,automationClient,local},{connect=connectCli,write=value=>process.stdout.write(JSON.stringify(value)+'\n'),env=process.env}={}) {
  api.registerCli?.(({program,config})=>{
   const root=program.command(pluginId).description('Authenticated '+pluginId+' tools and management; preserves server permissions and source checks');
-  const common=command=>command.requiredOption('--agent <id>','Agent ID').option('--session <key>','Session key (default: agent:<id>:main)')
+  const common=command=>command.option('--agent <id>','Agent ID').option('--session <key>','Session key (default: agent:<id>:main)')
    .option('--params <json>','JSON object parameters').option('--params-file <path>','UTF-8 JSON object file')
    .option('--url <url>','Gateway WebSocket URL (requires explicit credentials)').option('--token <token>','Gateway token')
    .option('--password <password>','Gateway password').option('--tls-fingerprint <fingerprint>','Pinned Gateway TLS fingerprint').option('--timeout <ms>','RPC timeout in milliseconds','30000').option('--json','JSON output (always enabled)');
   const execute=(command,handler)=>common(command).action(async options=>{
    let connection;
-   try{const sessionKey=cliSession(options),params=await cliParameters(options);connection=await connect(config,options);
+   try{const worker=readWorkerCliContext(env);options={...options,agent:options.agent??worker?.agentId,session:options.session??worker?.sessionKey};const sessionKey=cliSession(options),params=await cliParameters(options);connection=await connect(config,options,{env});
     const result=await handler(connection.request.bind(connection),params,{agentId:options.agent,sessionKey},options);write({ok:true,result});
    }catch(error){write({ok:false,error:{code:error.code??'PLUGIN_CLI_FAILED',message:error.message},...(error.result?{result:error.result}:{})});process.exitCode=1;}
    finally{connection?.close();}
@@ -112,6 +114,19 @@ export function registerPluginCli(api,{pluginId,tools,actions,prefix,automation,
     }}finally{process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);await request('diagnosticStop',{leaseId:lease.leaseId});}
     return {stopped:true,leaseId:lease.leaseId};
    });
+  if(pluginId==='agent-worker'){
+   root.command('context').description('Read the current task-bound Worker CLI context').action(async()=>{
+    let connection;
+    try{connection=await connectWorkerCli({},env);if(!connection)throw Error('No active Worker context');write({ok:true,result:await connection.request('worker.context',{})});}
+    catch(error){write({ok:false,error:{code:error.code??'WORKER_CONTEXT_UNAVAILABLE',message:error.message}});process.exitCode=1;}
+    finally{connection?.close();}
+   });
+   const workerOnly=handler=>(...args)=>{if(!readWorkerCliContext(env))throw Error('Plugin direct calls require a Worker execution context');return handler(...args);};
+   const plugin=root.command('plugin').description('Task-bound plugin discovery and direct invocation');
+   execute(plugin.command('list'),workerOnly(rpc=>rpc('worker.catalog',{})));
+   execute(plugin.command('describe').requiredOption('--tool <name>','Plugin tool name'),workerOnly((rpc,params,scope,options)=>rpc('tools.invoke',{...scope,name:options.tool,args:params},{describe:true})));
+   execute(plugin.command('call').requiredOption('--tool <name>','Plugin tool name'),workerOnly(async(rpc,params,scope,options)=>toolOutput(await rpc('tools.invoke',{...scope,name:options.tool,args:params}))));
+  }
   if(automation){const group=root.command('automation').description('Source-bound automation RPC; requires configured caller/Agent/project allowlists');
    for(const action of automation)execute(group.command(action),async(rpc,params,scope)=>{
     if(action==='submit'&&(params.agentId!==undefined&&params.agentId!==scope.agentId))throw Error('Automation Agent conflicts with --agent');

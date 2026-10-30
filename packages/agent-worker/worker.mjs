@@ -54,6 +54,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});await persistBoundary();
   await checkJobWorkspace(runtime??{});
+  runtime={...runtime,workerCli:runtime?.workerCli??{context:{version:1,workerId:job.workerId??randomUUID(),jobId:id,agentId:job.provenance?.agentId,sessionKey:scope,task:params.task,constraints:params.constraints}}};
   const attachments=jobSourceAttachments(job.provenance);
   checkCancellation();controller.signal.throwIfAborted();
   const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onProgress:progress=>{job={...job,...progress};persist();}},runtime);

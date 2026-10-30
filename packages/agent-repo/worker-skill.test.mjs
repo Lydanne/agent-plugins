@@ -5,13 +5,13 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {renderWorkerSkill,publishWorkerSkill,createWorkerSkillPublisher} from './worker-skill.mjs';
+import {renderWorkerSkill,publishWorkerSkill,createWorkerSkillPublisher,workerCliReferenceName} from './worker-skill.mjs';
 import {createProjectService} from './project-service.mjs';
 const plugins={plugins:[{id:'feishu',name:'Feishu',version:'1.0',runtime:{state:'active'},config:{secret:'never-export'}},{id:'off',runtime:{state:'disabled'}},{id:'broken',runtime:{state:'service-failed'}}]};
 const catalog={agentId:'main',groups:[{source:'core',tools:[{id:'exec'}]},{source:'plugin',pluginId:'feishu',tools:[{id:'feishu_doc',description:'Read and update docs'}]},{source:'plugin',pluginId:'off',tools:[{id:'disabled_tool'}]}]};
 test('Agent Repo generates a deterministic active-plugin catalog plus protocol without exporting configuration',()=>{
  const body=renderWorkerSkill('main',plugins,catalog);
- for(const value of ['feishu_doc','type=request','reply','自身已有权限内直接使用 Feishu CLI','会话过滤前候选工具'])assert.ok(body.includes(value));
+ for(const value of ['feishu_doc','type=request','reply','直接使用 Feishu CLI','会话过滤前候选工具','OPENCLAW_WORKER_ID','plugin list/describe',workerCliReferenceName])assert.ok(body.includes(value));
  for(const value of ['never-export','disabled_tool','"exec"'])assert.ok(!body.includes(value));
  assert.equal(body,renderWorkerSkill('main',{plugins:plugins.plugins.toReversed()},catalog));
  assert.throws(()=>renderWorkerSkill('other',plugins,catalog));
@@ -46,7 +46,7 @@ test('publication isolates Agents, preserves pinned revisions and keeps global s
 test('publisher queries public host catalogs, coalesces requests and service fixes the trusted Agent',async()=>{
  const root=await mkdtemp(join(tmpdir(),'repo-worker-publisher-'));
  try {
-  const calls=[];const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),async(method,params)=>{calls.push({method,params});return method==='plugins.list'?plugins:catalog;});
+  const calls=[];const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),async(method,params)=>{calls.push({method,params});return method==='plugins.list'?plugins:catalog;},{skillsHome:root});
   const [a,b]=await Promise.all([publisher('main'),publisher('main')]);assert.deepEqual(a,b);assert.equal(calls.length,2);
   assert.deepEqual(calls.find(c=>c.method==='tools.catalog').params,{agentId:'main',includePlugins:true});
   const service=createProjectService({repo:root},'main',()=>({}),undefined,publisher);
@@ -60,7 +60,7 @@ test('catalog outages reuse only a verified previous skill and subsequent refres
   let offline=false,version='1.0';const warnings=[];
   const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),async method=>{
    if(offline)throw Error('catalog unavailable');return method==='plugins.list'?{plugins:plugins.plugins.map(plugin=>({...plugin,version}))}:catalog;
-  },{logger:{warn:message=>warnings.push(message)}});
+  },{skillsHome:root,logger:{warn:message=>warnings.push(message)}});
   offline=true;await assert.rejects(publisher('main'),/catalog unavailable/);
   offline=false;const first=await publisher('main');
   offline=true;assert.deepEqual(await publisher('main'),first);assert.equal(warnings.length,1);
@@ -88,7 +88,7 @@ test('an interrupted update falls back to the committed immutable revision and l
   let offline=true;
   const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:root}}}}}),async method=>{
    if(offline)throw Error('catalog unavailable');return method==='plugins.list'?plugins:catalog;
-  });
+  },{skillsHome:root});
   const cached=await publisher('main');assert.deepEqual(cached,first);
   assert.equal(await readFile(cached.revisionPath,'utf8'),body);
   // A valid uncommitted newer file must not mask corruption of the committed revision.
@@ -102,4 +102,20 @@ test('an interrupted update falls back to the committed immutable revision and l
   if(child&&child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}
   await rm(root,{recursive:true,force:true});
  }
+});
+
+test('global publication retires only the owned legacy entrypoint and preserves queued immutable revisions',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'worker-global-migration-'));
+ try{
+  const legacy=join(root,'codex'),global=join(root,'.agents');
+  const old=await publishWorkerSkill(legacy,'main','legacy protocol');
+  const publisher=createWorkerSkillPublisher(()=>({plugins:{entries:{'agent-worker':{config:{codexHome:legacy}}}}}),async method=>method==='plugins.list'?plugins:catalog,{skillsHome:global});
+  const current=await publisher('main');assert.equal(current.path,join(global,'skills/openclaw-main-main/SKILL.md'));
+  assert.equal(await readFile(old.revisionPath,'utf8'),'legacy protocol');
+  await assert.rejects(readFile(old.path));assert.equal(await readFile(old.path+'.migrated','utf8'),'legacy protocol');
+  const {mainSkillNotice}=await import('../agent-worker/main-capability-skill.mjs');const notice=await mainSkillNotice(old,old.revision,'main');assert.equal(notice.path,current.path);assert.equal(notice.revision,current.revision);assert.equal(notice.action,'reload');
+  const reference=join(global,'skills/openclaw-main-main/references',workerCliReferenceName);
+  assert.match(await readFile(reference,'utf8'),/plugin describe/);
+  const snapshot=await readFile(current.path,'utf8');assert.ok(!snapshot.includes('OPENCLAW_WORKER_CLI_TOKEN='));
+ }finally{await rm(root,{recursive:true,force:true});}
 });
