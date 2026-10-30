@@ -90,7 +90,7 @@ test('task cards expose confirmed stop, start and delete actions for the selecte
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();
  const plans=[{id:'a',name:'Active',status:'enabled',enabled:true},{id:'b',name:'Paused',status:'paused',enabled:false}].map(p=>({...p,revision:'v1',sourceValid:true,chatId:'group',requester:'User',projectId:'demo',task:'Summarize',constraints:'Read only',schedule:{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}}));
  ctx.props.section='tasks';ctx.host.connection.canWrite=true;
- ctx.host.request=async(method,p)=>{calls.push(p);return {ok:true,result:p.actionId==='projects-scheduleCatalog'?{available:true,tasks:plans,operations:[]}:p.actionId==='projects-scheduleManage'?{status:'succeeded',id:p.payload.id}:p.actionId==='projects-list'?{...catalog,scheduledTasks:plans.map(t=>({...t,taskId:'scheduled-request:'+t.id,type:'scheduled-request',nativeAvailable:true,scope:{label:'Group'},records:[]}))}:{}};};
+ ctx.host.request=async(method,p)=>{calls.push(p);return {ok:true,result:p.actionId==='projects-scheduleCatalog'?{available:true,tasks:plans,operations:[]}:p.actionId==='projects-scheduleManage'?{status:'succeeded',id:p.payload.id}:p.actionId==='projects-list'?{...catalog,scheduledTasks:plans.map(t=>({...t,taskId:'scheduled-request:'+t.id,type:'scheduled-request',readOnly:true,nativeAvailable:true,scope:{label:'Group'},records:[]}))}:{}};};
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  for(const [label,id,action] of [['停止Active','a','pause'],['开始Paused','b','resume'],['删除Paused','b','remove']]){
   f.container.querySelector(`[aria-label="${label}"]`).click();await settle();
