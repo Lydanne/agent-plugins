@@ -88,6 +88,10 @@ export function renderQuestionCard(card:QuestionCard,error?:string):Record<strin
   return {schema:'2.0',config:{update_multi:true,summary:{content:'补充未执行：'+reason}},header:{title:text('补充未执行'),template:'orange'},body:{elements:[markdown(Array.from(q.question).slice(0,500).join('')),markdown(reason+'。已保存补充，但未据此执行后续工作；Main 已收到状态记录。'),markdown(Array.from(answerSummary(q,card.answers??{})+(card.note?'\n'+card.note:'')).slice(0,2000).join(''))]}};
  }
  const reopen=card.reopenAllowed&&!card.reopenedQuestionId&&!card.acceptedSupplementId&&q.expiresAt>Date.now()?{tag:'button',text:text('重新补充'),type:'primary',behaviors:[{type:'callback',value:{...questionAction(card),a:WORKER_QUESTION_REOPEN}}]}:undefined;
+ // Close a previously visible user question without exposing internal Main context.
+ if(card.status==='accepted'&&card.answerSource==='main_context'){
+  return {schema:'2.0',config:{update_multi:true},header:{title:text(timedOut?'已超时继续':'已继续处理'),template:'green'},body:{elements:[markdown(timedOut?'等待已超时，已使用确定信息继续；未知信息对应的步骤跳过。':'所需信息已确认，原任务继续处理。'),...(reopen?[reopen]:[])]}};
+ }
  const elements:Record<string,unknown>[]=[markdown(q.question)];
  if(error??card.validationNote)elements.push(markdown('填写提示：'+(error??card.validationNote)));
  if(q.knownValues&&Object.keys(q.knownValues).length)elements.push(markdown('已确定信息\n'+answerSummary(q,q.knownValues)));
