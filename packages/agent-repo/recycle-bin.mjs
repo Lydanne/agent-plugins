@@ -1,3 +1,7 @@
+import {dirname,join} from 'node:path';
+import {lstatSync} from 'node:fs';
+import {privateFile} from './database.mjs';
+import {tryLock} from './dist/workspace-lock.mjs';
 import {recycledRepositoryLogs,restoreRepositoryLogs,purgeRepositoryLogs} from './repository-log.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import {withRepositoryDatabase,repositoryTransaction} from './database.mjs';
@@ -10,6 +14,7 @@ import {dayMs} from './recycle-store.mjs';
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const database=withRepositoryDatabase;
 export function recycleSettings(root,agentId){return database(root,db=>{const row=db.prepare('SELECT body FROM recycle_settings WHERE agent=?').get('retention');return row?JSON.parse(row.body):{retentionDays:30,revision:hash([30])};});}
+async function withRecyclePolicy(root,run){const path=join(dirname(privateFile(root,['agent_repo.sqlite'])),'recycle-policy.lock');for(const target of [path,path+'.recovery'])try{if(lstatSync(target).isSymbolicLink())throw Error('回收站策略锁路径无效');}catch(error){if(error.code!=='ENOENT')throw error;}const release=tryLock(path);if(!release)throw Error('回收站清理或策略修改正在进行，请稍后刷新');try{return await run();}finally{release();}}
 const writer=ctx=>{if(!ctx.client?.scopes?.some(s=>['operator.write','operator.admin'].includes(s)))throw Error('回收站管理需要写入权限');};
 function operation(root,agentId,p,fn){
  if(typeof p.requestId!=='string'||!p.requestId||p.requestId.length>160||p.confirmed!==true)throw Error('请确认操作并提供稳定请求 ID');
@@ -48,18 +53,18 @@ export async function restoreRecycled(root,agentId,p,ctx){
 }
 export async function configureRecycle(root,agentId,p,ctx){
  writer(ctx);if(Object.keys(p).some(k=>!['retentionDays','expectedRevision','requestId','confirmed'].includes(k))||!Number.isInteger(p.retentionDays)||p.retentionDays<1||p.retentionDays>3650)throw Error('保留天数必须为 1–3650 的整数');
- return operation(root,agentId,p,()=>repositoryTransaction(root,db=>{
+ return operation(root,agentId,p,()=>withRecyclePolicy(root,()=>repositoryTransaction(root,db=>{
   const old=db.prepare('SELECT body FROM recycle_settings WHERE agent=?').get('retention'),before=old?JSON.parse(old.body):{retentionDays:30,revision:hash([30])};if(before.revision!==p.expectedRevision)throw Error('配置已变化，请刷新');
    const after={retentionDays:p.retentionDays,revision:randomUUID()};const auditId=auditBegin(db,{agentId,feature:'recycle',targetId:'retention',action:'configureRetention',actor:panelAuditActor(ctx),executor:'control-ui',requestId:p.requestId,before:{retentionDays:before.retentionDays},requested:{retentionDays:p.retentionDays}});
    db.prepare('INSERT OR REPLACE INTO recycle_settings VALUES(?,?)').run('retention',JSON.stringify(after));auditFinish(db,auditId,'succeeded',{retentionDays:after.retentionDays});return {settings:after};
- }));
+ })));
 }
-export async function sweepRecycled(root,agentId,now=Date.now()){
+export async function sweepRecycled(root,agentId,now=Date.now()){return withRecyclePolicy(root,async()=>{
  const {retentionDays}=recycleSettings(root,agentId),cutoff=now-retentionDays*dayMs,purged=[],unavailable=[];
  if(cutoff>=0){for(const [name,clean] of [['仓库日志',()=>purgeRepositoryLogs(root,agentId,cutoff)],['实体资料',()=>createEntityStore(root).purgeTrash({cutoff})]])try{purged.push(...(await clean()).purged);}catch{unavailable.push(name);}
- for(const [name,bridge] of [['群计划',scheduledRequestBridge],['系统计划',repositoryScheduleBridge]]){if(!bridge.purgeTrash){unavailable.push(name);continue;}try{purged.push(...(await bridge.purgeTrash(agentId,cutoff)).purged);}catch{unavailable.push(name);}}}
+ for(const [name,bridge] of [['群计划',scheduledRequestBridge],['系统计划',repositoryScheduleBridge]]){if(!bridge.purgeTrash){unavailable.push(name);continue;}try{const result=await bridge.purgeTrash(agentId,cutoff);purged.push(...result.purged);if(result.failed?.length)unavailable.push(name);}catch{unavailable.push(name);}}}
  const result={at:now,retentionDays,status:unavailable.length?'partial':'succeeded',purged:purged.length,unavailable};database(root,db=>db.prepare('INSERT OR REPLACE INTO recycle_cleanup VALUES(?,?)').run(agentId,JSON.stringify(result)));return result;
-}
+});}
 
 const cleanupScript='return {};';
 const cleanupSchedule={kind:'cron',expr:'17 * * * *',tz:'UTC',staggerMs:0};

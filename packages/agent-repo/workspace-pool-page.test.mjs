@@ -36,3 +36,10 @@ test('save errors remain inside the dialog and closing a pending save cannot reo
  submit();await settle();assert.match(f.container.querySelector('[role=status]').textContent,/登记版本已过期/);
  submit();click(f.container,'关闭');pending.resolve(snapshot);await settle();assert.equal(f.container.querySelector('dialog'),null);
 });
+
+test('late workspace reads cannot replace the audit view and pending saves prevent a view switch',async t=>{
+ const f=await browserFixture(t,new URL('./workspace-pool-page.mjs',import.meta.url).pathname),read=deferred(),save=deferred();let reads=0;
+ f.track(f.ui.mountWorkspacePool(f.container,{projectId:'xgj',canWrite:()=>true,invoke:async action=>action==='audit'?{records:[],total:0,nextOffset:null}:action==='workspacePoolSave'?save.promise:++reads===1?read.promise:snapshot}));
+ click(f.container,'工作区配置');click(f.container,'修改日志');await settle();assert.ok(f.container.querySelector('.ar-audit'));read.resolve(snapshot);await settle();assert.ok(f.container.querySelector('.ar-audit'));assert.equal(f.container.querySelector('button[type=submit]'),f.container.querySelector('.ar-audit button[type=submit]'));
+ const auditClose=[...f.container.querySelectorAll('.ar-audit button')].find(b=>b.textContent==='关闭');auditClose.click();await settle();f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='修改日志').disabled,true);save.resolve(snapshot);await settle();assert.match(f.container.textContent,/池配置已保存/);
+});

@@ -63,3 +63,16 @@ it('saved 07:00 schedule updates through the requester API and fires into group 
   expect(captured.requestMessageIds).toEqual(['human-message']);expect(captured.sessionKey).toBe(scope.sessionKey);
  }finally{manager.close();}
 });
+
+it.each(['pause','remove'] as const)('an accepted Main keeps its saved route and final delivery after plan %s',async action=>{
+ const {createScheduledRequests}=await import('../../agent-repo/scheduled-requests.mjs');const jobs:any[]=[];const cron={add:async(p:any)=>{const j={...structuredClone(p),id:'native-active'};jobs.push(j);return j;},update:async(id:string,p:any)=>Object.assign(jobs.find(j=>j.id===id),p),list:async()=>structuredClone(jobs)};
+ const manager=createScheduledRequests({stateDir:join(state.dir,'manager'),getCron:()=>cron,bridge:{...adapter,jobsActive:()=>false},now:()=>1000});let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>release=r),started=new Promise<void>(r=>entered=r);
+ try{const plan=await manager.manage({action:'create',requestId:'active',name:'日报',projectId:'xgj',task:'Summarize current group',constraints:'Read only',expr:'0 7 * * *',deliveryMode:'group'},context);task.close();
+  runtime.channel.inbound.run=async({adapter:a}:any)=>{const turn=a.resolveTurn();turn.replyOptions.onAgentRunStart();entered();await gate;await turn.delivery.deliver({text:'已核验的本次结果'},{kind:'final'});};
+  const firing=manager.fire({action:'finished',status:'ok',jobId:plan.jobId,agentId:'main',runAtMs:2000});await started;try{await manager.administer('main',{action,id:plan.id,expectedRevision:plan.revision,requestId:'stop-accepted',confirmed:true});}finally{release();}await firing;
+  expect(state.sent).toHaveLength(1);expect(state.sent[0].replyToMessageId).toBeUndefined();const taskState=(await manager.catalog('main',{includeRemoved:true})).tasks[0];expect(taskState.lastRun.status).toBe('submitted');expect(taskState.status).toBe(action==='pause'?'paused':'removed');
+ }finally{release();manager.close();}
+});
+it('a recalled source still prevents final delivery after Main has been accepted',async()=>{
+ const source=adapter.capture(context);task.close();runtime.channel.inbound.run=async({adapter:a}:any)=>{const turn=a.resolveTurn();turn.replyOptions.onAgentRunStart();recallTaskSource({...scope,messageId:'human-message'});await turn.delivery.deliver({text:'stale result'},{kind:'final'});};await expect(adapter.deliver(request(source),{assertCurrent:()=>{},onAccepted:()=>{}})).rejects.toThrow();expect(state.sent).toHaveLength(0);
+});

@@ -66,7 +66,7 @@ test('panel manual execution uses native queue once and leaves the schedule unch
  const f=fixture(t),r=await f.manager.manage(f.input,{});let calls=0;f.cron.enqueueRun=async(id,mode)=>{calls++;assert.equal(id,r.jobId);assert.equal(mode,'force');return {ok:true,enqueued:true,runId:'manual'};};
  const original=structuredClone(f.jobs[0].schedule),p=await operation(f,r.id,'run');await f.manager.administer('main',p);await f.manager.administer('main',p);assert.equal(calls,1);assert.deepEqual(f.jobs[0].schedule,original);
  await assert.rejects(f.manager.administer('main',await operation(f,r.id,'run')),/运行中/);
- f.bridge.deliver=async r=>{assert.equal(r.trigger,'manual');return {accepted:true,jobIds:[],deliveryReceipts:[{chatId:'group',messageId:'card'}]};};await f.manager.fire(f.event());assert.equal((await f.manager.catalog('main')).tasks[0].busy,false);assert.match((await f.manager.inspect('main'))[0].records[0].logs[0].reason,/手动执行/);
+ f.bridge.deliver=async r=>{assert.equal(r.trigger,'manual');return {accepted:true,jobIds:[],deliveryReceipts:[{chatId:'group',messageId:'card'}]};};await f.manager.fire({...f.event(),runId:'manual'});assert.equal((await f.manager.catalog('main')).tasks[0].busy,false);assert.match((await f.manager.inspect('main'))[0].records[0].logs[0].reason,/手动执行/);
 });
 test('panel rejects forged bindings, foreign agents, stale versions and revoked sources',async t=>{
  const f=fixture(t),r=await f.manager.manage(f.input,{}),p=await operation(f,r.id,'pause');
@@ -212,4 +212,66 @@ test('an unavailable audit writer blocks schedule mutation before any native cha
  db.exec("CREATE TRIGGER audit_write_failure BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");db.close();
  await assert.rejects(f.manager.manage({action:'update',id:r.id,requestId:'blocked-audit',expectedRevision:r.revision,deliveryMode:'group'},{}),/audit unavailable/);
  const saved=await f.manager.manage({action:'get',id:r.id},{});assert.equal(saved.revision,r.revision);assert.equal(saved.deliveryMode,'source');assert.equal(f.jobs[0].enabled,true);
+});
+
+for(const action of ['pause','remove'])test(`queued manual run is fenced on ${action}, allowing safe restore/resume without old tick resurrection`,async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'old-force'});await f.manager.administer('main',await operation(f,r.id,'run'));await f.manager.administer('main',await operation(f,r.id,action));
+ assert.equal((await f.manager.catalog('main',{includeRemoved:true})).tasks[0].busy,false);if(action==='remove')await f.manager.administer('main',await operation(f,r.id,'restore'));await f.manager.administer('main',await operation(f,r.id,'resume'));f.reopen();await f.manager.fire({...f.event(5000),runId:'old-force'});assert.equal(f.delivered.length,0);
+});
+test('a failed manual clock terminal clears its known reservation but an unacknowledged run stays protected',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'failed-clock'});await f.manager.administer('main',await operation(f,r.id,'run'));await f.manager.fire({...f.event(),runId:'failed-clock',status:'error'});assert.equal((await f.manager.catalog('main')).tasks[0].busy,false);
+ f.cron.enqueueRun=async()=>({ok:true,enqueued:true});await assert.rejects(f.manager.administer('main',await operation(f,r.id,'run')),/未确认/);assert.equal((await f.manager.catalog('main')).tasks[0].status,'needs_review');assert.equal((await f.manager.catalog('main')).tasks[0].busy,true);
+});
+test('stopping a plan preserves an already accepted Main receipt and the live Worker identity',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});let entered,release;const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ f.bridge.deliver=async(run,cb)=>{cb.onAccepted();entered();await gate;cb.assertCurrent();return {accepted:true,jobIds:['in-flight-worker']};};const firing=f.manager.fire(f.event());await started;
+ const update=f.cron.update;let enteredUpdate,releaseUpdate;const updating=new Promise(resolve=>enteredUpdate=resolve),updateGate=new Promise(resolve=>releaseUpdate=resolve);f.cron.update=async(...args)=>{enteredUpdate();await updateGate;return update(...args);};const stopping=f.manager.administer('main',await operation(f,r.id,'pause'));await updating;release();await firing;releaseUpdate();await stopping;
+ const saved=(await f.manager.catalog('main')).tasks[0];assert.equal(saved.lastRun.status,'submitted');assert.deepEqual(saved.lastRun.jobIds,['in-flight-worker']);f.busy();assert.equal((await f.manager.catalog('main')).tasks[0].busy,true);
+});
+
+test('legacy queued-run receipts recover a paused reservation without reviving an old native tick',async t=>{
+ const {DatabaseSync}=await import('node:sqlite');const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'legacy-run'});await f.manager.administer('main',await operation(f,r.id,'run'));
+ const db=new DatabaseSync(join(f.stateDir,'scheduled-requests.sqlite'));const saved=JSON.parse(db.prepare('SELECT body FROM requests WHERE id=?').get(r.id).body);saved.status='paused';delete saved.manualPending.runId;db.prepare('UPDATE requests SET body=? WHERE id=?').run(JSON.stringify(saved),r.id);db.close();f.jobs[0].enabled=false;f.reopen();await f.manager.recover();assert.equal((await f.manager.catalog('main')).tasks[0].busy,false);await f.manager.administer('main',await operation(f,r.id,'resume'));await f.manager.fire({...f.event(6000),runId:'legacy-run'});assert.equal(f.delivered.length,0);
+});
+
+test('recovery cannot erase the identity of a revoked force run, while future identified clocks still run',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'revoked'});await f.manager.administer('main',await operation(f,r.id,'run'));await f.manager.administer('main',await operation(f,r.id,'pause'));await f.manager.administer('main',await operation(f,r.id,'resume'));
+ await f.manager.fire({...f.event(5000),runId:'revoked'});f.jobs[0].state={lastRunStatus:'ok',lastRunAtMs:5000};f.reopen();await f.manager.recover();assert.equal(f.delivered.length,0);
+ // No callback identity was saved for this other state-only slot: it remains unclaimed.
+ f.jobs[0].state.lastRunAtMs=6000;await f.manager.recover();assert.equal(f.delivered.length,0);await f.manager.fire({...f.event(7000),runId:'future-periodic'});assert.equal(f.delivered.length,1);
+});
+test('terminal-before-enqueue acknowledgment does not recreate an already finished reservation',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>{await f.manager.fire({...f.event(),runId:'early-error',status:'error'});return {ok:true,enqueued:true,runId:'early-error'};};await f.manager.administer('main',await operation(f,r.id,'run'));assert.equal((await f.manager.catalog('main')).tasks[0].busy,false);
+});
+test('a periodic occurrence cannot consume a different queued manual run',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'queued-manual'});await f.manager.administer('main',await operation(f,r.id,'run'));await f.manager.fire({...f.event(),runId:'periodic'});assert.equal((await f.manager.catalog('main')).tasks[0].manualPending,true);assert.equal(f.delivered[0].trigger,'scheduled');await f.manager.administer('main',await operation(f,r.id,'pause'));await f.manager.administer('main',await operation(f,r.id,'resume'));await f.manager.fire({...f.event(4000),runId:'queued-manual'});assert.equal(f.delivered.length,1);
+});
+test('manual lookup races cannot overwrite a newly submitted active Worker receipt',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{}),list=f.cron.list;let entered,release,first=true;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);let enqueued=0;f.cron.enqueueRun=async()=>{enqueued++;return {ok:true,enqueued:true,runId:'manual'};};f.cron.list=async()=>{if(first){first=false;entered();await gate;}return list();};
+ const running=f.manager.administer('main',await operation(f,r.id,'run'));await started;await f.manager.fire({...f.event(),runId:'periodic'});f.busy();release();await assert.rejects(running,/本次未入队/);const saved=(await f.manager.catalog('main')).tasks[0];assert.deepEqual(saved.lastRun.jobIds,['worker']);assert.equal(saved.status,'enabled');assert.equal(enqueued,0);assert.equal(f.delivered.length,1);
+});
+test('claiming a clock after lookup revalidates the latest active Worker state',async t=>{
+ const f=fixture(t);await f.manager.manage(f.input,{});const list=f.cron.list;let entered,release,first=true;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);f.cron.list=async()=>{if(first){first=false;entered();await gate;}return list();};const delayed=f.manager.fire({...f.event(3000),runId:'delayed'});await started;await f.manager.fire({...f.event(2000),runId:'first'});f.busy();release();await delayed;assert.equal(f.delivered.length,1);
+});
+test('startup clears a reservation already durably fenced before an interrupted old consume',async t=>{
+ const {DatabaseSync}=await import('node:sqlite');const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'crash-fenced'});await f.manager.administer('main',await operation(f,r.id,'run'));const db=new DatabaseSync(join(f.stateDir,'scheduled-requests.sqlite'));db.prepare('INSERT INTO revoked_native_runs VALUES(?,?)').run(r.jobId,'crash-fenced');db.close();f.reopen();assert.equal((await f.manager.catalog('main')).tasks[0].busy,false);await f.manager.fire({...f.event(),runId:'crash-fenced'});assert.equal(f.delivered.length,0);
+});
+
+test('live automatic clocks without runId continue after revocation, while identity-less recovery stays guarded',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.enqueueRun=async()=>({ok:true,enqueued:true,runId:'revoked-force'});await f.manager.administer('main',await operation(f,r.id,'run'));await f.manager.administer('main',await operation(f,r.id,'pause'));await f.manager.administer('main',await operation(f,r.id,'resume'));
+ await f.manager.fire(f.event(6000));await f.manager.fire(f.event(7000));assert.equal(f.delivered.length,2);f.jobs[0].state={lastRunStatus:'ok',lastRunAtMs:8000};f.reopen();await f.manager.recover();assert.equal(f.delivered.length,2);await f.manager.fire({...f.event(9000),runId:'revoked-force'});f.jobs[0].state.lastRunAtMs=9000;await f.manager.recover();assert.equal(f.delivered.length,2);
+});
+
+test('an early successful native hook waits for identity binding without making enqueue wait for Main',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});let firing,entered,release;const mainStarted=new Promise(resolve=>entered=resolve),mainGate=new Promise(resolve=>release=resolve);f.bridge.deliver=async run=>{f.delivered.push(run);entered();await mainGate;return {accepted:true,jobIds:[]};};
+ f.cron.enqueueRun=async()=>{firing=f.manager.fire({...f.event(),runId:'early-success'});await new Promise(resolve=>setImmediate(resolve));assert.equal(f.delivered.length,0);return {ok:true,enqueued:true,runId:'early-success'};};
+ try{const receipt=await f.manager.administer('main',await operation(f,r.id,'run'));assert.equal(receipt.enqueued,true);await mainStarted;assert.equal(f.delivered[0].trigger,'manual');}finally{release();if(firing)await firing;}
+ assert.match((await f.manager.inspect('main'))[0].records[0].logs[0].reason,/手动执行/);
+});
+
+test('concurrent Agents using the same request ID keep independent native ACK bindings',async t=>{
+ const f=fixture(t),a=await f.manager.manage(f.input,{}),b=await f.manager.manage(f.input,{agentId:'other',sessionKey:'agent:other:feishu:group:g',sessionId:'other-session'});let ackA,ackB;const gateA=new Promise(resolve=>ackA=resolve),gateB=new Promise(resolve=>ackB=resolve);f.cron.enqueueRun=id=>id===a.jobId?gateA:gateB;
+ const p=(plan)=>({id:plan.id,action:'run',requestId:'shared-request',expectedRevision:plan.revision,confirmed:true}),runningA=f.manager.administer('main',p(a)),runningB=f.manager.administer('other',p(b));await new Promise(resolve=>setImmediate(resolve));ackB({ok:true,enqueued:true,runId:'agent-B'});await runningB;
+ const firingA=f.manager.fire({action:'finished',status:'ok',agentId:'main',jobId:a.jobId,runId:'agent-A',runAtMs:2000});await new Promise(resolve=>setImmediate(resolve));assert.equal(f.delivered.length,0);ackA({ok:true,enqueued:true,runId:'agent-A'});await runningA;await firingA;assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].trigger,'manual');assert.equal(f.delivered[0].source.agentId,'main');assert.equal((await f.manager.catalog('main')).tasks[0].manualPending,false);
+ await f.manager.fire({action:'finished',status:'ok',agentId:'other',jobId:b.jobId,runId:'agent-B',runAtMs:2000});assert.equal(f.delivered.length,2);assert.equal(f.delivered[1].source.agentId,'other');assert.equal((await f.manager.catalog('other')).tasks[0].manualPending,false);
 });

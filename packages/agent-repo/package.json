@@ -80,7 +80,8 @@
     "recycle-store.mjs",
     "recycle-bin.mjs",
     "recycle-page.mjs",
-    "database.mjs"
+    "database.mjs",
+    "native-run-fence.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

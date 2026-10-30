@@ -100,3 +100,22 @@ test('a pending restore remains in trash until native acknowledgment and cannot 
  try{const record=f.manager.trash('main')[0];assert.equal(record.restorePending,true);assert.equal((await f.manager.catalog('main')).tasks.length,0);await assert.rejects(f.manager.administer('main',{id:plan.id,action:'resume',requestId:'bypass',expectedRevision:record.revision,confirmed:true}),/已删除|正在变更/);assert.equal((await f.manager.manage({action:'get',id:plan.id},{})).status,'removed');}finally{release();await work;}
  await work;assert.equal(f.manager.trash('main').length,0);assert.equal((await f.manager.catalog('main')).tasks[0].status,'paused');assert.equal(f.jobs[0].enabled,false);
 });
+
+test('failed native deletion is reported as partial cleanup and remains auditable',async t=>{
+ const f=await fixture(t),r=await f.manager.manage(f.input,{});await f.manager.manage({action:'remove',id:r.id},{});f.native.remove=async()=>{throw Error('native unavailable');};f.advance(31);const cleanup=await sweepRecycled(f.root,'main',f.now);assert.equal(cleanup.status,'partial');assert.ok(cleanup.unavailable.includes('群计划'));assert.equal(f.manager.trash('main').length,1);assert.equal(f.manager.audit('main',{action:'purge',status:'unknown'}).total,1);
+});
+test('legacy deleted personnel without saved body cannot be re-observed through lookup or recreated invisibly',async t=>{
+ const f=await fixture(t),people=createPeopleStore(f.root),identity={accountId:'a',appId:'app',openId:'ou_legacy'},person=people.observe({...identity,name:'Historical',departments:[]});people.remove({id:person.id,revision:person.revision});
+ const db=new DatabaseSync(join(f.root,'.runtime/agent_repo.sqlite'));db.prepare('DELETE FROM graph_people WHERE id=?').run(person.id);db.prepare('DELETE FROM recycle_items WHERE id=?').run('person:'+person.id);db.close();
+ const observed=people.observe({...identity,name:'Fresh observation',departments:[]});assert.ok(observed.deletedAt);assert.equal(people.lookup(identity),null);assert.equal(people.list().total,0);assert.equal(createEntityStore(f.root).trash().length,0);
+});
+
+test('a confirmed longer retention cannot be overtaken by an in-flight cleanup using an older policy',async t=>{
+ const f=await fixture(t),people=createPeopleStore(f.root),p=people.observe({accountId:'a',appId:'app',openId:'ou_retention',name:'Keep',departments:[]});people.remove({id:p.id,revision:p.revision});const initial=recycleSettings(f.root,'main');
+ const sweep=sweepRecycled(f.root,'main',Date.now()+45*dayMs);try{await assert.rejects(configureRecycle(f.root,'main',{retentionDays:60,expectedRevision:initial.revision,requestId:'racing-policy',confirmed:true},ctx),/正在进行/);assert.equal(recycleSettings(f.root,'main').retentionDays,30);}finally{await sweep;}
+ const other=people.observe({accountId:'a',appId:'app',openId:'ou_extended',name:'Extended',departments:[]});people.remove({id:other.id,revision:other.revision});await configureRecycle(f.root,'main',{retentionDays:60,expectedRevision:initial.revision,requestId:'confirmed-policy',confirmed:true},ctx);await sweepRecycled(f.root,'main',Date.now()+45*dayMs);assert.equal(createEntityStore(f.root).trash().length,1);
+});
+test('legacy hidden personnel bodies are normalized into recoverable trash without applying a fresh observation',async t=>{
+ const f=await fixture(t),people=createPeopleStore(f.root),identity={accountId:'a',appId:'app',openId:'ou_hidden'},p=people.observe({...identity,name:'Original',departments:[]});people.remove({id:p.id,revision:p.revision});const db=new DatabaseSync(join(f.root,'.runtime/agent_repo.sqlite'));const row=JSON.parse(db.prepare('SELECT value FROM graph_people WHERE id=?').get(p.id).value);delete row.deletedAt;db.prepare('UPDATE graph_people SET value=? WHERE id=?').run(JSON.stringify(row),p.id);db.prepare('DELETE FROM recycle_items WHERE id=?').run('person:'+p.id);db.close();
+ people.observe({...identity,name:'Must not overwrite',departments:[]});const store=createEntityStore(f.root);assert.equal(people.lookup(identity),null);assert.equal(store.trash().length,1);await restoreRecycled(f.root,'main',restoreInput(store.trash()[0]),ctx);assert.equal(people.lookup(identity).name,'Original');
+});

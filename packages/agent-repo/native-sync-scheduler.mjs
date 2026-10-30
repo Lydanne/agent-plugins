@@ -1,3 +1,4 @@
+import {nativeRunFence} from './native-run-fence.mjs';
 import {importLegacyOperations,auditTable,auditBegin,auditFinish,auditQuery,scheduleSnapshot} from './audit.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,chmodSync} from 'node:fs';
@@ -11,7 +12,7 @@ const nativeSchedule=s=>({kind:'cron',expr:`${Number(s.time.slice(3))} ${Number(
 const revision=r=>createHash('sha256').update(JSON.stringify([r.jobId,r.schedule,r.status,r.version??0])).digest('hex');
 const localDate=(time,tz)=>new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(time);
 export function createDailySyncService(config,synchronize,logger,{clock=Date.now,history=readSyncHistory}={}){
- let db,context,active=false,reconciling;const work=new Set(),locks=new Set();
+ let db,fence,context,active=false,reconciling;const work=new Set(),locks=new Set();
  const track=promise=>{work.add(promise);promise.finally(()=>work.delete(promise)).catch(()=>{});return promise;};
  const cron=()=>{const value=context?.getCron?.();if(!active||!value)throw Error('OpenClaw 原生调度不可用');return value;};
  const get=id=>{const row=db?.prepare('SELECT body FROM schedules WHERE agent=?').get(id);return row?JSON.parse(row.body):null;};
@@ -22,16 +23,20 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
  const owned=id=>{if(!config.agents[id])throw Error('当前 Agent 未绑定');const r=get(id);if(!r)throw Error('此 Agent 未配置每日仓库同步');return r;};
  async function tried(r,date){if(r.attemptedDate===date)return true;try{await history(config.agents[r.agentId].repo,r.agentId,date);return true;}catch(e){if(e.code==='ENOENT')return false;throw Error('无法核验今日同步记录，不能重复执行');}}
  async function fire(event){
-  if(!active||event.action!=='finished'||event.status!=='ok'||!Number.isSafeInteger(event.runAtMs))return;
-  const r=get(event.agentId);if(!r||r.status!=='enabled'||r.jobId!==event.jobId||!enabled(r.agentId)||event.runAtMs<(r.acceptAfter??0))return;
+  if(!active||event.action!=='finished'||!Number.isSafeInteger(event.runAtMs))return;
+  const r=get(event.agentId);if(!r||r.jobId!==event.jobId)return;fence.record(r.jobId,event);const runId=fence.resolve(r.jobId,event);if(runId===null)return;
+  const queued=!!runId&&r.queuedRunId===runId;
+  if(fence.has(r.jobId,runId,event.runAtMs)){if(queued)fence.consume(r.jobId,runId,()=>{delete r.queuedDate;delete r.queuedRunId;save(r);});return;}
+  if(queued)fence.consume(r.jobId,runId,()=>{delete r.queuedDate;delete r.queuedRunId;save(r);});
+  if(event.status!=='ok'||r.status!=='enabled'||r.running||!enabled(r.agentId)||event.runAtMs<(r.acceptAfter??0))return;
   const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);if(!matches(job,r)||!job.enabled||JSON.stringify(job.schedule)!==JSON.stringify(nativeSchedule(r.schedule)))return;
   if(!active||get(r.agentId)?.status!=='enabled'||revision(get(r.agentId))!==revision(r))return;
   const date=localDate(event.runAtMs,r.schedule.timeZone);if(date!==localDate(clock(),r.schedule.timeZone))return;
-  if(await tried(r,date)){const current=get(r.agentId);if(current.queuedDate===date){delete current.queuedDate;save(current);}return;}
+  if(await tried(r,date)){const current=get(r.agentId);if(queued&&current.queuedRunId===runId){delete current.queuedDate;delete current.queuedRunId;save(current);}return;}
   // Persist the daily claim before asynchronous preparation. Git receipts keep
   // the pre-migration history and cross-process exclusion authoritative too.
-  const latest=get(r.agentId);if(!active||latest.attemptedDate===date||latest.status!=='enabled'||revision(latest)!==revision(r))return;
-  latest.attemptedDate=date;latest.running=true;delete latest.queuedDate;save(latest);
+  const latest=get(r.agentId);if(!active||latest.running||latest.attemptedDate===date||latest.status!=='enabled'||revision(latest)!==revision(r))return;
+  latest.attemptedDate=date;latest.running=true;if(queued){delete latest.queuedDate;delete latest.queuedRunId;}save(latest);
   try{const result=await synchronize(r.agentId,date);const done=get(r.agentId);done.running=false;done.lastResult=result?.skipped?'skipped':result?.ok?'completed':'failed';save(done);if(!result?.ok&&!result?.skipped)logger?.warn?.('agent-repo: daily sync failed; inspect repository receipts');}
   catch{const done=get(r.agentId);done.running=false;done.lastResult='failed';save(done);logger?.warn?.('agent-repo: daily sync failed; inspect repository receipts');}
  }
@@ -40,7 +45,7 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
   const latest=get(r.agentId);if(latest.attemptedDate===date||latest.running||latest.queuedDate)return {ok:true,enqueued:false,skipped:true};
   if(latest.status!=='enabled'||revision(latest)!==revision(r))throw Error('计划状态已改变');
   latest.queuedDate=date;save(latest);
-  const result=await cron().enqueueRun(r.jobId,'force');if(!result?.ok||result.enqueued!==true)throw Error('原生队列未确认接纳');return result;
+  const result=await cron().enqueueRun(r.jobId,'force');if(!result?.ok||result.enqueued!==true||typeof result.runId!=='string'||!result.runId)throw Error('原生队列未确认接纳');const current=get(r.agentId);if(current.queuedDate===date){if(fence.receipt(r.jobId,result.runId))fence.consume(r.jobId,result.runId,()=>{delete current.queuedDate;delete current.queuedRunId;save(current);});else{current.queuedRunId=result.runId;save(current);}}return result;
  }
  async function reconcileOnce(){
   if(!active)return;
@@ -59,7 +64,7 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
     if(!enabled(id)){if(r.jobId){const job=jobs.find(j=>j.id===r.jobId);if(job&&matches(job,r)&&job.enabled)await cron().update(r.jobId,{enabled:false});}continue;}
     if(r.status!=='enabled'||r.running||r.queuedDate)continue;
     const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);if(!matches(job,r)||!job.enabled||JSON.stringify(job.schedule)!==JSON.stringify(nativeSchedule(r.schedule)))continue;
-    if(job.state?.lastRunStatus==='ok')await fire({action:'finished',status:'ok',agentId:id,jobId:r.jobId,runAtMs:job.state.lastRunAtMs});
+    if(job.state?.lastRunStatus==='ok')await fire({action:'finished',status:'ok',recovery:true,agentId:id,jobId:r.jobId,runAtMs:job.state.lastRunAtMs});
     r=get(id);const date=scheduleDate(new Date(clock()),r.schedule);if(date&&!r.running&&!r.queuedDate&&!await tried(r,date))await enqueue(r,date);
    }catch{const r=get(id);if(r){r.status='needs_review';save(r);}if(setupAudit)auditFinish(db,setupAudit,'unknown',scheduleSnapshot(r),{at:clock()});logger?.warn?.('agent-repo: native daily schedule needs inspection');}finally{locks.delete(id);}
   }
@@ -90,22 +95,24 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
   if(p.action==='run'&&(r.status!=='enabled'||await tried(r,date)))throw Error('今日已有尝试记录，或计划未启用；不重复同步');
   if(locks.has(id)||(get(id).queuedDate||get(id).running)&&!['pause','remove'].includes(p.action)||revision(get(id))!==revision(r))throw Error('计划或运行状态已改变，请刷新');
   if(p.action==='run'&&get(id).attemptedDate===date)throw Error('今日已有尝试记录');
+  const savePlan=record=>{const current=get(id);for(const key of ['running','attemptedDate','queuedDate','queuedRunId','lastResult']){if(Object.hasOwn(current,key))record[key]=current[key];else delete record[key];}save(record);};
   const auditId=auditBegin(db,{agentId:id,feature:'schedules',targetId:p.id,targetName:'每日仓库同步',action:p.action,...provenance,requestId:p.requestId,before:scheduleSnapshot(r),requested:p.action==='update'?{time:p.time,timeZone:p.timeZone}:null,at:clock()});
   locks.add(id);const op={requestId:p.requestId,action:p.action,input,status:'pending',createdAt:clock()};const record=()=>db.prepare('INSERT OR REPLACE INTO operations VALUES (?,?,?)').run(key,id,JSON.stringify(op));
   try{record();
-   if(p.action==='remove'){r.deletedAt??=clock();r.status='removed';r.version++;r.acceptAfter=clock();save(r);}
+   if(p.action==='remove'){r.deletedAt??=clock();r.status='removed';r.version++;r.acceptAfter=clock();savePlan(r);}
    const nativeJobs=await cron().list({includeDisabled:true});let job=nativeJobs.find(j=>j.id===r.jobId);
-   if(!r.jobId){const candidates=nativeJobs.filter(j=>j.agentId===id&&j.description===description(id));if(candidates.length>1)throw Error('原生计划重复，需核验');job=candidates[0];if(job){r.jobId=job.id;save(r);}}
-   if(!job&&r.status==='removed'&&p.action==='restore'){r.restorePending=true;save(r);job=await cron().add({name:'每日仓库同步 · '+id,description:description(id),agentId:id,enabled:false,schedule:nativeSchedule(r.schedule),sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});if(!job?.id)throw Error('原生任务未确认创建');r.jobId=job.id;r.status='removed';save(r);}
+   if(!r.jobId){const candidates=nativeJobs.filter(j=>j.agentId===id&&j.description===description(id));if(candidates.length>1)throw Error('原生计划重复，需核验');job=candidates[0];if(job){r.jobId=job.id;savePlan(r);}}
+   if(!job&&r.status==='removed'&&p.action==='restore'){r.restorePending=true;savePlan(r);job=await cron().add({name:'每日仓库同步 · '+id,description:description(id),agentId:id,enabled:false,schedule:nativeSchedule(r.schedule),sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});if(!job?.id)throw Error('原生任务未确认创建');r.jobId=job.id;r.status='removed';savePlan(r);}
    if(p.action==='restore'&&job&&JSON.stringify(job.schedule)!==JSON.stringify(nativeSchedule(r.schedule)))throw Error('原生计划已改变，请核验');
    if(job&&!matches(job,r)||!job&&p.action!=='remove')throw Error('原生计划缺失或归属不一致');
    let result;
    if(p.action==='run'){if(!job.enabled||JSON.stringify(job.schedule)!==JSON.stringify(nativeSchedule(r.schedule)))throw Error('原生计划已改变');result=await enqueue(r,date);}
    else{
-    const enable=p.action==='resume'||p.action==='update'&&r.status==='enabled';if(p.action==='remove')r.deletedAt??=clock();if(p.action==='restore')r.restorePending=true;r.version++;r.acceptAfter=clock();r.schedule=schedule;r.status=['remove','restore'].includes(p.action)?'removed':enable?'enabled':'paused';save(r);
-    if(p.action==='remove'){if(job)await cron().update(r.jobId,{enabled:false});const removed=get(id);delete removed.queuedDate;save(removed);}
+    const enable=p.action==='resume'||p.action==='update'&&r.status==='enabled';if(p.action==='remove')r.deletedAt??=clock();if(p.action==='restore')r.restorePending=true;r.version++;r.acceptAfter=clock();r.schedule=schedule;r.status=['remove','restore'].includes(p.action)?'removed':enable?'enabled':'paused';savePlan(r);
+    if(p.action==='remove'){if(job)await cron().update(r.jobId,{enabled:false});const removed=get(id);fence.consume(removed.jobId,removed.queuedRunId,()=>{delete removed.queuedDate;delete removed.queuedRunId;save(removed);});}
     else {await cron().update(r.jobId,{enabled:enable,...(p.action==='update'?{schedule:nativeSchedule(schedule)}:{})});if(p.action==='restore'){const restored=get(id);restored.status='paused';delete restored.deletedAt;delete restored.restorePending;save(restored);}}
    }
+   if(p.action==='pause'){const latest=get(id);fence.consume(latest.jobId,latest.queuedRunId,()=>{delete latest.queuedDate;delete latest.queuedRunId;save(latest);});}
    auditFinish(db,auditId,'succeeded',scheduleSnapshot(get(id)),{at:clock()});op.status='succeeded';op.result={id:p.id,status:'succeeded',...(result?{enqueued:result.enqueued===true,skipped:result.skipped===true,runId:result.runId}:{})};record();return op.result;
   }catch{const latest=get(id);if(!['pause','remove'].includes(p.action)){latest.status=p.action==='restore'?'removed':'needs_review';save(latest);}auditFinish(db,auditId,'unknown',scheduleSnapshot(get(id)),{at:clock()});op.status='unknown';record();throw Error('原生操作结果未确认，请核验计划和今日记录，不能重复提交');}
   finally{locks.delete(id);}
@@ -120,7 +127,7 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
  }
  const bridge={inspect,catalog,trash,purgeTrash:(id,cutoff)=>track(purgeTrash(id,cutoff)),audit:(id,p)=>auditQuery(db,id,p),administer:(id,p,provenance)=>track(administer(id,p,provenance))};
  return {id:'agent-repo-daily-submodule-sync',onCronChanged:event=>track(fire(event)),onCronReconciled:()=>track(reconcile()),
-  async start(ctx){if(active)return;context=ctx;if(!ctx?.stateDir||!ctx.getCron){logger?.warn?.('agent-repo: native scheduler required; daily sync inactive');return;}const dir=join(ctx.stateDir,'agent-repo-repository-schedules');mkdirSync(dir,{recursive:true,mode:0o700});const file=join(dir,'schedules.sqlite');db=new DatabaseSync(file);chmodSync(file,0o600);db.exec('CREATE TABLE IF NOT EXISTS schedules(agent TEXT PRIMARY KEY,body TEXT);CREATE TABLE IF NOT EXISTS operations(key TEXT PRIMARY KEY,agent TEXT,body TEXT)');auditTable(db);importLegacyOperations(db,db.prepare("SELECT * FROM operations o WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.agent=o.agent AND json_extract(a.body,'$.requestId')=json_extract(o.body,'$.requestId'))").all().map(o=>{const r=JSON.parse(o.body);return {agentId:o.agent,requestId:r.requestId,action:r.action,targetId:repositorySyncTaskId(o.agent),status:r.status,at:r.createdAt};}));for(const row of db.prepare('SELECT body FROM schedules').all()){const previous=JSON.parse(row.body);if(previous.status==='removed'&&!previous.deletedAt){previous.deletedAt=clock();save(previous);}if(previous.running){previous.running=false;previous.lastResult='interrupted';save(previous);}}active=true;Object.assign(repositoryScheduleBridge,bridge);await track(reconcile());},
+  async start(ctx){if(active)return;context=ctx;if(!ctx?.stateDir||!ctx.getCron){logger?.warn?.('agent-repo: native scheduler required; daily sync inactive');return;}const dir=join(ctx.stateDir,'agent-repo-repository-schedules');mkdirSync(dir,{recursive:true,mode:0o700});const file=join(dir,'schedules.sqlite');db=new DatabaseSync(file);chmodSync(file,0o600);db.exec('CREATE TABLE IF NOT EXISTS schedules(agent TEXT PRIMARY KEY,body TEXT);CREATE TABLE IF NOT EXISTS operations(key TEXT PRIMARY KEY,agent TEXT,body TEXT)');fence=nativeRunFence(db);auditTable(db);importLegacyOperations(db,db.prepare("SELECT * FROM operations o WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.agent=o.agent AND json_extract(a.body,'$.requestId')=json_extract(o.body,'$.requestId'))").all().map(o=>{const r=JSON.parse(o.body);return {agentId:o.agent,requestId:r.requestId,action:r.action,targetId:repositorySyncTaskId(o.agent),status:r.status,at:r.createdAt};}));for(const row of db.prepare('SELECT body FROM schedules').all()){const previous=JSON.parse(row.body);if(fence.has(previous.jobId,previous.queuedRunId)){delete previous.queuedDate;delete previous.queuedRunId;save(previous);}if(previous.status==='removed'&&!previous.deletedAt){previous.deletedAt=clock();save(previous);}if(previous.running){previous.running=false;previous.lastResult='interrupted';save(previous);}}active=true;Object.assign(repositoryScheduleBridge,bridge);await track(reconcile());},
   async stop(){active=false;for(const [key,value] of Object.entries(bridge))if(repositoryScheduleBridge[key]===value)delete repositoryScheduleBridge[key];await Promise.allSettled([...work]);db?.close();db=undefined;context=undefined;}
  };
 }

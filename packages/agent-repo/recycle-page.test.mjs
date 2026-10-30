@@ -19,3 +19,9 @@ test('closing or switching away suppresses delayed trash responses',async t=>{
  const f=await browserFixture(t,new URL('./recycle-page.mjs',import.meta.url).pathname),pending=deferred(),ctx=uiContext(async()=>pending.promise);
  const view=f.track(f.ui.mountRecycleBin(f.container,ctx,'main'));click(f.container,'回收站');view.dispose();pending.resolve({ok:true,result:catalog});await settle();assert.equal(f.container.querySelector('dialog'),null);assert.ok(!f.container.textContent.includes('日报'));
 });
+
+test('restoring the last item on a page returns to a valid page instead of displaying a false empty bin',async t=>{
+ const f=await browserFixture(t,new URL('./recycle-page.mjs',import.meta.url).pathname),entries=Array.from({length:26},(_,i)=>({...entry,id:'plan-'+i,name:'Plan '+i})),reads=[];
+ const ctx=uiContext(async(method,p)=>{if(p.actionId==='projects-recycleRestore'){entries.splice(entries.findIndex(e=>e.id===p.payload.id),1);return {ok:true,result:{status:'succeeded'}};}const {offset,limit}=p.payload;reads.push(offset);return {ok:true,result:{...catalog,records:entries.slice(offset,offset+limit),total:entries.length,nextOffset:offset+limit<entries.length?offset+limit:null}};});ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountRecycleBin(f.container,ctx,'main'));click(f.container,'回收站');await settle();click(f.container,'下一页');await settle();f.container.querySelector('[aria-label="恢复Plan 25"]').click();click(f.container,'确认执行');await settle();assert.match(f.container.textContent,/共 25 项/);assert.equal(f.container.querySelectorAll('.ar-recycle-item').length,25);assert.equal(reads.at(-1),0);assert.ok(!f.container.textContent.includes('回收站为空或没有匹配内容'));
+});

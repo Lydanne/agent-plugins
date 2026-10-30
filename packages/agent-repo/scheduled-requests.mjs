@@ -1,3 +1,4 @@
+import {nativeRunFence} from './native-run-fence.mjs';
 import {importLegacyOperations,auditTable,auditBegin,auditFinish,auditQuery,scheduleSnapshot,humanAuditActor} from './audit.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,chmodSync} from 'node:fs';
@@ -20,11 +21,12 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
  CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, body TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS runs(job TEXT, slot INTEGER, status TEXT, detail TEXT, PRIMARY KEY(job,slot));
  CREATE TABLE IF NOT EXISTS operations(agent TEXT, id TEXT, input TEXT, status TEXT, result TEXT, created INTEGER, PRIMARY KEY(agent,id));`);
+ const fence=nativeRunFence(db);
  auditTable(db);
  importLegacyOperations(db,db.prepare("SELECT * FROM operations o WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.agent=o.agent AND json_extract(a.body,'$.requestId')=o.id)").all().map(o=>{const p=JSON.parse(o.input),result=JSON.parse(o.result||'{}');return {agentId:o.agent,requestId:o.id,action:p.action,targetId:result.id??p.id??p.sourceId??'unassociated',status:o.status,at:o.created};}));
  const all=()=>db.prepare('SELECT body FROM requests').all().map(r=>JSON.parse(r.body));
  const save=r=>db.prepare('INSERT OR REPLACE INTO requests VALUES (?,?)').run(r.id,JSON.stringify(r));
- for(const r of all())if(r.status==='removed'&&!r.deletedAt){r.deletedAt=now();save(r);}
+ for(const r of all()){let changed=false;if(r.status==='removed'&&!r.deletedAt){r.deletedAt=now();changed=true;}if(r.manualPending&&!r.manualPending.runId){const op=db.prepare('SELECT status,result FROM operations WHERE agent=? AND id=?').get(r.source.agentId,r.manualPending.requestId),receipt=op?JSON.parse(op.result||'{}'):null;if(op?.status==='succeeded'&&typeof receipt?.runId==='string'&&receipt.runId){r.manualPending.runId=receipt.runId;changed=true;}}if(r.manualPending&&fence.has(r.jobId,r.manualPending.runId)){delete r.manualPending;changed=true;}if(changed)save(r);}
  const sourceKey=p=>createHash('sha256').update(JSON.stringify(['agentId','accountId','chatId','sessionKey','senderId','sessionId'].map(k=>p[k]))).digest('hex');
  const owned=(r,p)=>['agentId','accountId','chatId','sessionKey','senderId','sessionId'].every(k=>r.source[k]===p[k]);
  const snapshot=context=>{const source=bridge.capture?.(context);if(!source)throw Error('A current human Feishu source is required');return structuredClone(source);};
@@ -80,34 +82,44 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   return {...publicRecord(getOwned(source.agentId,r.id)),operation};
  }
  async function fire(event,signal){
-  if(event.action!=='finished'||event.status!=='ok'||!Number.isSafeInteger(event.runAtMs))return;
-  const r=all().find(r=>r.jobId===event.jobId);if(!r||r.status!=='enabled')return;
+  if(event.action!=='finished'||!Number.isSafeInteger(event.runAtMs))return;
+  let r=all().find(r=>r.jobId===event.jobId);if(!r||event.agentId!==r.source.agentId)return;
+  fence.record(r.jobId,event);
+  if(event.status==='ok'&&r.manualPending&&!r.manualPending.runId){const binding=enqueueBindings.get(JSON.stringify([r.source.agentId,r.id,r.manualPending.requestId]));if(!binding)return;await binding.done;r=all().find(x=>x.id===r.id);if(!r)return;}
+  const runId=fence.resolve(r.jobId,event);if(runId===null)return;
+  const manual=!!runId&&r.manualPending?.runId===runId;
+  if(fence.has(r.jobId,runId,event.runAtMs)){if(manual)fence.consume(r.jobId,runId,()=>{delete r.manualPending;save(r);});return;}
+  if(manual)fence.consume(r.jobId,runId,()=>{delete r.manualPending;save(r);});
+  if(event.status!=='ok'||r.status!=='enabled')return;
   if(event.agentId!==r.source.agentId||event.runAtMs<(r.acceptAfter??0))return;
   if(r.lastRun?.jobIds?.length&&(!bridge.jobsActive||bridge.jobsActive(r.lastRun.jobIds,r.source)))return;
   const jobs=await cron().list({includeDisabled:true});const job=jobs.find(j=>j.id===r.jobId);
   // A user-edited native job cannot silently change the authorized plan or executor.
   if(!job||(job.enabled===false&&r.schedule.kind!=='at')||job.agentId!==r.source.agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload?.script!==tickScript||job.delivery?.mode!=='none'||JSON.stringify(job.schedule)!==JSON.stringify(r.schedule))return;
   const latestBeforeClaim=all().find(x=>x.id===r.id);
-  if(latestBeforeClaim?.status!=='enabled'||(latestBeforeClaim.managementRevision??0)!==(r.managementRevision??0)||signal?.aborted)return;
+  if(latestBeforeClaim?.status!=='enabled'||(latestBeforeClaim.restorePending||workerBusy(latestBeforeClaim))||(latestBeforeClaim.managementRevision??0)!==(r.managementRevision??0)||signal?.aborted)return;
   if(!bridge.current)throw Error('Feishu scheduled source validator is unavailable');
   if(!bridge.current(r.source)){r.status='blocked';r.reason='source_or_session_invalid';save(r);await cron().update(r.jobId,{enabled:false});return;}
   if(!bridge.deliver)throw Error('Feishu scheduled request adapter is unavailable');
   // Atomic claim survives duplicates, concurrent callbacks and restart. Unknown turns are never replayed.
   if(!db.prepare('INSERT OR IGNORE INTO runs VALUES (?,?,?,?)').run(r.jobId,event.runAtMs,'dispatching','').changes)return;
   if(db.prepare("SELECT 1 FROM runs WHERE job=? AND slot<>? AND status IN ('dispatching','unknown')").get(r.jobId,event.runAtMs)){db.prepare('UPDATE runs SET status=? WHERE job=? AND slot=?').run('blocked',r.jobId,event.runAtMs);return;}
-  const run={...r,trigger:r.manualPending?'manual':'scheduled',runAtMs:event.runAtMs,runKey:r.id+':'+event.runAtMs};
-  const assertCurrent=()=>{if(signal?.aborted||all().find(x=>x.id===r.id)?.status!=='enabled'||(all().find(x=>x.id===r.id)?.managementRevision??0)!==(r.managementRevision??0)||!bridge.current?.(r.source))throw Error('Scheduled request authorization is no longer current');};
+  const run={...r,trigger:manual?'manual':'scheduled',runAtMs:event.runAtMs,runKey:r.id+':'+event.runAtMs};
+  let accepted=false;
+  const assertCurrent=()=>{if(signal?.aborted||!bridge.current?.(r.source)||!accepted&&(all().find(x=>x.id===r.id)?.status!=='enabled'||(all().find(x=>x.id===r.id)?.managementRevision??0)!==(r.managementRevision??0)))throw Error('Scheduled request authorization is no longer current');};
   try{
-   assertCurrent();const receipt=await bridge.deliver(run,{signal,assertCurrent});
+   assertCurrent();const receipt=await bridge.deliver(run,{signal,assertCurrent,onAccepted:()=>{assertCurrent();accepted=true;}});
    if(!receipt?.accepted)throw Error('No Main admission receipt');
    db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('submitted',JSON.stringify({...receipt,trigger:run.trigger,deliveryMode:r.deliveryMode??'source',scheduleRevision:revision(r)}),r.jobId,event.runAtMs);
-   const latest=all().find(x=>x.id===r.id);delete latest.manualPending;latest.lastRun={at:event.runAtMs,status:'submitted',jobIds:receipt.jobIds??[]};
+   const latest=all().find(x=>x.id===r.id);if(runId&&latest.manualPending?.runId===runId)delete latest.manualPending;latest.lastRun={at:event.runAtMs,status:'submitted',jobIds:receipt.jobIds??[]};
    if(r.schedule.kind==='at'&&latest.status==='enabled')latest.status='completed';save(latest);
-  }catch(error){db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('unknown',JSON.stringify({deliveryMode:r.deliveryMode??'source',scheduleRevision:revision(r),stage:error?.scheduledStage??'dispatch',name:error?.name??'Error',message:String(error?.message??error).slice(0,1000)}),r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);delete latest.manualPending;latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
+  }catch(error){db.prepare('UPDATE runs SET status=?,detail=? WHERE job=? AND slot=?').run('unknown',JSON.stringify({deliveryMode:r.deliveryMode??'source',scheduleRevision:revision(r),stage:error?.scheduledStage??'dispatch',name:error?.name??'Error',message:String(error?.message??error).slice(0,1000)}),r.jobId,event.runAtMs);const latest=all().find(x=>x.id===r.id);if(runId&&latest.manualPending?.runId===runId)delete latest.manualPending;latest.lastRun={at:event.runAtMs,status:'unknown'};save(latest);throw error;}
  }
- const locks=new Set();
+ const locks=new Set(),enqueueBindings=new Map();
  const getOwned=(agentId,id)=>{const r=all().find(r=>r.id===id&&r.source.agentId===agentId);if(!r)throw Error('任务不存在或不属于当前 Agent');return r;};
- const busy=r=>!!r.restorePending||locks.has(r.source.agentId+':'+r.id)||!!r.manualPending||!!db.prepare("SELECT 1 FROM runs WHERE job=? AND status IN ('dispatching','unknown')").get(r.jobId??'')||!!(r.lastRun?.jobIds?.length&&(!bridge.jobsActive||bridge.jobsActive(r.lastRun.jobIds,r.source)));
+ const workerBusy=r=>!!(r.lastRun?.jobIds?.length&&(!bridge.jobsActive||bridge.jobsActive(r.lastRun.jobIds,r.source)));
+ const executionBusy=(r,includePending=true)=>!!r.restorePending||includePending&&!!r.manualPending||!!db.prepare("SELECT 1 FROM runs WHERE job=? AND status IN ('dispatching','unknown')").get(r.jobId??'')||workerBusy(r);
+ const busy=r=>locks.has(r.source.agentId+':'+r.id)||executionBusy(r);
  async function catalog(agentId,{includeRemoved=false}={}){
   let canRun=false;try{canRun=typeof cron().enqueueRun==='function';}catch{}
   return {agentId,available:true,canRun,tasks:all().filter(r=>r.source.agentId===agentId&&(includeRemoved||r.status!=='removed')).map(r=>({...publicRecord(r),revision:revision(r),busy:busy(r),sourceValid:!!bridge.current?.(r.source),chatId:r.source.chatId,requester:r.source.people?.requester?.name??r.source.senderId,originId:r.originId??r.id,manualPending:!!r.manualPending})),operations:db.prepare('SELECT id,input,status,result,created FROM operations WHERE agent=? ORDER BY created DESC LIMIT 30').all(agentId).map(o=>({requestId:o.id,action:JSON.parse(o.input).action,status:o.status,createdAt:o.created,result:JSON.parse(o.result||'{}')}))};
@@ -138,8 +150,9 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   }
   if(params.action==='restore'&&(r.status!=='removed'||r.restorePending))throw Error('计划不在回收站或先前恢复结果待核验');
   if(params.action==='resume'&&r.schedule.kind==='at'&&Date.parse(r.schedule.at)<=now())throw Error('一次性时间已过期，请先修改时间');
+  const savePlan=record=>{const current=getOwned(agentId,record.id);for(const key of ['lastRun','manualPending']){if(Object.hasOwn(current,key))record[key]=current[key];else delete record[key];}save(record);};
   const auditId=auditBegin(db,{agentId,feature:'schedules',targetId:r.id,targetName:r.name,action:params.action,...provenance,requestId:params.requestId,before:params.action==='create'?null:scheduleSnapshot(r),requested:Object.fromEntries(editFields.filter(k=>params[k]!==undefined).map(k=>[k,params[k]])),at:now()});
-  locks.add(key);
+  locks.add(key);let enqueueAttempted=false;
   try{
    db.prepare('INSERT INTO operations VALUES (?,?,?,?,?,?)').run(agentId,params.requestId,encoded,'pending','{}',now());
    let result;
@@ -149,15 +162,18 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
    }else if(params.action==='run'){
     const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
     if(!job?.enabled||job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload.script!==tickScript||job.delivery?.mode!=='none'||JSON.stringify(job.schedule)!==JSON.stringify(r.schedule))throw Error('原生计划不一致，请核验');
-    r.manualPending={requestId:params.requestId,at:now()};save(r);
-    result=await cron().enqueueRun(r.jobId,'force');
-    if(!result?.ok||result.enqueued!==true)throw Error('原生调度未确认入队，请核验后再操作');
+    const current=getOwned(agentId,r.id);if(current.status!=='enabled'||revision(current)!==revision(r)||executionBusy(current)||!bridge.current?.(current.source))throw Error('运行状态或授权已变化，请刷新');current.manualPending={requestId:params.requestId,at:now()};save(current);
+    let release;const done=new Promise(resolve=>release=resolve),binding={done},bindingKey=JSON.stringify([agentId,r.id,params.requestId]);enqueueBindings.set(bindingKey,binding);
+    try{enqueueAttempted=true;result=await cron().enqueueRun(r.jobId,'force');
+     if(!result?.ok||result.enqueued!==true||typeof result.runId!=='string'||!result.runId)throw Error('原生调度未确认入队，请核验后再操作');
+     const latest=getOwned(agentId,r.id);if(latest.manualPending?.requestId===params.requestId){const terminal=fence.receipt(r.jobId,result.runId);if(terminal&&terminal.status!=='ok')fence.consume(r.jobId,result.runId,()=>{delete latest.manualPending;save(latest);});else{latest.manualPending.runId=result.runId;save(latest);}}
+    }finally{if(enqueueBindings.get(bindingKey)===binding)enqueueBindings.delete(bindingKey);release();}
    }else{
     // Revoke admission before awaiting a native mutation. A failed write remains
     // needs_review and never resumes business dispatch automatically.
     const enabled=params.action==='resume'||params.action==='update'&&r.status==='enabled';
     if(params.action==='remove')r.deletedAt??=now();if(params.action==='restore')r.restorePending=true;
-    r.managementRevision=(r.managementRevision??0)+1;r.status=['remove','restore'].includes(params.action)?'removed':'paused';r.acceptAfter=now();save(r);
+    r.managementRevision=(r.managementRevision??0)+1;r.status=['remove','restore'].includes(params.action)?'removed':'paused';r.acceptAfter=now();savePlan(r);
     if(params.action==='remove'){
      const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
      if(job&&(job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id))throw Error('原生计划归属不一致');
@@ -165,26 +181,28 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
     }
     else{
      let job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
-     if(!job&&params.action==='restore'){job=await cron().add({name:'Ada: '+r.name,description:'agent-repo scheduled request '+r.id,agentId,enabled:false,schedule:r.schedule,sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script:tickScript,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});if(!job?.id)throw Error('原生计划恢复未确认');r.jobId=job.id;save(r);}
+     if(!job&&params.action==='restore'){job=await cron().add({name:'Ada: '+r.name,description:'agent-repo scheduled request '+r.id,agentId,enabled:false,schedule:r.schedule,sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script:tickScript,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});if(!job?.id)throw Error('原生计划恢复未确认');r.jobId=job.id;savePlan(r);}
      if(!job||job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload.script!==tickScript||job.delivery?.mode!=='none')throw Error('原生计划不一致，请核验');
      if(!schedule&&JSON.stringify(job.schedule)!==JSON.stringify(r.schedule))throw Error('原生计划已改变，请先编辑核验');
      if(params.name!==undefined)r.name=params.name;if(schedule)r.schedule=schedule;if(params.deliveryMode!==undefined)r.deliveryMode=params.deliveryMode;
-     save(r);
+     savePlan(r);
      result=await cron().update(r.jobId,{enabled,...(params.name!==undefined?{name:'Ada: '+r.name}:{}),...(schedule?{schedule:r.schedule}:{})});
      if(enabled&&result?.schedule&&JSON.stringify(result.schedule)!==JSON.stringify(r.schedule))throw Error('原生计划返回不一致');
      if(!bridge.current?.(r.source)&&enabled)throw Error('原群请求已失效');
-     r.status=enabled?'enabled':'paused';if(params.action==='restore'){delete r.deletedAt;delete r.restorePending;}save(r);
+     r.status=enabled?'enabled':'paused';if(params.action==='restore'){delete r.deletedAt;delete r.restorePending;}savePlan(r);
     }
    }
+   if(['pause','remove'].includes(params.action)){const latest=getOwned(agentId,r.id);if(latest.manualPending)fence.consume(latest.jobId,latest.manualPending.runId,()=>{delete latest.manualPending;save(latest);});}
    const receipt={id:params.action==='create'?result.id:r.id,action:params.action,...(params.action==='run'?{runId:result.runId,enqueued:true}:{})};
    auditFinish(db,auditId,'succeeded',scheduleSnapshot(getOwned(agentId,receipt.id)),{at:now(),targetId:receipt.id,targetName:getOwned(agentId,receipt.id).name});
    db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run('succeeded',JSON.stringify(receipt),agentId,params.requestId);return {...receipt,status:'succeeded'};
   }catch(error){
-   if(params.action!=='create'&&!['pause','remove'].includes(params.action)){const latest=getOwned(agentId,r.id);latest.status=params.action==='restore'?'removed':'needs_review';save(latest);}
+   if(params.action!=='create'&&!['pause','remove'].includes(params.action)&&(params.action!=='run'||enqueueAttempted)){const latest=getOwned(agentId,r.id);latest.status=params.action==='restore'?'removed':'needs_review';save(latest);}
    const affected=params.action==='create'?all().find(x=>x.source.agentId===agentId&&x.requestId==='panel:'+params.requestId):getOwned(agentId,r.id);
-   auditFinish(db,auditId,'unknown',scheduleSnapshot(affected),{at:now(),targetId:affected?.id,targetName:affected?.name});
-   db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run('unknown',JSON.stringify({id:r.id,action:params.action,reason:'操作结果未确认，请刷新并核验；不要重复提交。'}),agentId,params.requestId);
-   throw Error('操作结果未确认，请刷新并核验；不要重复提交。',{cause:error});
+   const failureStatus=params.action==='run'&&!enqueueAttempted?'failed':'unknown',reason=failureStatus==='failed'?'运行状态或授权已变化，本次未入队，请刷新核验。':'操作结果未确认，请刷新并核验；不要重复提交。';
+   auditFinish(db,auditId,failureStatus,scheduleSnapshot(affected),{at:now(),targetId:affected?.id,targetName:affected?.name});
+   db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run(failureStatus,JSON.stringify({id:r.id,action:params.action,reason}),agentId,params.requestId);
+   throw Error(reason,{cause:error});
   }finally{locks.delete(key);}
  }
  async function inspect(agentId){
@@ -212,17 +230,17 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
  }
  const trash=agentId=>all().filter(r=>r.source.agentId===agentId&&r.status==='removed').map(r=>({id:r.id,name:r.name,provider:'group-schedules',feature:'schedules',kind:'group-schedule',deletedAt:r.deletedAt??r.createdAt,revision:revision(r),busy:busy(r),restorePending:!!r.restorePending,preview:{projectId:r.projectId,schedule:r.schedule,deliveryMode:r.deliveryMode??'source',task:r.task,constraints:r.constraints}}));
  async function purgeTrash(agentId,cutoff){
-  if(!Number.isSafeInteger(cutoff)||cutoff<0)throw Error('回收站清理时间无效');const purged=[];
+  if(!Number.isSafeInteger(cutoff)||cutoff<0)throw Error('回收站清理时间无效');const purged=[],failed=[];
   for(const r of all().filter(r=>r.source.agentId===agentId&&r.status==='removed'&&(r.deletedAt??r.createdAt)<=cutoff)){
    const key=agentId+':'+r.id;if(busy(r)||r.restorePending)continue;locks.add(key);
    try{const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
     if(job&&(job.enabled!==false||job.agentId!==agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload.script!==tickScript||job.delivery?.mode!=='none'||JSON.stringify(job.schedule)!==JSON.stringify(r.schedule)))continue;
     const auditId=auditBegin(db,{agentId,feature:'schedules',targetId:r.id,targetName:r.name,action:'purge',actor:{kind:'system',id:'retention-cleanup'},executor:'recycle-bin',before:scheduleSnapshot(r),at:now()});
-    try{if(job)await cron().remove(r.jobId);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT OR IGNORE INTO purged_requests VALUES(?,?,?)').run(sourceKey(r.source),r.requestId,r.id);db.prepare('DELETE FROM requests WHERE id=?').run(r.id);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}auditFinish(db,auditId,'succeeded',null,{at:now()});purged.push(r.id);}catch{auditFinish(db,auditId,'unknown',scheduleSnapshot(r),{at:now()});}
+    try{if(job)await cron().remove(r.jobId);db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT OR IGNORE INTO purged_requests VALUES(?,?,?)').run(sourceKey(r.source),r.requestId,r.id);db.prepare('DELETE FROM requests WHERE id=?').run(r.id);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}auditFinish(db,auditId,'succeeded',null,{at:now()});purged.push(r.id);}catch{auditFinish(db,auditId,'unknown',scheduleSnapshot(r),{at:now()});failed.push(r.id);}
    }finally{locks.delete(key);}
-  }return {purged};
+  }return {purged,...(failed.length?{failed}:{} )};
  }
- async function recover(signal){for(const job of await cron().list({includeDisabled:true})){if(job.state?.lastRunStatus==='ok'&&Number.isSafeInteger(job.state.lastRunAtMs))await fire({action:'finished',status:'ok',jobId:job.id,agentId:job.agentId,runAtMs:job.state.lastRunAtMs},signal);}}
+ async function recover(signal){for(const job of await cron().list({includeDisabled:true})){const r=all().find(r=>r.jobId===job.id);if(r&&['paused','removed'].includes(r.status)&&job.enabled===false&&job.agentId===r.source.agentId&&job.description==='agent-repo scheduled request '+r.id&&job.payload?.kind==='script'&&job.payload.script===tickScript&&job.delivery?.mode==='none'&&r.manualPending){fence.consume(r.jobId,r.manualPending.runId,()=>{delete r.manualPending;save(r);});}if(job.state?.lastRunStatus==='ok'&&Number.isSafeInteger(job.state.lastRunAtMs))await fire({action:'finished',status:'ok',recovery:true,jobId:job.id,agentId:job.agentId,runAtMs:job.state.lastRunAtMs},signal);}}
  return {manage,fire,recover,inspect,catalog,administer,trash,purgeTrash,audit:(agentId,p)=>auditQuery(db,agentId,p),close:()=>db.close()};
 }
 

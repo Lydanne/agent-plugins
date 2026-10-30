@@ -9,7 +9,7 @@ import type {ClawdbotConfig} from '../runtime-api.js';
 
 type Source=Omit<TaskLease,'signal'> & {agentId:string;sessionId:string};
 type Request={deliveryMode?:'source'|'group'|'thread';trigger?:'manual'|'scheduled';id:string;runKey:string;runAtMs:number;source:Source;projectId:string;task:string;constraints:string;schedule?:{tz?:string}};
-type Callbacks={signal?:AbortSignal;assertCurrent:()=>void};
+type Callbacks={signal?:AbortSignal;assertCurrent:()=>void;onAccepted?:()=>void};
 type Bridge={capture?:(context:OpenClawPluginToolContext)=>Source;current?:(source:Source)=>boolean;deliver?:(request:Request,callbacks:Callbacks)=>Promise<{accepted:boolean;jobIds:string[]}>};
 const symbol=Symbol.for('ada.scheduled-requests.v1');
 export const scheduledRequestBridge:Bridge=(globalThis as typeof globalThis & {[symbol]?:Bridge})[symbol]??=((globalThis as typeof globalThis & {[symbol]?:Bridge})[symbol]={});
@@ -52,7 +52,7 @@ export function createScheduledRequestAdapter(core:OpenClawPluginApi['runtime'])
    try{
     assertCurrent();source.activate();
     stage="main_dispatch";await core.channel.inbound.run({channel:'feishu',accountId:p.accountId,raw:request,adapter:{ingest:()=>({id:messageId,rawText:body,textForAgent:body,textForCommands:'',raw:request}),resolveTurn:()=>({cfg,channel:'feishu',accountId:p.accountId,route:{agentId:p.agentId,sessionKey:p.sessionKey},ctxPayload,
-     replyOptions:{abortSignal:signal,disableBlockStreaming:true,onAgentRunStart:()=>{assertCurrent();accepted=true;},turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}},
+     replyOptions:{abortSignal:signal,disableBlockStreaming:true,onAgentRunStart:()=>{assertCurrent();callbacks.onAccepted?.();accepted=true;},turnAdoptionLifecycle:{onAdopted:()=>{},onDeferred:()=>false}},
      delivery:{deliver:async(payload,info)=>{if(info.kind!=='final'||payload.isReasoning||payload.isCommentary||!payload.text)return;
       try{assertCurrent();const card=workingResultCard(payload.text,account.config);assertFeishuCardWithinEnvelope(card);if(!withinCardTableLimit(payload.text))throw Error('Scheduled result exceeds the card table limit');const receipt=await sendCardFeishu({cfg,accountId:p.accountId,to:'chat:'+p.chatId,card,replyToMessageId:mode==='group'?undefined:route.rootId??p.requestMessageIds?.at(-1),replyInThread:route.replyInThread??false});deliveryReceipts.push({messageId:receipt.messageId,chatId:p.chatId});}catch(error){deliveryError=error;throw error;}
      },onError:error=>{deliveryError=error;throw error;}}})}});

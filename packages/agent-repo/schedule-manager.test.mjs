@@ -105,3 +105,8 @@ test('delivery position is editable with confirmation and cannot select an unkno
  assert.match(f.container.textContent,/投递位置：群主会话/);assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
  click(f.container,'确认执行');await settle();assert.equal(f.calls.find(c=>c.action==='scheduleManage').payload.deliveryMode,'group');
 });
+
+test('a new confirmation or failure cannot retain a previous successful operation notice',async t=>{
+ const tasks=[structuredClone(task)],f=await fixture(t,{tasks,mutate:async p=>{if(p.action==='pause'){tasks[0].status='paused';tasks[0].revision='next';return {id:'one',status:'succeeded'};}throw Error('运行状态变化，本次未入队');}});
+ click(f.container,'暂停');click(f.container,'确认执行');await settle();assert.match(f.container.textContent,/操作已完成/);click(f.container,'启用');assert.ok(!f.container.textContent.includes('操作已完成'));click(f.container,'确认执行');await settle();assert.match(f.container.textContent,/本次未入队/);assert.ok(!f.container.textContent.includes('操作已完成'));
+});
