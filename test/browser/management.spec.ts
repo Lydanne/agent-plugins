@@ -35,11 +35,12 @@ test('Worker management preserves typed search text on timed refresh and uses th
  expect(opened[0].params.jobId).toBe('11111111-1111-4111-8111-111111111111');expect(opened[0].params.sessionKey).toBe('agent:main:real-chat');expect(errors).toEqual([]);
 });
 
-test('Agent selection preserves the host method receiver and rejects late previous-Agent data',async({page})=>{
+test('Management follows host Agent changes without a duplicate selector and rejects late previous-Agent data',async({page})=>{
  const errors=await ready(page);
  await page.evaluate(()=>{(window as any).fixture.delayReads(true);});
  await page.getByRole('button',{name:'刷新审计'}).click();
- await page.getByRole('combobox',{name:'AgentRepo 所属 Agent'}).selectOption('other');
+ await expect(page.getByRole('combobox',{name:'AgentRepo 所属 Agent'})).toHaveCount(0);
+ await page.evaluate(()=>(window as any).fixture.host.agents.select('other'));
  await page.evaluate(()=>{(window as any).fixture.releaseReads();});
  await expect(page.getByText(/其他 Agent 测试计划 0/).first()).toBeVisible();
  expect(await page.evaluate(()=>(window as any).fixture.host.agents.selectedId)).toBe('other');

@@ -21,7 +21,7 @@ test('organization sync retries the original request and standalone personnel co
 });
 test('entity Agent changes and permission updates discard late reads and close mutation context',async({page})=>{
  await page.goto('/?section=entities');await expect(page.getByRole('heading',{name:'测试工单服务'})).toBeVisible();
- await page.evaluate(()=>(window as any).fixture.delayReads(true));await page.getByRole('button',{name:'刷新资料'}).click();await page.getByRole('combobox',{name:'AgentRepo 所属 Agent'}).selectOption('other');await page.evaluate(()=>(window as any).fixture.releaseReads());
+ await page.evaluate(()=>(window as any).fixture.delayReads(true));await page.getByRole('button',{name:'刷新资料'}).click();await page.evaluate(()=>(window as any).fixture.host.agents.select('other'));await page.evaluate(()=>(window as any).fixture.releaseReads());
  await expect(page.getByRole('heading',{name:'其他 Agent 服务'})).toBeVisible();await expect(page.getByRole('heading',{name:'测试工单服务'})).toHaveCount(0);
  await page.getByRole('button',{name:'修改日志',exact:true}).click();await expect(page.getByRole('dialog')).toBeVisible();await page.evaluate(()=>(window as any).fixture.setConnection({canWrite:false}));await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('button',{name:'同步飞书组织与全部部门'})).toBeDisabled();
  await page.evaluate(()=>(window as any).fixture.setPresented(false));await expect(page.getByRole('heading',{name:'其他 Agent 服务'})).toHaveCount(0);await page.evaluate(()=>(window as any).fixture.setPresented(true));await expect(page.getByRole('heading',{name:'其他 Agent 服务'})).toBeVisible();
