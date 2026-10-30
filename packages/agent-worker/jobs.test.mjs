@@ -167,3 +167,16 @@ test('two async jobs release their submitter before either worker finishes witho
   await new Promise(r=>setTimeout(r,150));rmSync(root,{recursive:true,force:true});
  }
 });
+
+test('CLI authority rejects stale heartbeats, cancelled or lost executions with otherwise running records',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'worker-cli-liveness-'));const id=randomUUID(),scope='agent:main:main',workerId=randomUUID();
+ const jobs=createJobs({root,node:process.execPath,worker:join(root,'unused.mjs')});
+ const record={jobId:id,scope:createHash('sha256').update(scope).digest('hex'),workerId,status:'running',heartbeatAt:Date.now()};
+ try{
+  writeJson(join(root,id+'.json'),record);writeJson(join(root,id+'.process.json'),{pid:process.pid,workerId});
+  assert.equal(jobs.cliActive(id,scope).workerId,workerId);
+  writeJson(join(root,id+'.json'),{...record,heartbeatAt:0});assert.throws(()=>jobs.cliActive(id,scope));
+  writeJson(join(root,id+'.json'),record);writeJson(join(root,id+'.process.json'),{pid:process.pid,workerId:'old'});assert.throws(()=>jobs.cliActive(id,scope));
+  writeJson(join(root,id+'.process.json'),{pid:process.pid,workerId});writeFileSync(join(root,id+'.cancel'),'cancel');assert.throws(()=>jobs.cliActive(id,scope));
+ }finally{rmSync(root,{recursive:true,force:true});}
+});

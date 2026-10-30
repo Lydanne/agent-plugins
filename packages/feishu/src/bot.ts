@@ -2134,7 +2134,7 @@ export async function handleFeishuMessage(params: {
           else taskMedia.set(directQuote.messageId,[{kind:"document"}]);
         }catch{taskMedia.set(directQuote.messageId,[{kind:"document"}]);}
       }
-      const makeSourceTask = () => new SourceTask({accountId: account.accountId, chatId: ctx.chatId, chatType:ctx.chatType, sessionKey: route.sessionKey, senderId: ctx.senderOpenId, rootId:ctx.rootId, replyInThread, people:taskPeopleByAgent.get(route.agentId)}, [
+      const makeSourceTask = () => new SourceTask({accountId: account.accountId, chatId: ctx.chatId, chatType:ctx.chatType, sessionKey: route.sessionKey, senderId: ctx.senderOpenId, senderName:ctx.senderName, rootId:ctx.rootId, replyInThread, people:taskPeopleByAgent.get(route.agentId)}, [
         ...(params.sourceMessages ?? [{messageId: ctx.messageId, text: ctx.content, kind: "request" as const}]),
         ...quoteChainMessages.map(message => ({messageId: message.messageId, text: message.content, kind: "reference" as const})),
       ].map(source=>({...source,...(taskMedia.has(source.messageId)?{attachments:taskMedia.get(source.messageId)!.map(media=>({kind:media.kind,...(media.resourceId?{resourceId:media.resourceId}:{}),...(media.path?{path:media.path}:{}),...(media.contentType?{contentType:media.contentType}:{}),availability:media.path?"available" as const:"unavailable" as const}))}:{})})));

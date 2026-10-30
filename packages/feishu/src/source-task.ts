@@ -17,6 +17,7 @@ export type TaskLease = {
   taskId: string; revision: number; accountId: string; chatId: string;
   sessionKey: string; senderId: string; sourceMessageIds: string[]; requestMessageIds?: string[]; rootId?: string; replyInThread?: boolean;
   chatType?: FeishuChatType;
+  senderName?: string;
   /** Trusted scheduled delivery route; source identity remains bound to the original request. */
   deliveryMode?: "group" | "thread";
   people?: TaskPeople;
@@ -145,8 +146,8 @@ export class SourceTask {
   private controller?: AbortController;
   private lease?: TaskLease;
   private status = "queued";
-  constructor(readonly scope: { accountId: string; chatId: string; sessionKey: string; senderId: string; chatType?:FeishuChatType; rootId?: string; replyInThread?: boolean; deliveryMode?: "group" | "thread"; people?:TaskPeople }, sources: TaskSource[]) {
-    const {people: _people, chatType: _chatType, ...sourceIdentity} = scope;
+  constructor(readonly scope: { accountId: string; chatId: string; sessionKey: string; senderId: string; senderName?:string; chatType?:FeishuChatType; rootId?: string; replyInThread?: boolean; deliveryMode?: "group" | "thread"; people?:TaskPeople }, sources: TaskSource[]) {
+    const {people: _people, chatType: _chatType, senderName:_senderName, ...sourceIdentity} = scope;
     this.id = "ada_" + createHash("sha256").update(JSON.stringify([sourceIdentity, sources.map(s => s.messageId).sort()])).digest("hex").slice(0, 24);
     for (const source of sources) {
       this.sources.set(source.messageId, source);

@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {renderWorkerSkill,publishWorkerSkill,createWorkerSkillPublisher,workerCliReferenceName} from './worker-skill.mjs';
+import {renderWorkerSkill,publishWorkerSkill,createWorkerSkillPublisher,workerCliReferenceName,migrateLegacyWorkerSkill} from './worker-skill.mjs';
 import {createProjectService} from './project-service.mjs';
 const plugins={plugins:[{id:'feishu',name:'Feishu',version:'1.0',runtime:{state:'active'},config:{secret:'never-export'}},{id:'off',runtime:{state:'disabled'}},{id:'broken',runtime:{state:'service-failed'}}]};
 const catalog={agentId:'main',groups:[{source:'core',tools:[{id:'exec'}]},{source:'plugin',pluginId:'feishu',tools:[{id:'feishu_doc',description:'Read and update docs'}]},{source:'plugin',pluginId:'off',tools:[{id:'disabled_tool'}]}]};
@@ -117,5 +117,21 @@ test('global publication retires only the owned legacy entrypoint and preserves 
   const reference=join(global,'skills/openclaw-main-main/references',workerCliReferenceName);
   assert.match(await readFile(reference,'utf8'),/plugin describe/);
   const snapshot=await readFile(current.path,'utf8');assert.ok(!snapshot.includes('OPENCLAW_WORKER_CLI_TOKEN='));
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('legacy migration recovers both interrupted boundaries and pinned references resolve from revisions',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'worker-migration-retry-'));
+ try{
+  const legacy=join(root,'old'),old=await publishWorkerSkill(legacy,'main','old protocol'),target='/new/skills/openclaw-main-main/SKILL.md';
+  await assert.rejects(migrateLegacyWorkerSkill(legacy,'main',target,{afterMarker:()=>{throw Error('interrupted');}}),/interrupted/);
+  assert.equal(JSON.parse(await readFile(join(legacy,'skills/openclaw-main-main/.agent-repo.json'),'utf8')).migratedTo,target);
+  await migrateLegacyWorkerSkill(legacy,'main',target);await assert.rejects(readFile(old.path));
+  // Older deployment interrupted after rename and before redirect.
+  await writeFile(join(legacy,'skills/openclaw-main-main/.agent-repo.json'),JSON.stringify({owner:'agent-repo',agentId:'main',revision:old.revision}));
+  await migrateLegacyWorkerSkill(legacy,'main',target);assert.equal(JSON.parse(await readFile(join(legacy,'skills/openclaw-main-main/.agent-repo.json'),'utf8')).migratedTo,target);
+  const current=await publishWorkerSkill(join(root,'global'),'main',renderWorkerSkill('main',plugins,catalog));
+  const pinned=new URL('references/'+workerCliReferenceName,'file://'+current.revisionPath);
+  assert.match(await readFile(pinned,'utf8'),/plugin describe/);
  }finally{await rm(root,{recursive:true,force:true});}
 });

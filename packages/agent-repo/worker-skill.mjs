@@ -76,6 +76,9 @@ async function publish(skillsHome,agentId,body) {
   const revision=hash(body),revisionPath=join(directory,'revisions',revision+'.md');
   await mkdir(join(directory,'revisions'),{recursive:true,mode:0o700});
   for(const sub of ['agents','revisions'])if(await realpath(join(directory,sub))!==join(await realpath(directory),sub))throw Error('Worker skill directory must not be linked');
+  await mkdir(join(directory,'revisions','references'),{recursive:true,mode:0o700});
+  if(await realpath(join(directory,'revisions','references'))!==join(await realpath(directory),'revisions','references'))throw Error('Pinned Worker references must not be linked');
+  await atomic(join(directory,'revisions','references',workerCliReferenceName),workerCliReference);
   try {
    if(await readFile(revisionPath,'utf8')===body&&await readFile(path,'utf8')===body&&await readFile(join(directory,'agents','openai.yaml'),'utf8')===yaml&&JSON.parse(await readFile(join(directory,'.agent-repo.json'),'utf8')).revision===revision)return {name,path,revision,revisionPath,agentId};
   } catch(error) {if(error.code!=='ENOENT')throw error;}
@@ -103,11 +106,30 @@ async function previousSkill(skillsHome,agentId) {
  const revisionPath=join(directory,'revisions',marker.revision+'.md');
  if(await realpath(join(directory,'revisions'))!==join(await realpath(directory),'revisions'))throw Error('Invalid cached Worker skill revisions');
  const body=await readFile(revisionPath,'utf8');
- for(const match of body.matchAll(/references\/cli-([a-f0-9]{64})\.md/g)){if(hash(await readFile(join(directory,'references','cli-'+match[1]+'.md'),'utf8'))!==match[1])throw Error('Invalid cached CLI reference');}
+ for(const match of body.matchAll(/references\/cli-([a-f0-9]{64})\.md/g)){if(hash(await readFile(join(directory,'references','cli-'+match[1]+'.md'),'utf8'))!==match[1]||hash(await readFile(join(directory,'revisions','references','cli-'+match[1]+'.md'),'utf8'))!==match[1])throw Error('Invalid cached CLI reference');}
  // The marker commits an immutable revision. SKILL.md is a mutable entrypoint
  // and may already contain an uncommitted update when publication is interrupted.
  if(hash(body)!==marker.revision||await readFile(join(directory,'agents/openai.yaml'),'utf8')!==yaml)throw Error('Invalid cached Worker skill contents');
  return {name,path,revision:marker.revision,revisionPath,agentId};
+}
+export async function migrateLegacyWorkerSkill(legacyHome,agentId,target,{afterMarker}={}) {
+ if(!isAbsolute(legacyHome))return;
+ const name=workerSkillName(agentId),root=join(legacyHome,'skills'),legacy=join(root,name);
+ if(join(legacy,'SKILL.md')===target)return;
+ let release;
+ try {
+  if(!(await lstat(legacy)).isDirectory()||await realpath(legacy)!==join(await realpath(root),name))return;
+  release=await acquireWorkerSkillLock(join(root,'.'+name+'.lock'));
+  const marker=join(legacy,'.agent-repo.json'),owner=JSON.parse(await readFile(marker,'utf8'));
+  if(owner.owner!=='agent-repo'||owner.agentId!==agentId||!/^[a-f0-9]{64}$/.test(owner.revision))return;
+  const path=join(legacy,'SKILL.md'),retired=path+'.migrated';
+  let body;try{body=await readFile(path,'utf8');}catch(error){if(error.code!=='ENOENT')throw error;body=await readFile(retired,'utf8');}
+  if(hash(body)!==owner.revision||hash(await readFile(join(legacy,'revisions',owner.revision+'.md'),'utf8'))!==owner.revision)return;
+  // Commit the redirect first. A retry repairs either interruption boundary.
+  await atomic(marker,JSON.stringify({...owner,migratedTo:target}));
+  await afterMarker?.();
+  try{await rename(path,retired);}catch(error){if(error.code!=='ENOENT')throw error;}
+ }catch(error){if(error.code!=='ENOENT')throw error;}finally{release?.();}
 }
 export function createWorkerSkillPublisher(getConfig,request,{logger,skillsHome=join(homedir(),'.agents')}={}) {
  const pending=new Map();
@@ -126,7 +148,7 @@ export function createWorkerSkillPublisher(getConfig,request,{logger,skillsHome=
    }
    const result=await publishWorkerSkill(skillsHome,agentId,renderWorkerSkill(agentId,plugins,catalog));await record('published',result.revision);
    const raw=getConfig().plugins?.entries?.['agent-worker']?.config?.codexHome??'~/.codex';
-   if(typeof raw==='string'){const legacyHome=raw.startsWith('~/')?join(homedir(),raw.slice(2)):raw;const legacy=join(legacyHome,'skills',workerSkillName(agentId));if(isAbsolute(legacyHome)&&legacy!==join(skillsHome,'skills',workerSkillName(agentId))){try{const owner=JSON.parse(await readFile(join(legacy,'.agent-repo.json'),'utf8'));if(owner.owner==='agent-repo'&&owner.agentId===agentId&&(await lstat(legacy)).isDirectory()&&await realpath(legacy)===join(await realpath(join(legacy,'..')),workerSkillName(agentId))&&hash(await readFile(join(legacy,'SKILL.md'),'utf8'))===owner.revision){await rename(join(legacy,'SKILL.md'),join(legacy,'SKILL.md.migrated'));await atomic(join(legacy,'.agent-repo.json'),JSON.stringify({...owner,migratedTo:result.path}));}}catch{}}}
+   if(typeof raw==='string'){const legacyHome=raw.startsWith('~/')?join(homedir(),raw.slice(2)):raw;await migrateLegacyWorkerSkill(legacyHome,agentId,result.path);}
    return result;
   })().catch(async error=>{await record('failed');throw error;}).finally(()=>pending.delete(key));
   pending.set(key,work);return work;

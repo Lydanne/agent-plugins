@@ -261,7 +261,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    try{workerCli=prepareWorker?.(claimed,request);child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
    catch{failed();continue;}
    child.stdin.on('error',()=>{});child.once('error',failed);
-   writeJson(join(root,job.jobId+'.process.json'),{pid:child.pid});
+   writeJson(join(root,job.jobId+'.process.json'),{pid:child.pid,workerId:claimed.workerId});
    child.stdin.end(JSON.stringify({...request,runtime:{...request.runtime,...(workerCli?{workerCli}:{})},params:request.resumeParams??request.params}));child.unref();
   }
  }
@@ -289,6 +289,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   return (job.contributorApprovals??[]).some(r=>r.status==='approved'&&r.source.senderId===source.senderId&&r.approvedBy===job.provenance.senderId&&(r.mode==='worker'||r.mode==='once'&&r.requestId===approvalId&&r.questionId===questionId&&contributorSourceIdentity(r.source)===contributorSourceIdentity(source)));
  }
  return {
+  cliActive(jobId,scope){const job=get(jobId,scope),file=join(root,jobId+'.process.json');if(job.status!=='running'||existsSync(join(root,jobId+'.cancel'))||!existsSync(file))throw Error('Worker execution unavailable');const owner=readJson(file);if(owner.workerId!==job.workerId||!processAlive(owner.pid))throw Error('Worker execution lost');return job;},
   raw(jobId){if(!/^[0-9a-f-]{36}$/.test(jobId)||existsSync(join(root,jobId+'.cancel')))throw Error('Worker job unavailable');return readJson(join(root,jobId+'.json'));},
   async prepareSteering(jobId,scope,answer,requester,source,authorize){
    const release=await acquireLock(lock);
