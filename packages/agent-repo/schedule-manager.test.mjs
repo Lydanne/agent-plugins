@@ -97,3 +97,11 @@ for(const [action,initialTaskId,tasks] of [
  assert.ok(![...f.container.querySelectorAll('button')].some(b=>b.textContent==='确认执行'));
  assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
 });
+
+test('delivery position is editable with confirmation and cannot select an unknown thread',async t=>{
+ const f=await fixture(t,{tasks:[{...task,deliveryMode:'source',delivery:{canUseThread:false}}]});
+ const mode=f.container.querySelector('[aria-label="投递位置"]');assert.equal(mode.querySelector('[value="thread"]').disabled,true);
+ mode.value='group';f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));
+ assert.match(f.container.textContent,/投递位置：群主会话/);assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
+ click(f.container,'确认执行');await settle();assert.equal(f.calls.find(c=>c.action==='scheduleManage').payload.deliveryMode,'group');
+});

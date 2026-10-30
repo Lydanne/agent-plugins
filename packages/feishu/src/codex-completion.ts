@@ -39,7 +39,7 @@ async function serializeQuestion<T>(key:string,run:()=>Promise<T>):Promise<T>{
  try{return await next;}finally{if(questionTurns.get(key)===next)questionTurns.delete(key);}
 }
 
-type Provenance = Parameters<typeof isCompletionSourceCurrent>[0] & {requestMessageIds: string[]; sessionId?: string; rootId?: string; replyInThread?: boolean};
+type Provenance = Parameters<typeof isCompletionSourceCurrent>[0] & {requestMessageIds: string[]; sessionId?: string; rootId?: string; replyInThread?: boolean; deliveryMode?: "group" | "thread"};
 export type CompletionEvent = {type: "agent_worker.completed" | "codex_query.completed" | "agent_worker.context_request"; eventId: string; jobId: string; topic: string;
  contextRequest?: Question;
  collaboration?: {parentJobId?:string;supplementId?:string;events:{kind:string;at:number;callId?:string;questionId?:string;supplementId?:string;childJobId?:string;status?:string;reason?:string}[]};
@@ -112,7 +112,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
     };
     const sessionCurrent = () => !p.sessionId || currentSessionId() === p.sessionId;
     if (!sessionCurrent()) {suppressed = true; return;}
-    const messageId = p.requestMessageIds.at(-1)!;
+    const messageId = p.deliveryMode === "group" ? undefined : p.deliveryMode === "thread" ? p.rootId ?? p.requestMessageIds.at(-1)! : p.requestMessageIds.at(-1)!;
     let text = buildCodexCompletionText(event);
     const contextPayload = () => core.channel.reply.finalizeInboundContext({Body: text, BodyForAgent: text,
      RawBody: text, CommandBody: "", SessionKey: p.sessionKey, AccountId: p.accountId,
@@ -176,7 +176,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
       // Completion service records this attempt as uncertain for inspection.
       callbacks.beforeSend();
       receipt = await editMessageFeishu({cfg: completionCfg, accountId: p.accountId, messageId: binding.messageId,
-       mentionScope:{accountId:p.accountId,to:"chat:"+p.chatId,replyInThread:p.replyInThread,replyToMessageId:p.rootId ?? p.requestMessageIds[0]},
+       mentionScope:{accountId:p.accountId,to:"chat:"+p.chatId,replyInThread:p.replyInThread,replyToMessageId:p.deliveryMode === "group" ? undefined : p.rootId ?? p.requestMessageIds[0]},
        card: result.fits ? result.card : workingResultCard(renderBusinessMessage(businessMessages,"asyncOversizedResult"),accountConfig)});
       resultMentionsRequester = receipt.mentionedUserIds?.includes(p.senderId) ?? false;
       if (!result.fits) {

@@ -1336,3 +1336,16 @@ it('startup closes a known unbound GIF after a terminal race and retries failed 
   expect(readAsyncTaskCard(cardStateDir,event.jobId,p)).toMatchObject({messageId:'result-card',result:'已交付'});
  }finally{start.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
+
+it('scheduled group Worker result never replies to the original topic message',async()=>{
+ const routed={...event,provenance:{...event.provenance,deliveryMode:'group' as const,replyInThread:false}};
+ await deliverCodexCompletion(routed,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+ expect(mocks.send).toHaveBeenCalled();const first=mocks.send.mock.calls[0][0];
+ expect(first.to).toBe('chat:chat');expect(first.replyToMessageId).toBeUndefined();expect(first.replyInThread).toBe(false);
+ expect(mocks.run.mock.calls[0][0].adapter.resolveTurn().ctxPayload.SessionKey).toBe(event.provenance.sessionKey);
+});
+it('scheduled thread Worker result uses the original thread root',async()=>{
+ const routed={...event,provenance:{...event.provenance,deliveryMode:'thread' as const,rootId:'original-topic',replyInThread:true}};
+ await deliverCodexCompletion(routed,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+ expect(mocks.send.mock.calls[0][0]).toMatchObject({replyToMessageId:'original-topic',replyInThread:true});
+});

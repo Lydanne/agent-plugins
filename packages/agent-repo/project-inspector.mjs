@@ -148,7 +148,7 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    const params=ctx.payload??{};
    if(params.id===repositorySyncTaskId(agentId)){if(!repositoryScheduleBridge.administer)throw Error('仓库同步调度服务不可用');return repositoryScheduleBridge.administer(agentId,params);}
    if(!scheduledRequestBridge.administer)throw Error('定时任务服务不可用');
-   if(['create','resume','run'].includes(params.action)){
+   if(['create','update','resume','run'].includes(params.action)){
     const catalog=await scheduledRequestBridge.catalog(agentId),task=catalog.tasks.find(t=>t.id===(params.action==='create'?params.sourceId:params.id));
     const projects=await readProjects(binding.repo);if(!task||!Object.hasOwn(projects,task.projectId))throw Error('请选择当前 Agent 已登记项目的群请求');
    }

@@ -417,7 +417,7 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 `agent_schedule` 是可选工具，由 agent-repo 管理计划；复用 OpenClaw 原生调度器，飞书插件将到期事件送入原群 Ada 的 Main → Worker 流程。不发送一条机器人消息再依赖平台回环，也不把定时触发伪装成新的真人授权。部署后仍需管理员显式开放工具及审核 Ada 角色规则；代码构建不修改生产配置、不自动创建计划。
 
 - `create`：必填 `requestId/name/projectId/task/constraints`，选择带时区的未来 `at`，或五段 `expr`＋`timeZone`（默认 Asia/Shanghai）。必须是用户明确授权的一次性或周期任务；projectId 必须已登记。来源只从当前有效的真人群任务捕获，参数不能指定 Agent、账号、请求人、群或会话。定时轮次不能再创建计划。
-- `list/pause/remove`：仅当前请求人、账号、群及会话代际内的计划，`pause/remove` 使用返回的适配层 `id`。暂停和删除阻止后续/尚未入场的触发，不宣称取消已提交 Worker；正在执行的任务仍按原 jobId 管理。第一版不提供修改或恢复，调整计划应先暂停旧计划再按明确授权新建。
+- `list/get/history/update/pause/resume/remove/run`：仅当前请求人、账号、群及会话代际内的计划，`pause/remove` 使用返回的适配层 `id`。暂停和删除阻止后续/尚未入场的触发，不宣称取消已提交 Worker；正在执行的任务仍按原 jobId 管理。修改与恢复沿用原计划 ID；使用 update/resume，不为调整计划重建。
 - 创建按 `requestId` 幂等。调度器写入结果不明时保存 `needs_review`，重试同一 ID 不会再建任务；管理员检查原生任务及私有记录后处理，不能盲目换 ID。原生 jobId 与适配层 id 均返回。
 - 原生任务是固定的无工具脚本 `return {};`，使用 isolated、无结果投递、非自动删除；原生 `finished/ok` 事件仅代表到期触发。适配器核对原生任务定义与可信来源，再进入原群 FIFO。只有 Main 入场/Worker 受理证据才记录 `submitted`；不把它称为业务完成。
 - 保存原请求人、账号、群、线程、会话代际、依据消息及任务约束。消息撤回或会话重置后拒绝继续；执行时使用当前 Ada 的角色和工具权限。每次生成独立来源任务，原依据继续参与 Worker 撤回与完成校验。
@@ -427,6 +427,31 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 私有状态位于宿主 stateDir 下 `agent-repo-scheduled-requests/scheduled-requests.sqlite`（0600）；不存进角色仓库或 Git。需要配套 agent-repo、feishu、agent-worker 版本，以及宿主公开 `getCron()` / `cron_changed` / `cron_reconciled`、script payload 和 channel inbound 能力。缺失时不降级为 shell、伪造来源或同步 Worker。当前适配开发针对本机 OpenClaw 2026.10.5 合同；SDK 编译基线仍为仓库锁定版本，不能仅凭类型检查推断所有旧宿主兼容。
 
 验收分层：隔离测试覆盖来源、会话/用户隔离、重复触发、撤回、重置、暂停、未知结果和真实 Worker 来源函数；真实模型与飞书发送需要部署后另行授权验收。
+
+### 群内管理 API
+
+`agent_schedule` 直接提供下列动作，不通过模型工具开放跨群或任意收件人路由：
+
+| 动作 | 参数与结果 |
+| --- | --- |
+| `create` | `requestId/name/projectId/task/constraints`、`at` 或 `expr/timeZone`；可选 `deliveryMode`。重复 requestId 不重复创建。 |
+| `list` | 可选 `projectId/status/query/limit/offset`；返回 `tasks/total/nextOffset`，limit 默认 50、最大 100。 |
+| `get` | `id`；返回名称、业务范围、时间、状态、`revision`、`busy/sourceValid`、`deliveryMode/delivery` 和最近接纳状态。 |
+| `history` | `id/limit/offset`；返回分页触发记录及 Main/Worker/消息回执；接纳、完成、送达分别判断。 |
+| `update` | `id/requestId/expectedRevision`，以及至少一个 `name/at/expr/timeZone/deliveryMode`；只改提供的字段，保留原 ID、原生计划、其他字段及启停状态。已结束的一次性任务修改后保持暂停，须明确恢复。 |
+| `pause/remove` | `id`，推荐同时传稳定 `requestId` 和 `expectedRevision`；兼容旧调用。删除保留历史，不能当作取消已运行任务。 |
+| `resume` | `id/requestId/expectedRevision`；恢复原有计划，过期一次性时间须先修改。 |
+| `run` | `id/requestId/expectedRevision`；仅在用户明确要求立即执行时使用原生队列，不改变下一次周期时间，不将入队当作业务完成。 |
+
+`deliveryMode` 可选 `source`（默认，保持创建时原位置）、`group`（原群主会话，全新群消息，不回复话题内原消息）、`thread`（原请求的已知话题，无原话题则拒绝）。`delivery` 返回实际目标和 `canUseThread/threadId`，不接受任意 `chatId/rootId/accountId/sessionKey`；Main 仍在原授权会话中执行。Main 最终卡片和后续 Worker 结果均携带本次执行的投递快照。旧计划缺字段时保持 `source`，修改仅影响后续触发；有正在执行或结果待核验记录时拒绝修改，不抢改在途任务。
+
+例如“日报发群里，保持每天 07:00”，先 list/get 核对唯一计划及版本，再仅提交投递字段：
+
+```json
+{"action":"update","id":"<实际计划ID>","requestId":"<本次稳定请求ID>","expectedRevision":"<get返回的revision>","deliveryMode":"group"}
+```
+
+成功返回完整计划及 `operation.status`。`update/resume/run` 必须传版本及稳定请求 ID，旧版本冲突要求重新读取，不自动覆盖；重复相同请求 ID 返回原操作回执。返回 `pending/unknown/needs_review` 或写入异常时先 get/history 核验，不能换 requestId 重建或盲目重放。`task/constraints/projectId`、原请求人、账号、群和授权来源不能通过 update 改写；任务范围改变仍需原群真人重新授权。读取与管理均不跨请求人、账号、会话代际，不因同名计划猜测对象。
 
 ### 联动定时任务目录
 
@@ -439,7 +464,7 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 在 **AgentRepo → 定时任务 → 管理定时任务** 中，`operator.read` 可查看当前 Agent 的任务内容、来源、状态和最近管理记录；`operator.write` / `operator.admin` 才可提交操作。服务端再次校验 Agent 绑定、项目登记、来源有效性、任务版本及确认字段，浏览器不能提交任意群、请求人、会话、任务正文或权限范围。
 
 - **基于群请求新建**：选择已有 `agent_schedule` 保存的可信群请求，继承任务、约束、原请求人、账号、群和线程。可填写名称、五字段 cron 与 IANA 时区，或含时区的一次性未来时间。新计划默认暂停，确认后再启用。不从任意历史聊天推导授权，也不支持管理员凭群 ID 创建新授权。
-- **修改与暂停/启用**：修改名称和执行时间，保留来源与任务内容；任务内容变化仍由真人在原群重新授权。原生计划与本地记录一起更新。一次性过期任务须先改为未来时间再启用。
+- **修改与暂停/启用**：修改名称、执行时间和投递位置，保留来源与任务内容；任务内容变化仍由真人在原群重新授权。原生计划与本地记录一起更新。一次性过期任务须先改为未来时间再启用。
 - **立即执行**：仅对已启用、来源有效、无正在运行或待核验记录的任务开放。通过服务公开的 `getCron().enqueueRun(id, 'force')` 入队，不能直接调用 Main、Worker 或桥接 `deliver`。旧宿主缺少该接口时禁用此操作，不能用本地计时器或 shell 替代。手动执行不更改下一次计划时间。
 - **删除**：删除原生计划、停用本地接纳并保留任务和运行审计。暂停/删除不等于已取消在途业务或撤销已送达消息。
 

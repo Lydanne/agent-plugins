@@ -19,9 +19,9 @@ export function taskProvenance(lease) {
  if (!lease) return undefined;
  lease.signal.throwIfAborted();
  if(sourceTaskBridge.leases.get(JSON.stringify([lease.accountId,lease.sessionKey]))!==lease) throw Error("Source task is no longer the active run");
- const {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds,requestMessageIds,rootId,replyInThread}=lease;
+ const {taskId,revision,accountId,chatId,sessionKey,senderId,sourceMessageIds,requestMessageIds,rootId,replyInThread,deliveryMode}=lease;
  const attachments=snapshotSourceAttachments(lease.attachments,sourceMessageIds);
- return {taskId,revision,accountId,chatId,sessionKey,senderId,...(Array.isArray(lease.sourceRefs)?{sourceRefs:structuredClone(lease.sourceRefs)}:{}),...(attachments.length?{attachments}:{}),sourceMessageIds:[...sourceMessageIds],requestMessageIds:[...(requestMessageIds??[])],...(['p2p','private','group','topic_group'].includes(lease.chatType)?{chatType:lease.chatType}:{}),...(rootId?{rootId}:{}),...(replyInThread!==undefined?{replyInThread}:{}),...(lease.people?{people:structuredClone(lease.people)}:{})};
+ return {taskId,revision,accountId,chatId,sessionKey,senderId,...(Array.isArray(lease.sourceRefs)?{sourceRefs:structuredClone(lease.sourceRefs)}:{}),...(attachments.length?{attachments}:{}),sourceMessageIds:[...sourceMessageIds],requestMessageIds:[...(requestMessageIds??[])],...(['p2p','private','group','topic_group'].includes(lease.chatType)?{chatType:lease.chatType}:{}),...(['group','thread'].includes(deliveryMode)?{deliveryMode}:{}),...(rootId?{rootId}:{}),...(replyInThread!==undefined?{replyInThread}:{}),...(lease.people?{people:structuredClone(lease.people)}:{})};
 }
 export function rememberAsyncJob(lease, job) {
  if (!lease || !job.jobId || !job.notification ||

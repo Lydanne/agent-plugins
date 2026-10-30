@@ -28,3 +28,38 @@ it('records pre-admission account failure stage without calling Main',async()=>{
 it('cross-plugin delivery enters the channel owner lifecycle scope',async()=>{const source=adapter.capture(context);task.close();let service:any;const runInBackgroundContext=vi.fn((run:()=>unknown)=>run());registerScheduledRequestAdapter({runtime,lifecycle:{runInBackgroundContext},registerService:(s:any)=>{service=s;}} as any);service.start();await scheduledRequestBridge.deliver!(request(source),{assertCurrent:()=>{}});expect(runInBackgroundContext).toHaveBeenCalledTimes(1);expect(captured.senderId).toBe(scope.senderId);service.stop();expect(scheduledRequestBridge.deliver).toBeUndefined();});
 
 it('manual native trigger is labeled as an acceptance run, without replacing source identity',async()=>{const source=adapter.capture(context);task.close();runtime.channel.inbound.run=async({adapter:a}:any)=>{const plan=a.resolveTurn();expect(plan.ctxPayload.Body).toContain('管理员手动验收');expect(plan.ctxPayload.Body).toContain('本次时刻不代表计划延误');expect(plan.ctxPayload.SenderId).toBe(scope.senderId);plan.replyOptions.onAgentRunStart();};await adapter.deliver({...request(source),trigger:'manual'},{assertCurrent:()=>{}});});
+
+it('group delivery starts a new group message and snapshots the same route for Worker results',async()=>{
+ const source=adapter.capture(context);task.close();
+ await adapter.deliver({...request(source),deliveryMode:'group'},{assertCurrent:()=>{}});
+ expect(state.sent[0]).toMatchObject({accountId:'account',to:'chat:group',replyInThread:false});expect(state.sent[0].replyToMessageId).toBeUndefined();
+ expect(captured).toMatchObject({accountId:scope.accountId,chatId:scope.chatId,sessionKey:scope.sessionKey,senderId:scope.senderId,deliveryMode:'group',replyInThread:false});
+ expect(captured.rootId).toBeUndefined();expect(captured.requestMessageIds).toEqual(['human-message']);expect(source.rootId).toBe('thread');
+ expect(isCompletionSourceCurrent(captured,state.dir)).toBe(true);
+ recallTaskSource({...scope,messageId:'human-message'});expect(isCompletionSourceCurrent(captured,state.dir)).toBe(false);
+});
+it('explicit thread delivery uses only the original known thread; unsupported routes fail before Main',async()=>{
+ const source=adapter.capture(context);task.close();await adapter.deliver({...request(source),deliveryMode:'thread'},{assertCurrent:()=>{}});
+ expect(captured).toMatchObject({rootId:'thread',replyInThread:true,deliveryMode:'thread'});expect(state.sent[0].replyToMessageId).toBe('thread');
+ const prior=runtime.channel.inbound.run.mock.calls.length;
+ await expect(adapter.deliver({...request({...source,rootId:undefined}),deliveryMode:'thread'},{assertCurrent:()=>{}})).rejects.toThrow('Invalid scheduled delivery route');
+ await expect(adapter.deliver({...request(source),deliveryMode:'other' as any},{assertCurrent:()=>{}})).rejects.toThrow('Invalid scheduled delivery route');
+ expect(runtime.channel.inbound.run).toHaveBeenCalledTimes(prior);
+});
+
+it('saved 07:00 schedule updates through the requester API and fires into group chat without replacement',async()=>{
+ const {createScheduledRequests}=await import('../../agent-repo/scheduled-requests.mjs');
+ const jobs:any[]=[];const cron={add:async(p:any)=>{const job={...structuredClone(p),id:'native-clock'};jobs.push(job);return job;},update:async(id:string,patch:any)=>Object.assign(jobs.find(j=>j.id===id),patch),list:async()=>structuredClone(jobs)};
+ const manager=createScheduledRequests({stateDir:join(state.dir,'scheduler'),getCron:()=>cron,bridge:{...adapter,jobsActive:()=>false},now:()=>1000});
+ try{
+  const original=await manager.manage({action:'create',requestId:'initial',name:'日报',projectId:'xgj',task:'Summarize original group',constraints:'Read only',expr:'0 7 * * *'},context);task.close();
+  const humanUpdate=new SourceTask(scope,[{messageId:'update-message',text:'定时消息发在群里不要发在这个话题里'}]);humanUpdate.begin();humanUpdate.activate();
+  try{
+   const changed=await manager.manage({action:'update',id:original.id,expectedRevision:original.revision,requestId:'delivery-update',deliveryMode:'group'},context);
+   expect(changed.id).toBe(original.id);expect(changed.jobId).toBe(original.jobId);expect(changed.schedule.expr).toBe('0 7 * * *');expect(jobs).toHaveLength(1);
+  }finally{humanUpdate.close();}
+  await manager.fire({action:'finished',status:'ok',jobId:original.jobId,agentId:'main',runAtMs:2000});
+  expect(state.sent[0].replyToMessageId).toBeUndefined();expect(state.sent[0].replyInThread).toBe(false);expect(captured.deliveryMode).toBe('group');
+  expect(captured.requestMessageIds).toEqual(['human-message']);expect(captured.sessionKey).toBe(scope.sessionKey);
+ }finally{manager.close();}
+});

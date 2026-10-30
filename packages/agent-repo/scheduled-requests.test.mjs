@@ -16,7 +16,7 @@ function fixture(t){
 }
 test('native no-op scheduler stores no task content; binding and duplicate creation survive restart',async t=>{const f=fixture(t);const first=await f.manager.manage(f.input,{});assert.equal(f.jobs[0].payload.kind,'script');assert.equal(f.jobs[0].delivery.mode,'none');assert.deepEqual(f.jobs[0].payload.toolsAllow,[]);assert.ok(!JSON.stringify(f.jobs).includes('check target'));f.reopen();assert.equal((await f.manager.manage(f.input,{})).id,first.id);assert.equal(f.jobs.length,1);await assert.rejects(f.manager.manage({...f.input,task:'different'},{}),/different input/);});
 test('duplicate callbacks and recovery dispatch only once, retaining requester and project',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await Promise.all([f.manager.fire(f.event()),f.manager.fire(f.event())]);assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].source.senderId,'u');assert.equal(f.delivered[0].projectId,'xgj');f.jobs[0].state={lastRunStatus:'ok',lastRunAtMs:2000};f.reopen();await f.manager.recover();assert.equal(f.delivered.length,1);});
-test('no other requester, account, group or reset session can list or cancel a task',async t=>{const f=fixture(t);const r=await f.manager.manage(f.input,{});for(const key of ['senderId','accountId','chatId','sessionId','agentId']){assert.deepEqual(await f.manager.manage({action:'list'},{[key]:'other'}),{tasks:[]});await assert.rejects(f.manager.manage({action:'remove',id:r.id},{[key]:'other'}),/not found/);}});
+test('no other requester, account, group or reset session can list or cancel a task',async t=>{const f=fixture(t);const r=await f.manager.manage(f.input,{});for(const key of ['senderId','accountId','chatId','sessionId','agentId']){assert.deepEqual(await f.manager.manage({action:'list'},{[key]:'other'}),{tasks:[],total:0,nextOffset:null});await assert.rejects(f.manager.manage({action:'remove',id:r.id},{[key]:'other'}),/not found/);}});
 test('pause and remove prevent late native ticks',async t=>{const f=fixture(t);const r=await f.manager.manage(f.input,{});await f.manager.manage({action:'pause',id:r.id},{});await f.manager.fire(f.event());assert.equal(f.delivered.length,0);await f.manager.manage({action:'remove',id:r.id},{});assert.equal(f.jobs.length,0);});
 test('revoked sources, altered jobs and foreign-agent events do not dispatch',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await f.manager.fire({...f.event(),agentId:'other'});f.jobs[0].payload.script='malicious';await f.manager.fire(f.event());f.jobs[0].payload.script='return {};';f.revoke();await f.manager.fire(f.event());assert.equal(f.delivered.length,0);});
 test('unknown admission is never replayed and blocks subsequent occurrences',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});f.bridge.deliver=async()=>{throw Error('lost response');};await assert.rejects(f.manager.fire(f.event()),/lost response/);f.reopen();await f.manager.fire(f.event());await f.manager.fire(f.event(3000));const {tasks}=await f.manager.manage({action:'list'},{});assert.equal(tasks[0].lastRun.status,'unknown');assert.equal(tasks[0].runs.length,2);});
@@ -90,4 +90,94 @@ test('expired one-shot cannot resume and missing enqueueRun cannot bypass native
 });
 test('native reassignment cannot be removed or executed through the old request',async t=>{
  const f=fixture(t),r=await f.manager.manage(f.input,{});f.jobs[0].agentId='other';await assert.rejects(f.manager.administer('main',await operation(f,r.id,'remove')),/未确认/);assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].agentId,'other');
+});
+
+async function toolEdit(f,r,fields,action='update',requestId=crypto.randomUUID()){
+ const current=await f.manager.manage({action:'get',id:r.id},{});
+ return f.manager.manage({action,id:r.id,expectedRevision:current.revision,requestId,...fields},{});
+}
+test('requester can patch only delivery without replacing job, schedule, task, status or original provenance',async t=>{
+ const f=fixture(t);f.source.rootId='original-thread';f.source.replyInThread=true;
+ const r=await f.manager.manage({...f.input,expr:'0 7 * * *'},{}),schedule=structuredClone(f.jobs[0].schedule);
+ const before=await f.manager.manage({action:'get',id:r.id},{});
+ const changed=await toolEdit(f,r,{deliveryMode:'group'});
+ assert.equal(changed.id,r.id);assert.equal(changed.jobId,r.jobId);assert.equal(changed.status,'enabled');assert.equal(changed.delivery.target,'group');assert.equal(changed.deliveryMode,'group');assert.notEqual(changed.revision,before.revision);
+ assert.deepEqual(changed.schedule,schedule);assert.equal(changed.task,f.input.task);assert.equal(changed.constraints,f.input.constraints);assert.equal(f.jobs.length,1);
+ await f.manager.fire(f.event());assert.equal(f.delivered[0].deliveryMode,'group');assert.equal(f.delivered[0].source.rootId,'original-thread');assert.deepEqual(f.delivered[0].source.requestMessageIds,['m']);
+ f.reopen();assert.equal((await f.manager.manage({action:'get',id:r.id},{})).deliveryMode,'group');
+});
+test('partial name, timezone and cron edits preserve other fields and paused state',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});await f.manager.manage({action:'pause',id:r.id},{});
+ let changed=await toolEdit(f,r,{name:'Renamed'});assert.equal(f.jobs[0].name,'Ada: Renamed');assert.equal(changed.schedule.expr,f.input.expr);
+ changed=await toolEdit(f,r,{timeZone:'UTC'});assert.equal(changed.schedule.expr,f.input.expr);assert.equal(changed.schedule.tz,'UTC');assert.equal(changed.status,'paused');
+ changed=await toolEdit(f,r,{expr:'30 7 * * 1-5'});assert.equal(changed.name,'Renamed');assert.equal(changed.schedule.tz,'UTC');assert.equal(f.jobs[0].enabled,false);
+ await toolEdit(f,r,{},'resume');assert.equal(f.jobs[0].enabled,true);assert.equal(f.jobs.length,1);
+});
+test('delivery routes are bounded to original group and known thread; old creates retain source mode',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});assert.equal(r.deliveryMode,'source');assert.equal(r.delivery.canUseThread,false);
+ await assert.rejects(toolEdit(f,r,{deliveryMode:'thread'}),/投递位置/);await assert.rejects(toolEdit(f,r,{deliveryMode:'other-group'}),/投递位置/);
+ for(const fields of [{chatId:'other'},{rootId:'forged'},{replyInThread:true},{task:'new scope'},{constraints:'expand scope'},{projectId:'other'}])await assert.rejects(toolEdit(f,r,fields),/parameters/);
+ assert.equal((await f.manager.manage({action:'get',id:r.id},{})).revision,r.revision);
+ f.source.rootId='known';const second=await f.manager.manage({...f.input,requestId:'threaded',deliveryMode:'thread'},{});assert.equal(second.delivery.target,'thread');
+ await toolEdit(f,second,{deliveryMode:'source'});assert.equal((await f.manager.manage({action:'get',id:second.id},{})).deliveryMode,'source');
+});
+test('requester update uses stable keys and revisions; retries after restart do not mutate twice',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{}),p={action:'update',id:r.id,expectedRevision:r.revision,requestId:'update-route',deliveryMode:'group'};
+ const first=await f.manager.manage(p,{});f.reopen();const second=await f.manager.manage(Object.fromEntries(Object.entries(p).reverse()),{});assert.deepEqual(second,first);
+ await assert.rejects(f.manager.manage({...p,requestId:'stale'},{}),/已改变/);
+ await assert.rejects(f.manager.manage({...p,deliveryMode:'source'},{}),/用于其他操作/);
+ await assert.rejects(f.manager.manage({action:'update',id:r.id,deliveryMode:'source'},{}),/expectedRevision/);
+});
+test('list filters and pagination and detailed history stay inside requester and conversation scope',async t=>{
+ const f=fixture(t),a=await f.manager.manage(f.input,{}),b=await f.manager.manage({...f.input,name:'Other',requestId:'two'},{});
+ await f.manager.manage({...f.input,name:'Foreign',requestId:'foreign'}, {senderId:'other'});
+ const list=await f.manager.manage({action:'list',limit:1},{});assert.equal(list.total,2);assert.equal(list.nextOffset,1);assert.equal(list.tasks.length,1);
+ const next=await f.manager.manage({action:'list',limit:1,offset:list.nextOffset},{});assert.equal(next.tasks[0].id,b.id);assert.equal(next.nextOffset,null);
+ assert.equal((await f.manager.manage({action:'list',query:'daily',projectId:'xgj',status:'enabled'},{})).tasks[0].id,a.id);
+ await f.manager.fire(f.event());await f.manager.fire(f.event(3000));const history=await f.manager.manage({action:'history',id:a.id,limit:1},{});assert.equal(history.total,2);assert.equal(history.nextOffset,1);assert.equal(history.records[0].at,3000);assert.deepEqual(history.records[0].detail.jobIds,['worker']);
+ for(const action of ['get','history','update','resume','run'])await assert.rejects(f.manager.manage({action,id:a.id},{senderId:'other'}),/not found/);
+ for(const params of [{action:'list',offset:-1},{action:'history',id:a.id,limit:101},{action:'list',status:'bogus'},{action:'list',query:12}])await assert.rejects(f.manager.manage(params,{}));
+});
+test('tool run uses native queue once, and update cannot change a pending occurrence route',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});let calls=0;f.cron.enqueueRun=async()=>{calls++;return {ok:true,enqueued:true,runId:'native-run'};};
+ const p={action:'run',id:r.id,expectedRevision:r.revision,requestId:'run-once'};
+ await f.manager.manage(p,{});await f.manager.manage(p,{});assert.equal(calls,1);
+ await assert.rejects(toolEdit(f,r,{deliveryMode:'group'}),/运行中/);
+ await f.manager.fire(f.event());assert.equal(f.delivered[0].deliveryMode,'source');
+});
+test('completed one-shot can be edited in place and explicitly resumed with a future time',async t=>{
+ const f=fixture(t),r=await f.manager.manage({...f.input,expr:undefined,at:'2030-01-01T00:00:00Z'},{});await f.manager.fire(f.event());
+ let changed=await toolEdit(f,r,{at:'2031-01-01T00:00:00Z'});assert.equal(changed.status,'paused');
+ changed=await toolEdit(f,r,{},'resume');assert.equal(changed.status,'enabled');assert.equal(f.jobs.length,1);assert.equal(changed.id,r.id);
+});
+test('tool schema exposes management actions and bounded delivery without accepting arbitrary destination IDs',async()=>{
+ const {scheduledRequestToolParameters}=await import('./scheduled-requests.mjs');
+ const {default:Ajv}=await import('ajv');const validate=new Ajv().compile(scheduledRequestToolParameters);
+ for(const action of ['get','history','update','resume','run'])assert.ok(scheduledRequestToolParameters.properties.action.enum.includes(action));
+ assert.equal(validate({action:'update',id:'one',deliveryMode:'group'}),true);
+ assert.equal(validate({action:'update',id:'one',chatId:'other'}),false);assert.equal(validate({action:'update',deliveryMode:'dm'}),false);
+});
+
+test('pause/remove with a stable key but optional revision remains idempotent',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});
+ for(const action of ['pause','remove']){
+  const p={action,id:r.id,requestId:'stable-'+action};const first=await f.manager.manage(p,{});f.reopen();assert.deepEqual(await f.manager.manage(p,{}),first);
+ }
+ assert.equal(f.jobs.length,0);assert.equal((await f.manager.manage({action:'history',id:r.id},{})).operations.length,2);
+});
+test('a pending routing mutation cannot admit a new tick before native acknowledgment',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{}),update=f.cron.update;let release;
+ const gate=new Promise(resolve=>release=resolve);f.cron.update=async(...args)=>{await gate;return update(...args);};
+ const editing=toolEdit(f,r,{deliveryMode:'group'});await new Promise(resolve=>setImmediate(resolve));
+ await f.manager.fire(f.event());assert.equal(f.delivered.length,0);release();await editing;
+ await f.manager.fire(f.event(3000));assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].deliveryMode,'group');
+});
+
+test('routing update during a tick lookup skips the stale snapshot without creating unknown admission',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{}),list=f.cron.list;let release;
+ const gate=new Promise(resolve=>release=resolve);f.cron.list=async()=>{f.cron.list=list;await gate;return list();};
+ const firing=f.manager.fire(f.event());await new Promise(resolve=>setImmediate(resolve));
+ await toolEdit(f,r,{deliveryMode:'group'});release();await firing;
+ assert.equal(f.delivered.length,0);assert.equal((await f.manager.manage({action:'get',id:r.id},{})).runs.length,0);
+ await f.manager.fire(f.event(3000));assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].deliveryMode,'group');
 });
