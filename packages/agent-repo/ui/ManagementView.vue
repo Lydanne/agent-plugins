@@ -15,20 +15,18 @@ const context=useHostContext(),regionId=useId(),section=ref('overview'),revision
 const safe=(value:unknown)=>context.value.host.redact(String(value??''));
 const agentId=computed(()=>context.value.props.agentId??context.value.host.agents.selectedId??context.value.host.connection.assistantAgentId??context.value.host.agents.defaultId??'');
 const knownAgent=computed(()=>/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(agentId.value));
-const agents=computed(()=>{const rows=[...(context.value.host.agents.rows??[])];if(agentId.value&&!rows.some(a=>a.id===agentId.value))rows.push({id:agentId.value,name:agentId.value});return rows;});
 const request=useManagementRequest(context,()=>agentId.value);
 const key=computed(()=>[agentId.value,context.value.host.connection.canRead,context.value.host.connection.canWrite,section.value,revision.value].join(':'));
 const currentModule=computed(()=>managementModules.find(item=>item.id===section.value)!);
 function choose(id:string){if(managementModules.some(m=>m.id===id))section.value=id;}
 watch(()=>context.value.props.section,value=>{if(value==='people')choose('entities');else if(value)choose(value);},{immediate:true});
-function selectAgent(event:Event){const id=(event.target as HTMLSelectElement).value;context.value.host.agents.select(id);if(context.value.props.agentId)context.value.host.navigation.openPage({id:'management',params:{agentId:id,section:section.value}});}
 const auditInvoke=(action:string,payload:Record<string,unknown>)=>request.invoke<AuditPage>(action,payload);
 function restored(){revision.value++;}
 defineExpose({refreshFromUpdate:()=>projects.value?.refreshFromUpdate()});
 </script>
 <template>
  <section class="ar-management" data-ocp-ui aria-label="AgentRepo 管理中心" :data-section="section">
-  <header class="ar-management-header"><div><h1>AgentRepo</h1></div><label class="ar-management-agent"><span>当前 Agent</span><select aria-label="AgentRepo 所属 Agent" :value="agentId" @change="selectAgent"><option v-for="agent in agents" :key="agent.id" :value="agent.id">{{safe(agent.name??agent.id)}}</option></select></label></header>
+  <header class="ar-management-header"><h1>AgentRepo</h1></header>
   <template v-if="context.presented">
    <p v-if="!context.host.connection.canRead" role="alert" class="ar-error">需要 operator.read 权限才能查看 AgentRepo。</p>
    <p v-else-if="!knownAgent">请先选择一个 Agent。</p>

@@ -205,9 +205,9 @@
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/936634e3be126d38d72d/index.js",
+    "entry": "dist/control-ui/584e56b4247a91f0c1a1/index.js",
     "styles": [
-      "dist/control-ui/936634e3be126d38d72d/index.css"
+      "dist/control-ui/584e56b4247a91f0c1a1/index.css"
     ]
   },
   "cliCommands": [

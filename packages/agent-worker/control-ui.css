@@ -224,3 +224,8 @@
 .cq-row-meta .cq-elapsed{font-size:inherit}
 
 .cq-panel .cq-detail-tabs [aria-selected=true]{color:inherit;border-bottom-color:#6d8ea1;font-weight:600;background:transparent;}
+
+/* A session button contains several text rows; never inherit Button's fixed height. */
+.cq-panel .cq-row-open{height:auto;min-height:0;white-space:normal;}
+.cq-panel .cq-row-open .cq-row-progress{margin:6px 0 0;line-height:1.6;-webkit-line-clamp:2;}
+.cq-row-meta{row-gap:4px;}
