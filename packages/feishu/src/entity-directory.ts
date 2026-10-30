@@ -1,4 +1,4 @@
-import {getGraphService,type GraphChange} from '../../agent-repo-api/entities.mjs';
+import {getGraphService,getEntitySyncProvider,type GraphChange} from '../../agent-repo-api/entities.mjs';
 import {getPeopleService} from '../../agent-repo-api/people.mjs';
 import {createFeishuClient} from './client.js';
 import type {ResolvedFeishuAccount} from './types.js';
@@ -8,6 +8,7 @@ export async function syncFeishuDirectory(input:{agentId:string;account:Resolved
  if(!graph||!people||!input.account.appId)return {status:'unavailable' as const};
  const {account}=input,scope=JSON.stringify([account.accountId,account.appId]);
  const producer=graph.forSource({kind:'channel',namespace:'feishu',scope,actor:'feishu-directory',types:['organization','department'],relations:['member_of','belongs_to','parent_department']});
+ if(getEntitySyncProvider('feishu')?.info({agentId:input.agentId,sessionKey:'agent:'+input.agentId+':entity-enrichment',accountId:account.accountId}).run?.status==='running')return {status:'deferred' as const,reason:'organization_sync_running'};
  const client=createFeishuClient(account);let failures=0;
  const errors:Array<{stage:string;code?:number;requiredScopes?:string[]}>=[];
  const issue=(stage:string,code?:number,cause?:unknown)=>{failures++;const response=(cause as {response?:{data?:{code?:number;error?:{permission_violations?:Array<{subject?:string}>}}}}|undefined)?.response?.data;const actualCode=code??response?.code;const requiredScopes=(response?.error?.permission_violations??[]).map(v=>v.subject).filter((v):v is string=>typeof v==='string'&&/^[a-z][a-z0-9_.:]{1,99}$/.test(v)).slice(0,10);if(errors.length<20)errors.push({stage,...(typeof actualCode==='number'?{code:actualCode}:{}),...(requiredScopes.length?{requiredScopes}:{})});};
@@ -21,12 +22,13 @@ export async function syncFeishuDirectory(input:{agentId:string;account:Resolved
   stage='contact';const response=await client.contact.user.get({path:{user_id:openId},params:{user_id_type:'open_id',department_id_type:'open_department_id'}});
   check();if(response.code!==0||response.data?.user?.open_id!==openId)throw Object.assign(Error('contact_unavailable'),{apiCode:response.code,response:{data:response}});
   const user=response.data.user,person=people.lookup({accountId:account.accountId,appId:account.appId!,openId});if(!person)continue;
-  const departmentNodes=new Map<string,string>(),parents=new Map<string,string>(),seen=new Set<string>();
+  const departmentNodes=new Map<string,string>(),parents=new Map<string,string>(),knownParents=new Set<string>(),seen=new Set<string>();
   async function department(id:string,depth=0):Promise<string|undefined>{
    if(id==='0')return undefined;if(departmentNodes.has(id))return departmentNodes.get(id);if(seen.has(id)||depth>=20)throw Error('department_hierarchy_incomplete');seen.add(id);
    stage='department';const result=await client.contact.department.get({path:{department_id:id},params:{department_id_type:'open_department_id'}}),data=result.data?.department;
    check();if(result.code!==0||!data?.name||data.open_department_id!==id)throw Object.assign(Error('department_unavailable'),{apiCode:result.code,response:{data:result}});
    const node=producer.upsert({typeId:'department',externalId:id,name:data.name,observedAt:stamp}).entity.id;departmentNodes.set(id,node);
+   if(typeof data.parent_department_id==='string'&&data.parent_department_id)knownParents.add(node);
    if(data.parent_department_id&&data.parent_department_id!=='0'){const parent=await department(data.parent_department_id,depth+1);if(parent)parents.set(node,parent);}
    return node;
   }
@@ -38,6 +40,7 @@ export async function syncFeishuDirectory(input:{agentId:string;account:Resolved
   for(const target of memberships)changes.push({action:'connect',record:{typeId:'member_of',externalId:JSON.stringify([person.id,target]),fromId:'person:'+person.id,toId:target,observedAt:stamp},evidence:proof});
   for(const [id,node] of departmentNodes){
    if(organization)changes.push({action:'connect',record:{typeId:'belongs_to',externalId:id,fromId:node,toId:organization,observedAt:stamp},evidence:proof});
+   if(!knownParents.has(node))continue;
    const parent=parents.get(node),oldParents=graph.relations({fromId:node,typeId:'parent_department',status:'active',limit:100});if(oldParents.nextOffset!==null)throw Error('parent_relation_truncated');
    for(const old of oldParents.relations)if(old.source.scope===scope&&old.toId!==parent)changes.push({action:'end',id:old.id,revision:old.revision,observedAt:stamp,evidence:proof});
    if(parent)changes.push({action:'connect',record:{typeId:'parent_department',externalId:JSON.stringify([id,parent]),fromId:node,toId:parent,observedAt:stamp},evidence:proof});

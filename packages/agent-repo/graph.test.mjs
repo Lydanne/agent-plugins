@@ -82,3 +82,15 @@ test('declared business conditions constrain both connect and end without execut
  assert.throws(()=>source.end({id:edge.id,revision:edge.revision,observedAt:stamp(3),evidence:proof}),/业务条件/);
  source.upsert({typeId:'contract',externalId:'c',name:'合同',attributes:{state:'closed'},observedAt:stamp(3)});source.end({id:edge.id,revision:edge.revision,observedAt:stamp(4),evidence:proof});assert.equal(store.relations({typeId:'contract_owner',status:'active'}).total,0);
 });
+test('department-scoped snapshots preserve person organization edges and reject out-of-scope associations',t=>{
+ const {store,source,node}=fixture(t),p=node('person','person'),d=node('department','department'),org=node('organization','org');source.connect(relation('belongs_to',p,org,'person-org'),proof);source.connect(relation('belongs_to',d,org,'department-org'),proof);
+ source.syncSnapshot({requestId:'dept-only',observedAt:stamp(2),complete:true,relationTypes:['belongs_to'],fromTypes:['department'],changes:[]});assert.equal(store.relations({typeId:'belongs_to',status:'active'}).relations[0].fromId,p.id);
+ assert.throws(()=>source.syncSnapshot({requestId:'bad-scope',observedAt:stamp(3),complete:true,relationTypes:['belongs_to'],fromTypes:['department'],changes:[{action:'connect',record:relation('belongs_to',p,org,'other',3),evidence:proof}]}),/端点范围/);
+});
+test('large department snapshots remain atomic beyond the normal batch limit and keep deep graphs acyclic',async t=>{
+ const {source,store}=fixture(t),{hash}=await import('./graph-storage.mjs'),count=1100,ids=Array.from({length:count},(_,i)=>'entity:'+hash(['department','channel','feishu','tenant-a','d'+i]));const changes=ids.map((id,i)=>({action:'upsert',record:{typeId:'department',externalId:'d'+i,name:'Dept '+i,observedAt:stamp(2)},evidence:proof}));for(let i=1;i<count;i++)changes.push({action:'connect',record:{typeId:'parent_department',externalId:'parent'+i,fromId:ids[i],toId:ids[i-1],observedAt:stamp(2)},evidence:proof});
+ source.syncSnapshot({requestId:'large-tree',observedAt:stamp(2),complete:true,relationTypes:['parent_department'],fromTypes:['department'],changes});assert.equal(store.list({typeId:'department'}).total,count);assert.equal(store.relations({typeId:'parent_department',status:'active'}).total,count-1);
+});
+test('source sync receipts survive reopening and terminal outcomes cannot be rewritten or falsely completed',t=>{
+ const {root,source,grant}=fixture(t),run={requestId:'sync',status:'running',startedAt:stamp(1),departments:0,storedDepartments:0,organizationId:null,relations:0,coverage:'none',errors:[]};source.recordSync(run);assert.equal(createGraphStore(root).forSource(grant).syncStatus().status,'running');assert.throws(()=>source.recordSync({...run,status:'completed'}),/完整性/);const terminal={...run,status:'partial',finishedAt:stamp(2),departments:3,storedDepartments:3,coverage:'partial',errors:[{stage:'organization',code:99991672,requiredScopes:['tenant:tenant:readonly']}]};source.recordSync(terminal);assert.deepEqual(source.syncStatus(),terminal);assert.throws(()=>source.recordSync({...terminal,status:'failed'}),/已结束/);
+});

@@ -17,13 +17,15 @@ export type GraphChange={action:'upsert';record:GraphObservation;evidence:Change
 export interface GraphBatch {requestId:string;changes:GraphChange[]}
 export interface GraphBatchResult {results:unknown[]}
 export interface SourceCapability {
+ syncStatus(input?:{requestId?:string}):DirectorySyncRun|null;
+ recordSync(input:DirectorySyncRun):DirectorySyncRun;
  upsert(input:GraphObservation):{entity:GraphEntity;created:boolean;unchanged:boolean};
  connect(input:RelationObservation,evidence:ChangeEvidence):{relation:RelationRecord;created:boolean;unchanged:boolean};
  end(input:{id:string;revision:string;observedAt:string;evidence:ChangeEvidence}):RelationRecord;
  remove(input:{id:string;revision:string;observedAt:string;evidence:ChangeEvidence}):GraphEntity;
  applyRelationChanges(input:GraphBatch):GraphBatchResult;
  validateRelationChange(input:GraphBatch):{allowed:boolean;reason?:string;results?:unknown[]};
- syncSnapshot(input:{requestId:string;observedAt:string;complete:true;relationTypes:string[];changes:GraphChange[]}):GraphBatchResult;
+ syncSnapshot(input:{requestId:string;observedAt:string;complete:true;relationTypes:string[];fromTypes?:string[];changes:GraphChange[]}):GraphBatchResult;
 }
 export interface RelationType extends EntityType {fromTypes:string[];toTypes:string[];rules:{sameSource?:boolean;noSelf?:boolean;acyclic?:boolean;maxOutgoing?:number;maxIncoming?:number;connectEvidence?:ChangeEvidence['kind'][];endEvidence?:Array<'event'|'snapshot'|'manual'>;conditions?:{connect?:RelationCondition[];end?:RelationCondition[]}}}
 export interface GraphService extends EntityService {
@@ -37,3 +39,10 @@ export interface GraphService extends EntityService {
 export function getGraphService(context:{agentId?:string;sessionKey?:string}):GraphService|undefined;
 
 export interface RelationCondition {field:string;op:'present'|'equals'|'in';value?:string|number|boolean|null|Array<string|number|boolean|null>}
+
+export interface DirectorySyncError {stage:string;reason?:string;code?:number;requiredScopes?:string[]}
+export interface DirectorySyncRun {requestId:string;status:'running'|'completed'|'partial'|'failed'|'unknown';startedAt:string;finishedAt?:string;departments:number;storedDepartments:number;organizationId:string|null;relations:number;coverage:'none'|'partial'|'full';errors:DirectorySyncError[]}
+export interface EntitySyncContext {agentId:string;sessionKey:string;accountId?:string}
+export interface EntitySyncProvider {info(input:EntitySyncContext):{available:boolean;accounts:Array<{accountId:string;appId?:string}>;run:DirectorySyncRun|null;reason?:string};start(input:EntitySyncContext,requestId:string):DirectorySyncRun;stop():Promise<void>}
+export function getEntitySyncProvider(id:string):EntitySyncProvider|undefined;
+export function registerEntitySyncProvider(id:string,service:EntitySyncProvider,owner:object|symbol):()=>void;

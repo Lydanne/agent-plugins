@@ -45,7 +45,7 @@ test('dirty inspection shows committed metadata without loading changes or follo
 });
 test('native actions require read scope and chunk ownership includes Agent and conversation',async()=>{
  let clock=0;const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>({text:'x'.repeat(80000)}),detail:async()=>{throw Error('secret-path');}},{now:()=>clock});
- assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun','projects-recycleRestore','projects-recycleConfigure'].includes(a.id)).map(a=>a.requiredScopes),Array(19).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
+ assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun','projects-directorySync','projects-recycleRestore','projects-recycleConfigure'].includes(a.id)).map(a=>a.requiredScopes),Array(20).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
  const actual=await readInspectionResponse((action,payload)=>actions.find(a=>a.id==='projects-'+action).handler({...ctx,payload}),'list',{});assert.equal(actual.text.length,80000);
  const first=await actions[0].handler(ctx),transferId=first.result.transferId;
  for(const extra of [{agentId:'other',sessionKey:'agent:other:test'},{sessionKey:'agent:main:other'},{payload:{transferId,index:-1}},{payload:{transferId,index:3}}])assert.equal((await actions[2].handler({...ctx,payload:{transferId,index:1},...extra})).ok,false);
@@ -157,4 +157,13 @@ test('panel workspace edits preserve real before-after values, connection identi
  await f.inspector.workspacePoolSave(ctx);
  const result=await f.inspector.audit({...f.ctx,payload:{feature:'workspace',targetId:'a'}});assert.equal(result.total,1);const e=result.records[0];assert.equal(e.actor.id,'operator-connection');assert.equal(e.actor.name,null);assert.equal(e.before.enabled,false);assert.equal(e.after.maxSize,5);assert.ok(!JSON.stringify(result).includes('SECRET'));
  await assert.rejects(f.inspector.workspacePoolSave({...ctx,client:{scopes:['operator.read']}}));assert.equal((await f.inspector.audit({...f.ctx,payload:{feature:'workspace'}})).total,1);
+});
+
+test('organization sync is source-bound, requires operator write and does not accept arbitrary account metadata',async t=>{
+ const f=await fixture(t),{registerEntitySyncProvider}=await import('../agent-repo-api/entities.mjs'),calls=[];
+ const dispose=registerEntitySyncProvider('feishu',{info:input=>({available:true,accounts:[{accountId:'a'}],run:null}),start:(input,requestId)=>{calls.push({input,requestId});return {status:'running'};},stop:async()=>{}},Symbol());t.after(dispose);
+ const context={...f.ctx,client:{scopes:['operator.read']},payload:{accountId:'a',requestId:'one'}};
+ await assert.rejects(f.inspector.directorySync(context),/写入权限/);await assert.rejects(f.inspector.directorySync({...context,client:{scopes:['operator.write']},payload:{...context.payload,appId:'foreign'}}),/参数/);
+ await f.inspector.directorySync({...context,client:{scopes:['operator.write']}});assert.equal(calls.length,1);assert.equal(calls[0].input.agentId,'main');assert.equal(calls[0].requestId,'one');
+ await assert.rejects(f.inspector.directorySync({...context,agentId:'foreign',client:{scopes:['operator.write']}}));
 });
