@@ -1,3 +1,4 @@
+import {syncFeishuDirectory} from './entity-directory.js';
 import {randomUUID} from 'node:crypto';
 import {getPeopleService,getPeopleGroupSync,registerPeopleGroupSync,type PeopleGroupContext,type PeopleGroupSyncRun,type PeopleJoinEvent,type PeopleLookupResult,type PeopleGroupSyncService} from '../../agent-repo-api/people.mjs';
 import type {OpenClawPluginApi,OpenClawConfig} from '../runtime-api.js';
@@ -50,7 +51,7 @@ export function createPeopleGroupSync(getConfig:()=>OpenClawConfig,route=(cfg:Op
       const response=await raceWithTimeoutAndAbort(resolvePeopleFromFeishu(cfg,{agentId:result.agentId,accountId:account.accountId,appId:account.appId,openId:id}),{timeoutMs:20000,abortSignal:job.controller.signal});
       check();const lookup:PeopleLookupResult=response.status==='resolved'?response.value:{status:'error',people:[],reason:'profile_lookup_timeout'};
       const identity={accountId:account.accountId,appId:account.appId!,openId:id},prior=store.lookup(identity);
-      if(lookup.status==='found'&&lookup.people.length===1&&lookup.people[0].accountId===identity.accountId&&lookup.people[0].appId===identity.appId&&lookup.people[0].openId===id){store.observe(lookup.people[0]);result.profiled++;}
+      if(lookup.status==='found'&&lookup.people.length===1&&lookup.people[0].accountId===identity.accountId&&lookup.people[0].appId===identity.appId&&lookup.people[0].openId===id){store.observe(lookup.people[0]);result.profiled++;const graphResult=await syncFeishuDirectory({agentId:result.agentId,account,openIds:[id],log:()=>{}});check();if(graphResult.status==='partial'){result.failed++;error(job,'entity_directory_partial',{openId:id});}}
       else{store.observe({...identity,...(name?{name}:{})});result.identityOnly++;result.failed++;error(job,lookup.reason??'profile_unavailable',{openId:id,...(lookup.code!==undefined?{code:lookup.code}:{}),...(lookup.requiredScopes?{requiredScopes:lookup.requiredScopes}:{})});}
       result.saved++;result.processed++;if(prior)result.updated++;else result.created++;
      }));

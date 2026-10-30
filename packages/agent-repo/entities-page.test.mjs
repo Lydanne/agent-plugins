@@ -22,3 +22,9 @@ test('Agent switch, hidden page and permission loss discard previous entity deta
 test('failed reads are actionable and never presented as an empty successful catalog',async t=>{
  const f=await browserFixture(t,new URL('./entities-page.mjs',import.meta.url).pathname),ctx=host(async()=>{throw Error('测试读取失败');});f.track(f.ui.mountEntitiesPage(f.container,ctx));await settle();assert.match(f.container.textContent,/测试读取失败/);assert.ok(f.container.querySelector('[role=alert]'));assert.ok(!f.container.textContent.includes('暂无资料'));
 });
+test('relation details are read-only, show direction and reject stale Agent responses',async t=>{
+ const f=await browserFixture(t,new URL('./entities-page.mjs',import.meta.url).pathname),calls=[];
+ const ctx=host(async(_method,args)=>{calls.push(args);return {ok:true,result:args.actionId==='projects-entityTypes'?{types,total:3}:args.actionId==='projects-graph'?{entities:[record,{...record,id:'entity:2',name:'关联资产'}],relations:[{id:'rel:1',typeId:'maintains',fromId:record.id,toId:'entity:2'}],truncated:false}:{entities:[record],total:1,nextOffset:null}};});
+ f.track(f.ui.mountEntitiesPage(f.container,ctx));await settle();const details=[...f.container.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='查看关联关系');details.open=true;details.dispatchEvent(new f.window.Event('toggle'));await settle();assert.match(details.textContent,/→ maintains · 关联资产/);assert.equal(calls.at(-1).actionId,'projects-graph');assert.deepEqual(calls.at(-1).payload,{id:record.id,depth:1,limit:100});
+ ctx.host.connection.canRead=false;ctx.notify();assert.ok(!f.container.textContent.includes('关联资产'));
+});

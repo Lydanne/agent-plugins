@@ -69,3 +69,7 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 list/pause/remove 限当前请求人与群会话；暂停/删除计划不等于已停止 Worker。原生 tick 成功、Main 入场或 Worker 提交均不代表业务完成。定时 Main 按保存的 projectId 和范围交给 Worker，时间窗口以本次触发时刻确定；沿用异步完成协议，不在 Main 等待。仅受理后结束本轮，由既有完成事件回原群交付。无该工具时不能宣称可创建；生产启用和部署另需授权。
 
 项目可在 projects.json 配置 workspacePool.enabled/maxSize。Worker run 的 useWorkspace=true 使用独立 clone 池；注册目录和自动同步不切换到任务副本。工作区分配与状态由宿主管理，Main 不指定任意路径、不编辑分配文件。
+
+## 实体图 v2
+
+实体和关系均必须有来源。`relation_types` 查询类型规则，`relations` 按 fromId/toId/typeId/sourceId/status 分页，`graph` 用 id/depth/limit/direction/typeIds 有限遍历，`entity_history` 按 id 分页查看历史；这些是当前 Agent 的只读动作，不接受项目选择。历史或 ended 关系不代表当前有效关联。飞书组织、部门和人员统一存储，人员专用覆盖字段通过原接口维护。关系不能凭相似名称、推测或查询缺失随意建立/解除；来源与权限、端点、数量和成环条件由服务校验，完整快照失败不得清理。读工具不提供来源写能力或删除授权。

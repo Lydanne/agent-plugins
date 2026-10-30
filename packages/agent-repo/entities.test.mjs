@@ -26,7 +26,7 @@ test('custom types validate schema and retain separate identities for sources an
  store.upsert(observation);store.upsert({...observation,source:{...observation.source,namespace:'inventory'}});assert.equal(store.types().sources.find(source=>source.namespace==='cmdb').count,2);assert.equal(store.list().total,3);assert.equal(store.list({source:'cmdb',typeId:'service'}).total,1);
  assert.throws(()=>store.upsert({...observation,typeId:'unknown'}),/注册/);assert.throws(()=>store.list({limit:101}),/分页/);assert.throws(()=>store.upsert({...observation,source:{...observation.source,namespace:'feishu'}}),/渠道/);assert.throws(()=>store.upsert({...observation,observedAt:'2026-02-31T00:00:00.000Z'}),/时间/);
 });
-test('legacy Feishu people are projected live without migrating, duplicating or losing corrections',t=>{
+test('Feishu people share the canonical graph without duplicating or losing corrections',t=>{
  const {root,store}=fixture(t),people=createPeopleStore(root);const person=people.observe({accountId:'a',appId:'app',openId:'ou_test',name:'来源姓名',email:'source@example.invalid'});
  let record=store.list({typeId:'person'}).entities[0];assert.equal(record.id,'person:'+person.id);assert.equal(record.legacyPersonId,person.id);
  people.update({id:person.id,revision:person.revision,patch:{name:'人工更正'}});record=store.get(record.id).entity;assert.equal(record.name,'人工更正');assert.equal(record.source.kind,'channel');assert.equal(store.types().types.find(type=>type.id==='person').count,1);

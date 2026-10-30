@@ -15,7 +15,7 @@ test('collects directory data, preserves administrative corrections, and restore
  const refreshed=store.observe({...person,name:'飞书姓名更新',email:'new@example.invalid'});assert.equal(refreshed.name,'更正姓名');assert.equal(refreshed.giteaUsername,'different-login');assert.equal(refreshed.email,'verified@example.invalid');
  const restored=store.update({id:first.id,revision:refreshed.revision,patch:{name:null,email:null,departments:null,giteaUsername:null}});assert.equal(restored.email,'new@example.invalid');assert.equal(restored.name,'飞书姓名更新');assert.equal(restored.giteaUsername,'new');
  const unavailable=store.observe({accountId:person.accountId,appId:person.appId,openId:person.openId});assert.equal(unavailable.name,'飞书姓名更新');assert.equal(unavailable.email,'new@example.invalid');
- assert.equal(statSync(join(root,'.runtime/people/people.sqlite')).mode&0o777,0o600);
+ assert.equal(statSync(join(root,'.runtime/entities/entities.sqlite')).mode&0o777,0o600);
  assert.equal(store.list({query:'客服'}).total,1);assert.equal(store.list({query:'new@'}).total,1);
  assert.throws(()=>store.remove({id:first.id,revision:first.revision}),/变化/);
  assert.equal(store.remove({id:first.id,revision:unavailable.revision}).deleted,true);assert.equal(store.list().total,0);

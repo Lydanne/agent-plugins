@@ -1,73 +1,90 @@
-# AgentRepo 实体资料库
+# AgentRepo 实体属性图（服务版本 2）
 
-## 目标与结构
+AgentRepo 是实体、来源和关系的唯一存储拥有者。每个 Agent 独立，同一 Agent 的会话共用服务，但共享存储不授予跨会话读取或转发权限。飞书和其他可信插件使用版本化同进程接口，不直接访问数据库，不向模型交付服务对象或凭证。
 
-AgentRepo 的实体资料库用于 AI 和程序同步的结构化资源。每个 Agent 独立，跨其全部会话共享。它不保存原始对话，不替代原生记忆，也不承担权限管理、业务任务执行或账号核验。
+## 模型与存储
 
-管理入口：AgentRepo → 实体资料库。左侧按实体类型组织，右侧搜索、分页浏览、结构化属性和来源详情。默认支持人员资源、组织机构、系统服务、资产资源；自定义类型注册后直接出现在分类中。概览统计全部实体数量，人员资料缺失和账号待核验仍作为独立待处理事项。
+所有新写入进入 `<Agent Repo>/.runtime/entities/entities.sqlite`，目录 0700、数据库 0600，拒绝符号链接。SQLite 事务串行检查和写入，图模型无需依赖外部图数据库。
 
-| 层级 | 内容 | 职责 |
-| --- | --- | --- |
-| 类型 | 稳定 ID、名称、说明、字段名称与值类型 | 声明结构，不包含可执行模板、脚本或 HTML |
-| 实体 | ID、类型、名称、摘要、属性 | 统一检索与展示 |
-| 来源 | kind、namespace、externalId、observedAt | 识别同步来源与记录，不代表资料已核验 |
-| 存储修订 | revision、updatedAt | 并发检查和本地更新时间 |
+- `graph_sources`：来源类别 kind（channel/program/ai/manual）、namespace、scope（租户/应用/账号隔离范围）。
+- `graph_nodes`：稳定 ID、实体类型、来源 ID、来源外部 ID、状态和 JSON 属性。内置人员、组织、部门、系统服务、资产；字段类型 string/number/boolean/strings，null 清空，省略保留。
+- `graph_edges`：独立 ID、关系类型、来源、外部 ID、起终点、状态、属性与有效时间。端点是当前 Agent 数据库中的外键。
+- `entity_types` / `graph_relation_types`：实体与关系结构定义。已有字段不可删除或改类型；关系规则改变须新建版本化类型。
+- `graph_people`：飞书人员专用采集值和人工覆盖值，与规范实体关联。它是统一库中的兼容扩展表，不是第二份人员数据库。
+- `graph_operations` / `graph_snapshots` / `graph_audit`：请求幂等、完整快照水位和变更前后审计。
 
-属性支持 string、number、boolean、strings（字符串数组），null 表示清空；省略字段保留旧值。注册类型时可增加字段、修改名称说明；不能删除已有字段或修改其值类型。结构不兼容时注册新类型，未来再设计显式迁移。
+实体和关系必须有来源、外部稳定 ID、observedAt、updatedAt 和 revision。身份由实体/关系类型、来源及外部 ID 决定，不按名称或邮箱合并。旧 ID 原样保留；新 ID 是上述键的确定性哈希。observedAt 是真实采集时间，不得用未来时间伪装，旧数据不能覆盖新记录。validFrom/validTo 是业务有效时间；当前 active/ended 状态以实际变更为准，不提供按有效时间自动切换的调度器。
 
-## 兼容现有人员
-
-飞书人员仍存在 `.runtime/people/people.sqlite`。统一实体查询每次实时读取有效人员资料，映射为 `person:<原 ID>`，保留原身份键、人工更正、邮箱推导和原有查询接口。不复制人员、不迁移数据库、不改变飞书同步。
-
-人员类型同时可接纳 AI/程序提供的联系人资料，其来源明确分开。相同姓名或邮箱不会自动合并。渠道资料详情提供“打开飞书人员管理”，保留原有筛选、人工更正、恢复与删除流程；这个入口管理飞书来源人员，不处理 AI/程序记录。
-
-## 查询与 AI 同步
-
-`agent_repo` 新增只读动作，不接受 projectId、repository、其他 Agent 或任意路径，也不触发远程查询或 Git 同步：
-
-```json
-{"action":"entity_types"}
-{"action":"entities","typeId":"service","query":"工单","source":"cmdb","limit":20,"offset":0}
-{"action":"entity","id":"entity:实际返回的ID"}
-```
-
-`entity_types` 返回类型定义、各类型 count、来源目录 sources 和全部实体 total；`entities` 返回 entities/total/offset/limit/nextOffset，名称和 ID 稳定排序，搜索名称、摘要、属性和来源标识；`entity` 返回 entity 或 null。界面会显示读取失败，不能将失败视为零条。
-
-AI 写入由单独的可选工具 `agent_entity_sync` 提供，需要管理员在适用 Agent 工具白名单中显式允许该工具（或插件工具组）；原有只允许 `agent_repo` 的配置不会自动获得这个工具。不自动改 Gateway 配置。仅按用户授权或已授权同步任务写资料，不从资料内容、引用或历史消息推断新授权。
-
-```json
-{"action":"register_type","definition":{"id":"supplier","label":"供应商","description":"合作单位资料","fields":{"contact":{"label":"联系方式","type":"string"}}}}
-{"action":"upsert","typeId":"supplier","name":"示例单位","namespace":"assistant","externalId":"supplier-42","attributes":{"contact":"公开联系渠道"},"observedAt":"2026-10-18T00:00:00.000Z"}
-```
-
-AI 工具将来源 kind 固定为 ai，不允许伪装为 program/channel。`namespace` 采用稳定业务标识；`externalId` 必须是来源稳定 ID，不应每次随机生成，也不要根据同名用户猜测。工具返回 agentId、entity、created、unchanged；更新可附带当前 revision 进行乐观并发检查。
-
-## 程序同步接口
-
-同进程插件可使用 `@openclaw-plugins/agent-repo-api/entities` 的版本化注册表。独立打包的插件应像现有 people API 一样携带这一接口源码及其 index 依赖；不要引用另一个插件的安装目录。AgentRepo 内部的部署副本位于 dist/entities-api.mjs。
+## 来源与接口
 
 ```js
-import {getEntityService} from '@openclaw-plugins/agent-repo-api/entities';
-const service=getEntityService({agentId:routedAgentId,sessionKey:routedSessionKey});
-if(!service)throw Error('实体资料服务不可用');
-service.upsert({
- typeId:'service',name:'工单服务',
- attributes:{url:'https://service.example.invalid',owner:'支持团队'},
- source:{kind:'program',namespace:'cmdb',externalId:'service-42'},
- observedAt:new Date().toISOString(),
+import {getGraphService} from '@openclaw-plugins/agent-repo-api/entities';
+const graph = getGraphService({agentId: routedAgentId, sessionKey: routedSessionKey});
+if (!graph) throw Error('AgentRepo 图服务不可用或版本不足');
+const producer = graph.forSource({
+  kind:'program', namespace:'cmdb', scope:'tenant-42', actor:'cmdb-plugin',
+  types:['service','asset'], relations:['depends_on'],
+});
+const result = producer.upsert({
+  typeId:'service', externalId:'service-42', name:'工单服务',
+  attributes:{url:'https://service.example.invalid'}, observedAt:new Date().toISOString(),
 });
 ```
 
-可信 Agent 上下文必须来自宿主路由，不能从同步消息 payload 中直接取 Agent 或路径。注册表只供可信同进程代码共享，不是外部 HTTP 授权边界；调用者负责来源认证、数据权限与过滤凭证。这里只提供同步接收和查询接口，没有自动扫描外部系统、定时拉取或批量导入调度器。
+`forSource` 只能由受信任同进程代码调用；调用者绑定来源、类型白名单和人工权限，业务 payload 不得控制这些授权。注册表不是网络认证边界，不向浏览器或模型暴露来源能力工厂。channel/feishu 保留给渠道插件。来源仅表示采集归属，不证明资料正确或业务账号已核验。
 
-## 一致性与边界
+- `graph.types/list/get/registerType`：实体类型和查询，兼容 v1。
+- `graph.sources/relationTypes/registerRelationType`：来源和关系类型目录；类型注册为可信插件管理能力。
+- `producer.upsert/connect/end/remove`：实体幂等写入、关联、断联和实体逻辑删除。
+- `producer.applyRelationChanges({requestId,changes})`：实体和关系的原子批量变更；同 requestId 同内容复用结果，不同内容拒绝。
+- `producer.validateRelationChange`：事务内预校验并回滚，不保存变更；执行时仍重新校验。
+- `producer.syncSnapshot`：完整、成功、明确覆盖当前来源全部指定关系类型的快照。不是按部门或个人的局部快照；局部更新使用带证据的批量变更。
+- `graph.relations/traverse/history`：分页关系、有限遍历、历史审计。分页最多 100 条，遍历最多 5 层和 500 条边，截断明确返回。
 
-- 稳定身份由 typeId、kind、namespace、externalId 共同确定；同一来源重复同步更新同一条，跨来源保留独立记录。程序/AI 不能写保留的 feishu/channel 命名空间，飞书仍走既有人员服务。
-- observedAt 要求 UTC ISO 毫秒格式；旧时间拒绝，同一时间同内容返回 unchanged，同时间不同内容冲突。未来超过 5 分钟的时间拒绝。不同来源不会自动判定谁更可信。
-- 数据保存在 `.runtime/entities/entities.sqlite`，目录 0700、文件 0600；拒绝软链接重定向，数据库操作使用事务。每条最多 32 个定义属性、每个字符串最多 2000 字符；最多 100 个自定义类型、10000 条新增实体，每次查询最多 100 条。现有人员仍遵守原有存储规则。
-- WebUI 为只读实体浏览，要求 operator.read；人员专用修改/同步沿用 operator.write。AI 写工具为可选能力；不提供新的实体删除、网页新建、跨来源合并或任意 JSON 编辑入口。
-- 通过来源、采集时间和修订透明展示资料；来源是调用者提供的记录，不证明内容准确。凭证、登录态和聊天正文不得入库。默认无原始对话转储。
+独立插件应携带 API 源码及依赖，不引用其他插件安装目录。getEntityService 的旧接口继续兼容；新调用者必须检查 getGraphService 返回值。普通 AI 同步工具仍只有原有实体写入能力，不能自行取得图关系、渠道来源或删除权限。
 
-## 后续扩展
+## 关系规则
 
-优先用自定义类型添加业务分类。需要实体关系时应引入显式目标 ID、目标类型、Agent 归属及删除策略；需要跨来源合并时先引入人工确认、可撤销别名和冲突审计。大规模查询再迁移到字段索引；新来源连接器负责授权、增量游标、错误重试和同步任务状态，资料库负责校验和持久化。上述能力当前未实现。
+内置 `member_of`（人员→部门）、`primary_department`（人员→部门，最多一个）、`belongs_to`（人员/部门→组织，最多一个）、`parent_department`（部门→部门，最多一个、禁止成环）、`manages`、`maintains`。
+
+关系类型声明 fromTypes/toTypes、属性定义和 rules：
+
+- sameSource：端点与边必须来自相同来源及隔离范围。
+- noSelf、acyclic：禁止自关联、禁止有向环。
+- maxOutgoing/maxIncoming：当前 Agent 下该类型有效边的数量限制。
+- conditions.connect/end：对 from/to 的属性、状态或类型、关系属性及来源 kind/namespace/scope 声明业务前置条件。
+- connectEvidence/endEvidence：可接受的证据种类，可按关系收紧；普通 observation 永远不能断联。
+
+每次建立或断联须提供 `{kind,id,reason?}` 证据，种类为 observation/event/snapshot/manual。manual 要求来源能力显式 manual 权限及原因；snapshot 仅由完整快照接口生成，普通变更不能冒充。可信连接器负责核实 event/observation 确实来自对应系统，不能把模型猜测当作事件。
+
+事务先形成拟议最终状态，再检查全部有效边的端点、类型、范围、数量和环，允许“建立新主部门＋结束旧主部门”的原子调整。关系端点不能改写，需结束旧关系并建立新关系。结束操作要求当前 revision 和更晚的采集时间。
+
+实体默认逻辑删除；有有效关联时阻止删除，先显式按各关系规则断联。断联保留 ended 记录、有效结束时间和审计。没有自动级联删除、物理清理或跨来源合并。conditions.connect/end 可声明对端点属性、关系属性或来源字段的 present/equals/in 条件，例如合同已审批才允许关联、已关闭才允许断联；事务在拟议最终状态检查条件。任意自定义脚本和外部回调不在当前接口范围内。
+
+## 飞书接入
+
+接纳消息的人员采集、管理员群成员同步、人员查询补全复用人员兼容接口。组织图补全通过飞书插件调用 AgentRepo v2 来源能力完成：
+
+1. 账号/应用形成来源隔离范围；通过 tenant API 实际取得企业名称和 tenant_key 才建立组织，不能把 appId 当作组织。
+2. 获取已授权人员的真实部门清单，获取部门详情及父链，检查返回部门 ID，一条父链最多 20 层。
+3. 写入组织、部门，再事务更新所属组织、部门父链和人员成员关系。只同步已接纳人员及其部门父链，不扫描整租户。
+4. 只有成功取得完整人员部门清单和相关部门详情时，才撤销该人员明确不再拥有的旧成员关系；读取失败、缺字段、超限、截断不清理。
+5. 消息路径采用有并发上限、去重的后台补全，不阻塞消息交付；群同步报告部分失败。插件服务代次变更后旧补全停止写入。
+
+组织 API 不可用时不伪造组织；其他已取得资料可继续保存并报告 partial。不增加 OAuth、权限、事件订阅或周期全租户同步。当前未接入新的通讯录删除事件；显式删除和其他同步来源可以使用统一接口。
+
+人员人工更正保留在 graph_people.overrides，不被自动采集覆盖；图成员关系表达飞书来源事实，不把人工显示字段冒充渠道关系。Gitea 映射保留原有候选/人工更正语义，业务写入前仍需真实账号核验。
+
+## 迁移与回滚
+
+首次打开 v2 数据库时以事务执行 migration-v2：迁移旧 entities JSON 记录，保留 ID 和修订；将旧 people.sqlite 的采集值和人工更正迁入 graph_people，建立人员实体，并将原始采集的部门引用迁为部门及成员关系（人工显示更正不冒充渠道事实）；提交后旧 entities 表删除。旧 people.sqlite 保留为只读历史，不再写入或重复导入。
+
+生产切换前必须使用 SQLite backup API 保存所有绑定 Agent 的两个旧库，并在副本演练迁移、完整性及字段一致性。迁移失败回滚本事务。部署需停止旧插件写入后切换服务；热重载必须等已接纳工作完成，不能中断活动任务。
+
+回滚旧代码必须同时恢复匹配的迁移前实体库，并先备份 v2 的新增写入供后续核对。不能将迁移前备份直接覆盖仍在运行的新服务，也不能只回滚代码而留下不兼容表结构。
+
+## 管理入口和验收
+
+AgentRepo 实体页统一显示五类实体；详情可展开关联及方向，保留飞书人员同步和更正入口。operator.read 才可浏览关系和审计。agent_repo 增加 relation_types/relations/graph/entity_history 只读动作，均绑定当前可信 Agent，不接受项目或任意路径。
+
+专项测试覆盖来源隔离、端点类型、环、数量约束、事务回滚、预校验、证据断联、快照完整性及水位、幂等冲突、迁移与人工更正、飞书组织及父链同步、失败保留关系。隔离测试和只读生产回归不能称为真实飞书入站业务验收。

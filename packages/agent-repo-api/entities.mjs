@@ -8,3 +8,6 @@ export function registerEntityService(agentId,service,owner){
  const previous=registry.get(agentId);if(previous&&previous.owner!==owner)throw Error('Entity service already registered');
  const entry={service,owner};registry.set(agentId,entry);return ()=>{if(registry.get(agentId)===entry)registry.delete(agentId);};
 }
+
+/** Version 2: only trusted in-process connectors may mint source capabilities. */
+export function getGraphService(context){const service=getEntityService(context);return service?.version===2?service:undefined;}

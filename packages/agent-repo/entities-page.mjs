@@ -3,7 +3,7 @@ import {readInspectionResponse} from './dist/inspection-transport.mjs';
 import {currentUiTarget} from './dist/ui-navigation.mjs';
 const el=(tag,text,cls)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;};
 const button=(text,action,cls)=>{const node=el('button',text,cls);node.type='button';node.onclick=action;return node;};
-const kinds={channel:'渠道采集',program:'程序同步',ai:'AI 同步'};
+const kinds={channel:'渠道采集',program:'程序同步',ai:'AI 同步',manual:'人工维护'};
 export function mountEntitiesPage(container,initial){
  let context=initial,disposed=false,generation=0,agentId='',read,write,presented,types=[],sources=[],page=null,selected=null,typeId='',query='',source='',offset=0,loading=false,error='',people=null,personMode=false;
  const root=el('section',undefined,'ar-entities');root.setAttribute('aria-label','Agent 实体资料库');container.append(root);
@@ -45,6 +45,8 @@ export function mountEntitiesPage(container,initial){
    const fields=el('dl');const fact=(label,value)=>{const cell=el('div');cell.append(el('dt',safe(label)),el('dd',safe(Array.isArray(value)?value.join('、'):value===null||value===undefined||value===''?'暂未获取':String(value))));fields.append(cell);};
    const type=types.find(t=>t.id===record.typeId);for(const [name,value] of Object.entries(record.attributes))fact(type?.fields[name]?.label??({giteaUsername:'Gitea 账号',giteaSource:'账号映射来源'}[name]??name),value);
    detail.append(fields);const provenance=el('details'),meta=el('dl');provenance.append(el('summary','来源与同步信息'));for(const [label,value] of [['来源标识',record.source.namespace],['来源记录 ID',record.source.externalId],['采集时间',record.observedAt],['更新时间',record.updatedAt],['实体 ID',record.id],['修订版本',record.revision]]){const cell=el('div');cell.append(el('dt',label),el('dd',safe(value)));meta.append(cell);}provenance.append(meta);detail.append(provenance);
+   const related=el('details'),relationsBody=el('div');related.append(el('summary','查看关联关系'),relationsBody);let fetched=false;
+   related.ontoggle=async()=>{if(!related.open||fetched)return;fetched=true;const epoch=generation;relationsBody.textContent='正在读取…';try{const result=await invoke('graph',{id:record.id,depth:1,limit:100},epoch);if(disposed||epoch!==generation)return;relationsBody.textContent='';for(const relation of result.relations){const target=result.entities.find(e=>e.id===(relation.fromId===record.id?relation.toId:relation.fromId));relationsBody.append(el('p',safe((relation.fromId===record.id?'→ ':'← ')+(result.relationTypes?.find(type=>type.id===relation.typeId)?.label??relation.typeId)+' · '+(target?.name??'未知实体'))));}if(!result.relations.length)relationsBody.append(el('p','暂无有效关联'));if(result.truncated)relationsBody.append(el('p','关联较多，仅展示前 100 条'));}catch{if(!disposed&&epoch===generation){relationsBody.textContent='关联读取失败，请重新展开重试';fetched=false;}}};detail.append(related);
    if(record.legacyPersonId)detail.append(button('打开飞书人员管理',openPeople));else detail.append(el('p','由来源同步更新。相同来源记录会更新原实体，不按名称自动合并。','ar-description'));content.append(detail);
   }workspace.append(content);
   const paging=el('div',undefined,'ar-entities-pagination');if(offset)paging.append(button('上一页',()=>{offset=Math.max(0,offset-20);refresh();}));if(page.nextOffset!==null)paging.append(button('下一页',()=>{offset=page.nextOffset;refresh();}));workspace.append(paging);

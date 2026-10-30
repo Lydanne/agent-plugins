@@ -462,3 +462,7 @@ WebUI 项目页通过标题旁的“工作区配置”小按钮打开弹窗，�
 提示词准备失败保留首个原因，不再被通用“Prompt preparation failed”覆盖。每次提示词准备分配独立序号；被更新步骤替代的迟到失败不覆盖当前快照，迟到成功也不能发布旧快照。当前步骤尚未完成或已过期时仍返回 PROMPT_PENDING / PROMPT_EXPIRED，不回退到之前的快照。缺失、真实失败或版本变化仍阻止执行，不自动重试业务，也不借用其他 run 的快照。
 
 Git 同步失败会保留具体诊断码并传递到入站拦截提示：`AGENT_REPO_GIT_AUTH_FAILED`、`HOST_KEY_FAILED`、`DNS_FAILED`、`CONNECT_TIMEOUT`、`NETWORK_FAILED`、`LOCK_CONFLICT`、`REMOTE_REF_MISSING`、`REMOTE_UNAVAILABLE`、`DISK_FULL`（均使用 `AGENT_REPO_GIT_` 前缀）。未知错误使用 `AGENT_REPO_GIT_COMMAND_FAILED`，保留数字退出码和脱敏命令类别，不输出 stderr、远端 URL 或凭证，不将未知原因猜成网络错误。诊断不新增自动重试，不删除锁、不重置分支，也不重新派发原业务。
+
+### 实体属性图 v2
+
+实体与关系均强制来源；新增部门类型、条件关联和断联、版本化同进程 CRUD、有限遍历、快照水位、事务与审计。飞书插件通过来源能力补全企业、部门父链和人员成员关系。人员扩展表保留采集值、人工更正和 Gitea 映射，统一写入 entities.sqlite，旧 people.sqlite 退役为历史副本。本文旧版本章节中的人员独立库说明仅描述迁移前状态。来源能力只供可信代码，不向模型暴露。限制、权限、完整快照范围和回滚要求见 [实体图协议](../../docs/entity-library.md)。

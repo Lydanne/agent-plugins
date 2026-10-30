@@ -1,3 +1,5 @@
+import {scheduleFeishuDirectorySync} from './entity-directory.js';
+import {getPeopleService} from '../../agent-repo-api/people.mjs';
 import {registerPeopleResolver,type PeopleLookupRequest,type PeopleLookupResult,type PersonObservation} from '../../agent-repo-api/people.mjs';
 import type {OpenClawPluginApi,OpenClawConfig} from '../runtime-api.js';
 import {listEnabledFeishuAccounts,resolveFeishuRuntimeAccount} from './accounts.js';
@@ -67,6 +69,7 @@ export async function resolvePeopleFromFeishu(cfg:OpenClawConfig,input:PeopleLoo
 }
 export function registerFeishuPeopleResolver(api:OpenClawPluginApi){
  const owner=Symbol.for('openclaw-plugins.feishu-people-resolver');
- let dispose=registerPeopleResolver(input=>resolvePeopleFromFeishu(api.config,input),owner);
- api.registerService({id:'feishu-people-resolver',start:()=>{dispose();dispose=registerPeopleResolver(input=>resolvePeopleFromFeishu(api.config,input),owner);},stop:()=>dispose()});
+ const resolve=async(input:PeopleLookupRequest)=>{const result=await resolvePeopleFromFeishu(api.config,input);if(result.status==='found'){const store=getPeopleService(input.agentId);for(const person of result.people)store?.observe(person);const first=result.people[0];if(first){const account=resolveFeishuRuntimeAccount({cfg:api.config,accountId:first.accountId});scheduleFeishuDirectorySync({agentId:input.agentId,account,openIds:result.people.map(p=>p.openId),log:(...args)=>api.logger?.warn?.(args.join(' '))});}}return result;};
+ let dispose=registerPeopleResolver(resolve,owner);
+ api.registerService({id:'feishu-people-resolver',start:()=>{dispose();dispose=registerPeopleResolver(resolve,owner);},stop:()=>dispose()});
 }

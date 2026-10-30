@@ -1,3 +1,4 @@
+import {scheduleFeishuDirectorySync} from './entity-directory.js';
 import {getPeopleService, type Person} from '../../agent-repo-api/people.mjs';
 import {resolveFeishuSenderName} from './bot-sender-name.js';
 import type {ResolvedFeishuAccount} from './types.js';
@@ -19,5 +20,6 @@ export async function collectTaskPeople(input:{agentId:string;account:ResolvedFe
    return service.observe({...scope,openId:target.openId,name:directory.name??target.name,...directory});
   })));
  }
+ scheduleFeishuDirectorySync({agentId:input.agentId,account:input.account,openIds:[input.senderId,...targets.map(t=>t.openId)],log:input.log});
  return {requester,mentions};
 }
