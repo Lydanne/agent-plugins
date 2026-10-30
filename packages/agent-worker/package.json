@@ -76,7 +76,8 @@
     "source-revocations.mjs",
     "execution-supervisor.mjs",
     "ui",
-    "ui/WorkerPanel.vue"
+    "ui/WorkerPanel.vue",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
     "node": ">=24.19.0"

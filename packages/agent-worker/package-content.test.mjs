@@ -14,6 +14,11 @@ test('standalone plugin file lists include the shared API and every local module
   for(const file of [plugin.controlUi.entry,...plugin.controlUi.styles]){
    assert.ok(file.startsWith('dist/control-ui/'));assert.ok((await readFile(new URL(file,root))).length>0);
   }
+  const notices=await readFile(new URL(plugin.controlUi.entry.replace(/index\.js$/, 'THIRD_PARTY_LICENSES.txt'),root),'utf8');
+  for(const name of ['shadcn-vue','@vue/runtime-dom@','reka-ui@','tailwindcss@'])assert.ok(notices.includes(name),'Missing bundled license: '+name);
+  assert.ok(!notices.includes('/Users/'));
+  const code=await readFile(new URL(plugin.controlUi.entry,root),'utf8');
+  assert.ok(!/from\s*[\"'](?:vue|reka-ui|@openclaw-plugins)/.test(code),'Browser bundle must be self contained');
   assert.ok(!Object.values(manifest.dependencies??{}).some(value=>value.startsWith('workspace:')));
   for(const file of manifest.files.filter(file=>file.endsWith('.mjs'))){
    const url=new URL(file,root),text=await readFile(url,'utf8');

@@ -20,7 +20,7 @@ test('update settings are edited before confirmation; ambiguous retries reuse th
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../skill-maintenance-page.mjs')),calls=[];let fail=true;
  const ctx=uiContext(async(_method,request)=>{calls.push(request);if(request.actionId==='projects-maintenance')return {ok:true,result:snapshot};if(fail)throw Error('connection lost');return {ok:true,result:{id:'op',status:'running'}};});ctx.host.connection.canWrite=true;
  f.track(f.ui.mountSkillMaintenance(f.container,ctx,'main'));await settle();click(f.container,'关联 CLI');await settle();click(f.container,'Fixture CLI');await settle();click(f.container,'更新设置');await settle();
- assert.equal(f.container.querySelector('.ar-maintenance-confirm'),null);const checkbox=f.container.querySelector('input[type=checkbox]');assert.equal(checkbox.checked,true);checkbox.checked=false;checkbox.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();
+ assert.ok(f.container.querySelector('.ar-maintenance-confirm')===null);const checkbox=f.container.querySelector('input[type=checkbox]');assert.equal(checkbox.checked,true);checkbox.checked=false;checkbox.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();
  f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));await settle();assert.equal(calls.filter(row=>row.actionId==='projects-maintenanceRun').length,0);
  click(f.container,'确认执行');await settle();const first=calls.find(row=>row.actionId==='projects-maintenanceRun');assert.equal(first.payload.settings.autoUpdate,false);assert.equal(first.payload.expectedRevision,provider.revision);assert.equal(first.payload.confirmed,true);
  fail=false;click(f.container,'重试原维护请求');await settle();assert.deepEqual(calls.filter(row=>row.actionId==='projects-maintenanceRun').map(row=>row.payload.requestId),[first.payload.requestId,first.payload.requestId]);assert.match(f.container.textContent,/维护请求已受理/);
@@ -45,5 +45,5 @@ test('long skill instructions stay searchable and complete in detail without exp
  assert.equal(f.container.querySelectorAll('thead th').length,2);
  const search=f.container.querySelector('input[type=search]');search.value='末尾搜索标记';search.dispatchEvent(new f.window.Event('input'));await settle();assert.equal(f.container.querySelectorAll('tbody tr').length,1);
  click(f.container,longProvider.skills[0].name);await settle();assert.equal(f.container.querySelector('.ar-maintenance-description').textContent,description);
- click(f.container,'返回列表');await settle();assert.equal(f.container.querySelector('.ar-maintenance-detail'),null);assert.equal(f.window.document.activeElement.dataset.itemKey,'fixture.cli:'+longProvider.skills[0].name);
+ click(f.container,'返回列表');await settle();assert.ok(f.container.querySelector('.ar-maintenance-detail')===null);assert.equal(f.window.document.activeElement.dataset.itemKey,'fixture.cli:'+longProvider.skills[0].name);
 });

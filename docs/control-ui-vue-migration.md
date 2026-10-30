@@ -1,38 +1,33 @@
-# Vue Control UI migration status
+# Vue Control UI migration and acceptance
 
-This tracks the complete accepted migration, not a reduced completion target. Work is in progress. Production is not deployed.
+All formal AgentRepo and AgentWorker browser entries use Vue 3 Composition API and TypeScript SFCs. The temporary CompatSection and imperative project/log renderers have been removed. Small `.mjs` adapters retain the existing public mount/update/dispose and registration contracts. No production deployment or restart is part of this delivery.
 
-## Converted to Vue SFCs
+## Feature migration checklist
 
-- AgentRepo management shell and module navigation, preserving the content region and focus.
-- Overview, independent source errors, resource counts, maintenance warnings and Worker summary.
-- Agent-wide Worker task table, filters, pagination, timing, notification warnings and exact task links.
-- Worker sidebar and full task page: model-scoped session list, four detail views, source reader, tool/timeline rendering and exact-scope single/batch deletion. Existing 21 panel behaviors and actual public registration/RPC routing now run under Vitest, plus focused component tests.
-- Entities and personnel, including organization/group sync and account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries. Existing 15 behavior cases run in Vitest; six Chromium cases cover four widths, standalone writes, automatic directory status, late Agent responses and cleanup.
-- Skills and associated CLI maintenance: descriptions, managed associations, update-policy drafts, confirmation, version/revision protection, stable retry requests, maintenance history and diagnostics.
-- Workspace configuration: lazy loading, capacity/occupancy, revision-protected saves, audit, focus return and stale-response isolation.
-- Native schedule management editor: inherited source scope, group/system plans, original request/permission checks, daily/custom/one-time schedule drafts, delivery-mode confirmation and truthful admission outcomes.
-- Audit filters, paging, actor provenance, before/after differences and unknown outcomes.
-- Recycle dialog, stable request IDs, revision checks, retention confirmation, last-page correction and readonly behavior.
+| Surface | Vue implementation and retained behavior |
+| --- | --- |
+| Management shell / overview | Seven modules in original order; independent source errors, resource counts, maintenance warnings and Worker summary |
+| Projects and compatibility sidebar | Agent/project tabs, repository scopes, metadata, subagents, warnings, project skills, CLI policy maintenance and Worker navigation |
+| Workspace / skill maintenance | Lazy reads, draft preservation, revision and request IDs, confirmations, update policies, capacity/occupancy, audit and stale-response isolation |
+| Agent-wide Worker tasks | Cross-session summaries, filters, paging, timing, delivery warnings and exact job links; separate data adapter from current-session Worker queries |
+| Entities / personnel / standalone entries | Directory/group synchronization, account selection, revision-protected editing, drafts, technical identities and lazy graph relationships |
+| Native schedules | Source-bound manager/editor, original permission checks, daily/custom/one-time schedules and delivery confirmation; task history/settings, nested run logs, exact identity checks and truncation notices |
+| Audit / recycle | Filters, paging, actor provenance, change comparison, unknown outcomes, retention, revision checks, stable retry IDs and last-page correction |
+| Historical/live diagnostics | Live default off; explicit lease acquisition/renewal/release, late-start cleanup, source-specific failures, virtual scrolling, find, grouping, repeats, lazy JSON, exact copy/export and confirmed source-wide clearing |
+| Worker sidebar and full task page | Search/filter/paging, four detail views, raw record reader, task timeline, exact task location, single/batch deletion, revision scope and partial/unknown results |
 
-The temporary `CompatSection.vue` boundary is still used by the remaining management modules. It must be deleted after those views migrate. The old project sidebar remains imperative; wrapping it is not considered completed migration.
+## Shared kit and distribution
 
-## Still required for full completion
+`@openclaw-plugins/control-ui-kit` owns host snapshots, per-view theme/portal roots, shadcn-vue source components and reusable interactions. It contains Button, Input, NativeSelect, Select, Checkbox, Switch, Tabs, Badge, Tooltip, Table, Pagination, Card, Skeleton, Empty, Alert, Collapsible, Dialog, AlertDialog, Sheet, Popover and DropdownMenu. Business views own authorization, scope invalidation and server outcome interpretation. No router, Pinia or caching framework was introduced.
 
-- Projects shell, subagent definitions and the project sidebar.
-- Native/system task history and settings views in the schedule directory. The management editor is converted; the legacy history dialog still needs removal.
-- Historical/live diagnostics including explicit lease acquisition, release, virtualized logs, search, export and partial-source failures.
-- Complete the shared shadcn-vue controls; migrate UI tests to Vitest; remove temporary bridges and obsolete renderers/styles.
-- Expand real Chromium acceptance to every migrated surface and operation, independent installs and cross-plugin lifecycle.
+Theme variables inherit the host palette; management green and sidebar blue-gray are retained. Tailwind utilities use `ocp:` with no global Preflight. Base rules stay inside plugin roots. The sole native-dialog compatibility exception restores pointer interaction to a host top-layer dialog while a plugin modal owns the body lock. Chromium verifies that dismissing the host dialog leaves the plugin dialog open.
 
-## Verification
+Each plugin independently bundles Vue, components and styles with Vite library mode. `controlUi.entry/styles` refer to a content-hashed directory. `THIRD_PARTY_LICENSES.txt` is generated from the actual Rollup dependency graph alongside each browser entry, including the pinned shadcn-vue source notice. There are no browser CDN imports or runtime dependencies on the other plugin or private kit package.
 
-`pnpm typecheck`, `pnpm build`, isolated `pnpm test`, and `pnpm test:ui:e2e` are the final gates. Run builds/tests from the isolated checkout because the registered source directory is production-loaded. Do not pull new UI manifests into that live checkout or restart production without deployment authorization.
+## Verification and practical limits
 
-The Chromium harness serves actual built JS/CSS and manifests from the isolated checkout, with a synthetic implementation of the public host contract. Unsupported actions fail explicitly. It does not use production config, sessions, tokens or databases. The suite covers audit and recycle at 320/400/720/1280px, host themes, portal bounds, keyboard focus, unknown write retries, permission loss, cleanup and the Agent-wide Worker task link/draft.
+Final gates are `pnpm typecheck`, `pnpm build`, isolated `pnpm test` and `pnpm test:ui:e2e`. Existing UI assertions run under Vitest/Vue Test Utils/happy-dom; actual SDK/action ownership and backend tests remain Node tests. UI assertions use behavior, roles and accessible names rather than old renderer identity.
 
-The browser run exposed and fixed a `process.env.NODE_ENV` library-build reference and the need to serialize Vue proxy payloads at the RPC boundary. Host snapshots bind methods to their original receiver.
+Chromium loads actual built assets and manifests with a synthetic public host. Unsupported actions fail explicitly. Coverage includes 320/400px sidebars, 720px narrow and 1280px desktop, light/dark tokens, scope changes and late responses, in-place host updates, hide/revoke/dispose, independent plugin installs, duplicate mounts and navigation bridge unload. It exercises exact Worker deletion scope, partial failures, stable unknown-result retries, schedule/maintenance/workspace writes, raw records, virtualized 1,500-row logs, real find scrolling, explicit capture and original-Agent late-lease cleanup. Portal bounds, keyboard activation, focus return and native host modal coexistence are browser assertions.
 
-Worker Chromium cases additionally cover all four views at 320/400/720/1280px, menu collision bounds, keyboard tabs, clipboard permission success, raw message dialogs, workspace metadata, partial batch failure, original scope/revision payloads, permission loss during an in-flight deletion and disposal. Vue app ID prefixes are shared-counter unique across independent plugin bundles; each sidebar view has its own flex/scroll root and themed portal.
-
-Project integration tests now run in Vitest (18 cases); the real SDK/session-action ownership contract remains a separate Node test. Workspace (5), maintenance (5), and schedule manager (21) behavior cases have migrated. Chromium adds policy confirmation/retry and workspace saving at four widths, and native schedule editor acceptance. Maintenance detail focus changes only when the selected identity changes, preserving search focus and caret during refresh.
+All builds and test artifacts are produced in an isolated checkout. The registered production-loaded checkout is deliberately untouched. These checks are local contract and browser acceptance, not production deployment or real Feishu business end-to-end acceptance.

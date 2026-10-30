@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,reactive,onMounted,onBeforeUnmount} from 'vue';
-import {Button} from '@openclaw-plugins/control-ui-kit';
+import {Button,Table} from '@openclaw-plugins/control-ui-kit';
 import {auditFeatures,statuses,actions,fields,display,type AuditOptions,type AuditPage,type AuditRecord} from './audit-model';
 const props=defineProps<AuditOptions>();
 const safe=(value:unknown)=>props.safe?.(value)??String(value??'');
@@ -38,7 +38,7 @@ onMounted(query);onBeforeUnmount(()=>{alive=false;epoch++;});
    <details v-for="record in page?.records??[]" :key="record.id" class="ar-audit-record">
     <summary>{{safe(new Date(record.at).toLocaleString()+' · '+(actions[record.action]??record.action)+' · '+record.targetName+' · '+(statuses[record.status]??record.status))}}</summary>
     <p>{{safe('发起指派：'+(record.actor?.name??record.actor?.id??'身份未记录')+' · 执行入口：'+(record.executor??'未记录'))}}</p>
-    <div v-if="record.changes?.length" class="ocp:overflow-x-auto"><table><thead><tr><th>字段</th><th>修改前</th><th>修改后</th></tr></thead><tbody><tr v-for="(change,index) in record.changes" :key="index"><td>{{safe(fields[change.field]??change.field)}}</td><td>{{safe(display(change.before,change.field))}}</td><td>{{safe(display(change.after,change.field))}}</td></tr></tbody></table></div>
+    <div v-if="record.changes?.length" class="ocp:overflow-x-auto"><Table><thead><tr><th>字段</th><th>修改前</th><th>修改后</th></tr></thead><tbody><tr v-for="(change,index) in record.changes" :key="index"><td>{{safe(fields[change.field]??change.field)}}</td><td>{{safe(display(change.before,change.field))}}</td><td>{{safe(display(change.after,change.field))}}</td></tr></tbody></Table></div>
     <p v-else>{{record.status==='pending'?'操作尚未取得结果，待核验。':'未记录字段变化；立即执行等动作可能不修改配置。'}}</p>
     <p v-if="record.status!=='succeeded'" class="ar-warning">以下是已保存状态的变化，不能据此推断原生写入或业务执行成功。</p>
     <template v-if="record.requested&&Object.keys(record.requested).length"><h4>请求修改内容</h4><pre>{{safe(JSON.stringify(record.requested,null,2))}}</pre></template>

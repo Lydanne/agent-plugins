@@ -21,7 +21,7 @@ test('read-only manager cannot mutate and closing rejects stale responses',async
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../people-ui.mjs')),pending=deferred();
  const view=f.track(f.ui.mountPeopleDialog(f.container,{context:{...uiContext(async()=>({})),host:{...uiContext(async()=>({})).host,connection:{canRead:true,canWrite:true}}},invoke:()=>pending.promise,canWrite:()=>false,safe:String}));
  view.dispose();pending.resolve({people:[person],total:1,nextOffset:null});await settle();assert.equal(f.container.children.length,0);
- f.track(f.ui.mountPeopleDialog(f.container,{context:{...uiContext(async()=>({})),host:{...uiContext(async()=>({})).host,connection:{canRead:true,canWrite:true}}},invoke:async()=>({people:[person],total:1,nextOffset:null}),canWrite:()=>false,safe:String}));await settle();assert.match(f.container.textContent,/客服同事/);assert.equal(f.container.querySelector('[aria-label="编辑人员"]'),null);
+ f.track(f.ui.mountPeopleDialog(f.container,{context:{...uiContext(async()=>({})),host:{...uiContext(async()=>({})).host,connection:{canRead:true,canWrite:true}}},invoke:async()=>({people:[person],total:1,nextOffset:null}),canWrite:()=>false,safe:String}));await settle();assert.match(f.container.textContent,/客服同事/);assert.ok(f.container.querySelector('[aria-label="编辑人员"]')===null);
 });
 
 test('failed saves retain an edited draft for correction and retry',async ()=>{
@@ -43,7 +43,7 @@ test('selecting another person keeps edits and deletion scoped to that identity 
 test('empty searches can be cleared and do not show unusable pagination',async ()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../people-ui.mjs')),calls=[];
  f.track(f.ui.mountPeopleDialog(f.container,{context:{...uiContext(async()=>({})),host:{...uiContext(async()=>({})).host,connection:{canRead:true,canWrite:true}}},invoke:async(action,payload)=>{calls.push(payload);return {people:payload.query?[]:[person],total:payload.query?0:1,nextOffset:null};},canWrite:()=>false,safe:String}));await settle();
- const search=f.container.querySelector('[aria-label="搜索人员"]');search.value='missing';search.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();click(f.container,'搜索');await settle();assert.match(f.container.textContent,/没有找到相关人员/);assert.equal(f.container.querySelector('.ar-people-roster'),null);assert.ok(![...f.container.querySelectorAll('button')].some(node=>node.textContent==='下一页'));
+ const search=f.container.querySelector('[aria-label="搜索人员"]');search.value='missing';search.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();click(f.container,'搜索');await settle();assert.match(f.container.textContent,/没有找到相关人员/);assert.ok(f.container.querySelector('.ar-people-roster')===null);assert.ok(![...f.container.querySelectorAll('button')].some(node=>node.textContent==='下一页'));
  click(f.container,'清空搜索');await settle();assert.equal(search.value,'');assert.equal(calls.at(-1).query,'');assert.match(f.container.textContent,/客服同事/);
 });
 

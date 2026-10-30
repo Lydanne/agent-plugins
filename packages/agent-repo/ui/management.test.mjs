@@ -15,12 +15,12 @@ test('AgentRepo is a global management center and personnel is only one of its m
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  assert.match(f.container.textContent,/AgentRepo/);assert.match(f.container.textContent,/管理概览/);assert.equal(calls.length,6);
  const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体资料库','定时任务','审计','日志']);
- click(f.container,'打开实体资料库');await settle();assert.ok(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'));assert.equal(f.container.querySelector('[aria-label="人员库所属 Agent"]'),null);assert.match(f.container.textContent,/实体资料库/);
+ click(f.container,'打开实体资料库');await settle();assert.ok(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'));assert.ok(f.container.querySelector('[aria-label="人员库所属 Agent"]')===null);assert.match(f.container.textContent,/实体资料库/);
  assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-entities');
  click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
- click(f.container,'定时任务');await settle();assert.match(f.container.textContent,/暂无定时任务/);assert.equal(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'),null);
- const before=calls.length;click(f.container,'日志');await settle();assert.match(f.container.textContent,/暂无历史记录/);assert.equal(f.container.querySelector('[role=dialog],dialog'),null);assert.equal(calls[before].actionId,'projects-diagnosticHistory');assert.equal(calls.length,before+2);assert.equal(calls.at(-1).actionId,'projects-diagnosticSources');
- const refresh=[...f.container.querySelector('.ar-log-inline').querySelectorAll('button')].find(button=>button.textContent==='刷新日志');assert.ok(refresh);refresh.click();await settle();assert.equal(calls.at(-1).actionId,'projects-diagnosticHistory');
+ click(f.container,'定时任务');await settle();assert.match(f.container.textContent,/暂无定时任务/);assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]')===null);
+ const before=calls.length;click(f.container,'日志');await settle();assert.match(f.container.textContent,/暂无历史记录/);assert.ok(f.container.querySelector('[role=dialog],dialog')===null);assert.equal(calls[before].actionId,'projects-diagnosticHistory');assert.equal(calls.length,before+2);assert.equal(calls.at(-1).actionId,'projects-diagnosticSources');
+ const refresh=[...f.container.querySelector('.ar-logs-view').querySelectorAll('button')].find(button=>button.textContent==='刷新日志');assert.ok(refresh);refresh.click();await settle();assert.equal(calls.at(-1).actionId,'projects-diagnosticHistory');
  assert.equal(calls.some(call=>call.actionId==='projects-clearRepositoryLogs'),false);
 });
 test('management center retains its module across Agent switches and discards hidden module responses',async ()=>{
@@ -30,7 +30,7 @@ test('management center retains its module across Agent switches and discards hi
  select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();assert.equal(calls.at(-1).agentId,'other');assert.equal(calls.at(-1).sessionKey,'agent:other:agent-repo-entities');
  click(f.container,'概览');await settle();pending.resolve({ok:true,result:{people:[],total:99,nextOffset:null}});await settle();assert.match(f.container.textContent,/管理概览/);assert.ok(!f.container.textContent.includes('99 位同事'));
  view.update({...ctx,props:{section:'logs'}});await settle();assert.equal(f.container.querySelector('[aria-label="AgentRepo 功能模块"] [aria-current=page]').textContent,'日志');
- ctx.host.connection.canRead=false;ctx.notify();await settle();assert.ok(!f.container.querySelector('.ar-log-inline'));assert.match(f.container.textContent,/operator.read/);
+ ctx.host.connection.canRead=false;ctx.notify();await settle();assert.ok(!f.container.querySelector('.ar-logs-view'));assert.match(f.container.textContent,/operator.read/);
 });
 
 test('overview shows real scoped counts, partial failures and safe read-only refresh',async ()=>{
@@ -55,7 +55,7 @@ test('overview never publishes stale Agent results after switching Agent or losi
  assert.deepEqual([...f.container.querySelectorAll('.ar-metric strong')].map(node=>node.textContent),['—','—','—','—']);
  select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();assert.equal(f.container.querySelectorAll('.ar-metric strong')[1].textContent,'3');
  pending.resolve({ok:true,result:{total:999,stats:{}}});await settle();assert.ok(!f.container.textContent.includes('999'));
- ctx.host.connection.canRead=false;ctx.notify();await settle();assert.equal(f.container.querySelector('.ar-overview'),null);assert.match(f.container.textContent,/operator.read/);
+ ctx.host.connection.canRead=false;ctx.notify();await settle();assert.ok(f.container.querySelector('.ar-overview')===null);assert.match(f.container.textContent,/operator.read/);
 });
 
 test('module switches retain the management shell, navigation focus and consistent section headings',async ()=>{
@@ -65,7 +65,7 @@ test('module switches retain the management shell, navigation focus and consiste
  for(const [label,title] of [['项目与技能','项目与技能'],['Worker 任务','Worker 任务'],['实体资料库','实体资料库'],['定时任务','定时任务'],['审计','审计'],['日志','日志'],['概览','管理概览']]){
   const control=[...nav.querySelectorAll('button')].find(button=>button.textContent===label);control.focus();control.click();await settle();
   assert.equal(f.container.querySelector('.ar-management-header'),header);assert.equal(f.container.querySelector('.ar-management-nav'),nav);assert.equal(f.container.querySelector('.ar-management-body'),region);
-  assert.equal(f.window.document.activeElement,control);assert.equal(control.getAttribute('aria-current'),'page');assert.equal(control.getAttribute('aria-controls'),region.id);
+  assert.ok(f.window.document.activeElement===control);assert.equal(control.getAttribute('aria-current'),'page');assert.equal(control.getAttribute('aria-controls'),region.id);
   assert.equal(region.getAttribute('aria-label'),label+'内容');assert.equal(region.querySelector('.ar-section-heading h2').textContent,title);
   assert.equal(region.querySelectorAll('.ar-section-heading').length,1);
   const before=calls.length;control.click();await settle();assert.equal(calls.length,before,'selecting the active module must not reload data');
@@ -116,5 +116,5 @@ test('global and per-plan audit share a filtered read-only view and discard stal
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'审计');await settle();assert.equal(calls.at(-1).actionId,'projects-audit');assert.deepEqual(calls.at(-1).payload,{limit:25,offset:0});assert.match(f.container.textContent,/张三/);assert.match(f.container.textContent,/om_change/);assert.match(f.container.textContent,/群主会话/);
  click(f.container,'定时任务');await settle();f.container.querySelector('[aria-label="查看日报"]').click();await settle();click(f.container,'修改日志');await settle();assert.deepEqual(calls.at(-1).payload,{feature:'schedules',targetId:'plan',limit:25,offset:0});assert.equal(f.container.querySelector('[aria-label="对象 ID"]').disabled,true);assert.equal(f.container.querySelector('[aria-label="功能"]').disabled,true);assert.equal(calls.some(c=>c.actionId==='projects-scheduleManage'),false);
  click(f.container,'关闭');await settle();hold=true;click(f.container,'审计');await settle();select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();pending.resolve({ok:true,result:{records:[{targetName:'STALE_SECRET'}],total:1,nextOffset:null}});await settle();assert.ok(!f.container.textContent.includes('STALE_SECRET'));assert.equal(calls.at(-1).agentId,'other');
- ctx.host.connection.canRead=false;ctx.notify();await settle();assert.equal(f.container.querySelector('.ar-audit'),null);
+ ctx.host.connection.canRead=false;ctx.notify();await settle();assert.ok(f.container.querySelector('.ar-audit')===null);
 });

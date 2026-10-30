@@ -10,7 +10,7 @@ test('full page is Agent-wide without a conversation and supports statistics, fi
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../people-page.mjs')),calls=[];
  const ctx=host(async(method,args)=>{calls.push(args);return {ok:true,result:page};});ctx.host.sessions.selectedKey='';
  f.track(f.ui.mountPeoplePage(f.container,ctx));await settle();
- assert.equal(f.container.querySelector('dialog'),null);assert.match(f.container.textContent,/跨会话统一管理/);assert.match(f.container.textContent,/测试同事/);assert.match(f.container.textContent,/匹配人员/);
+ assert.ok(f.container.querySelector('dialog')===null);assert.match(f.container.textContent,/跨会话统一管理/);assert.match(f.container.textContent,/测试同事/);assert.match(f.container.textContent,/匹配人员/);
  assert.equal(calls[0].sessionKey,'agent:main:agent-repo-people');assert.equal(calls[0].agentId,'main');
  select(f.window,f.container,'账号关联状态','unknown');await settle();assert.equal(calls.at(-1).payload.giteaSource,'unknown');
  select(f.window,f.container,'资料完整度','email');await settle();assert.equal(calls.at(-1).payload.missing,'email');
@@ -24,14 +24,14 @@ test('Agent switch, permission loss, hiding and disposal cannot leak a late resp
  const view=f.track(f.ui.mountPeoplePage(f.container,ctx));select(f.window,f.container,'人员库所属 Agent','other');await settle();
  pending.resolve({ok:true,result:page});await settle();assert.match(f.container.textContent,/其他助手联系人/);assert.ok(!f.container.textContent.includes('测试同事'));assert.equal(calls.at(-1).sessionKey,'agent:other:agent-repo-people');
  ctx.host.connection.canRead=false;ctx.notify();await settle();assert.ok(!f.container.textContent.includes('其他助手联系人'));assert.match(f.container.textContent,/operator.read/);
- ctx.host.connection.canRead=true;ctx.host.connection.canWrite=false;ctx.notify();await settle();assert.equal(f.container.querySelector('[aria-label="编辑人员"]'),null);
+ ctx.host.connection.canRead=true;ctx.host.connection.canWrite=false;ctx.notify();await settle();assert.ok(f.container.querySelector('[aria-label="编辑人员"]')===null);
  view.update({...ctx,presented:false});await settle();assert.ok(!f.container.textContent.includes('其他助手联系人'));view.dispose();assert.equal(f.container.children.length,0);
 });
 test('global group sync selects only this Agent existing groups and never sends an arbitrary chat ID',async ()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../people-page.mjs')),calls=[];
  const ctx=host(async(method,args)=>{calls.push(args);if(args.actionId==='projects-peopleSyncInfo')return {ok:true,result:{available:true,accounts:[{accountId:'a'}]}};if(args.actionId==='projects-syncPeople')return {ok:true,result:{status:'running',saved:0,processed:0,discovered:0}};return {ok:true,result:page};});
  ctx.host.sessions.rows=[{key:'agent:main:feishu:group:oc_test',label:'验收群'},{key:'agent:other:feishu:group:oc_other',label:'其他 Agent 群'},{key:'agent:main:feishu:direct:ou_test'}];
- f.track(f.ui.mountPeoplePage(f.container,ctx));await settle();assert.equal(f.container.querySelector('[aria-label="同步本群成员"]'),null);
+ f.track(f.ui.mountPeoplePage(f.container,ctx));await settle();assert.ok(f.container.querySelector('[aria-label="同步本群成员"]')===null);
  const groups=f.container.querySelector('[aria-label="飞书同步来源"]');assert.equal(groups.options.length,2);
  select(f.window,f.container,'飞书同步来源','agent:main:feishu:group:oc_test');await settle();click(f.container,'同步所选群成员');await settle();
  const call=calls.find(call=>call.actionId==='projects-syncPeople');assert.equal(call.sessionKey,'agent:main:feishu:group:oc_test');assert.deepEqual(call.payload,{accountId:'a'});assert.equal(call.agentId,'main');

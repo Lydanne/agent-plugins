@@ -1,11 +1,9 @@
-# Control UI migration infrastructure
+# Shared Vue Control UI kit
 
-Vue 3 + TypeScript + shadcn-vue. The AgentRepo browser entry now uses this kit for the management shell, overview, Agent-wide Worker task management, audit and recycle views. The Worker sidebar and full task page also use Vue. Other AgentRepo features are still migrating. Production has not been deployed.
+Vue 3 + TypeScript + locally maintained shadcn-vue sources, used by every formal AgentRepo and AgentWorker UI entry. Source provenance and adaptations are in THIRD_PARTY_NOTICES.md and LICENSE.shadcn-vue.
 
-`mountVueView(Component)` adapts the public mount/update/dispose contract. Inject host snapshots with `useHostContext()` and the per-view portal target with `useOverlayTarget()`. Feature components must invalidate requests on target/permission changes and release timers and diagnostic leases when hidden; these remain domain responsibilities.
+`mountVueView(Component)` adapts the public mount/update/dispose contract. Inject reactive host snapshots with `useHostContext()` and the per-view portal root with `useOverlayTarget()`. Feature components invalidate requests on target/permission changes and release timers and diagnostic leases when hidden. Raw Reka/shadcn primitives require controlled business state; the shared Dialog, Popover and ActionMenu additionally handle host visibility and scope changes.
 
-Import `theme.css` from each browser entry. Utilities use the `ocp:` prefix, without global Preflight. `buildControlUi({root,entry})` creates standalone content-hashed ESM/CSS and updates the manifest; build in an isolated checkout if production loads the source directory. Button provenance and license are in THIRD_PARTY_NOTICES.md.
+Import `theme.css` once from each browser entry. Utilities use `ocp:` without global Preflight. Independent Vue bundles use a shared per-view ID sequence to avoid accessibility ID collisions. Every portal explicitly targets its view's themed overlay root.
 
-Remaining: complete components/lifecycle utilities; migrate remaining AgentRepo project/skill/workspace, entities/personnel, schedule and log modules and compatibility entries; finish UI test migration and expand Chromium coverage; remove old renderers. No production entry switch, deployment or restart has occurred.
-
-`mountVueView` accepts an optional sidebar density. Generated Vue accessibility IDs use a shared per-view sequence so independent plugin bundles do not collide. ActionMenu and Tabs compose the same Reka primitives as shadcn-vue, with explicit portal targets and the host theme.
+`buildControlUi({root,entry})` builds a self-contained content-hashed ESM/CSS directory, emits complete THIRD_PARTY_LICENSES.txt from the actual bundled dependency graph, and updates the public manifest entry/styles. No CDN or cross-plugin runtime dependency is required. Build in an isolated checkout when production loads source directly. See ../../docs/control-ui-vue-migration.md for the feature checklist and acceptance boundary.

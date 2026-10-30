@@ -49,3 +49,11 @@ test('Agent selection preserves the host method receiver and rejects late previo
  await page.evaluate(()=>{(window as any).fixture.setPresented(true);});await expect(page.getByRole('heading',{name:'审计',exact:true})).toBeVisible();
  await page.evaluate(()=>{(window as any).fixture.setConnection({canRead:false});});await expect(page.getByRole('alert')).toContainText('operator.read');await expect(page.locator('.ar-audit')).toHaveCount(0);expect(errors).toEqual([]);
 });
+
+test('a native host modal stays interactive above a plugin modal',async({page})=>{
+ await ready(page);await page.getByRole('button',{name:'打开回收站'}).click();const plugin=page.getByRole('dialog',{name:'回收站',exact:true});await expect(plugin).toBeVisible();
+ await page.evaluate(()=>{const dialog=document.createElement('dialog');dialog.id='native-host';dialog.setAttribute('aria-label','Host confirmation');const button=document.createElement('button');button.textContent='Host close';button.onclick=()=>dialog.close();dialog.append(button);document.body.append(dialog);dialog.showModal();});
+ const host=page.getByRole('dialog',{name:'Host confirmation'});await expect(host).toBeVisible();await host.getByRole('button',{name:'Host close'}).click();await expect(host).toBeHidden();await expect(plugin).toBeVisible();
+ await page.evaluate(()=>{(document.getElementById('native-host') as HTMLDialogElement).showModal();});await page.keyboard.press('Escape');await expect(host).toBeHidden();await expect(plugin).toBeVisible();
+ await plugin.getByRole('button',{name:'关闭',exact:true}).click();await expect(plugin).toBeHidden();await expect.poll(()=>page.evaluate(()=>document.body.style.pointerEvents)).toBe('');await expect(page.getByRole('button',{name:'打开回收站'})).toBeFocused();
+});

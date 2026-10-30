@@ -9,3 +9,9 @@ Dialog uses the shadcn-vue Dialog component structure and Reka primitives, adapt
 ActionMenu and Tabs are local compositions of Reka UI primitives following the shadcn-vue component pattern, adapted for namespaced styles and per-view portal targets. Button defaults to type=button to avoid accidental form submission.
 
 Input, Badge and NativeSelect sources: the same shadcn-vue revision, under `apps/v4/registry/new-york-v4/ui/{input,badge,native-select}` (MIT). Local changes: utility prefix, host-driven dark theme, local cn import, and a local inline chevron and typed event tuple for NativeSelect.
+
+Popover is a local Reka composition following the shadcn-vue pattern, with an explicit instance portal, collision handling and host lifecycle cleanup.
+
+Checkbox, Switch, Tooltip, Table, Pagination, Card, Skeleton, Empty, Alert, Collapsible, AlertDialog, Sheet, Select and DropdownMenu sources: the same pinned shadcn-vue revision, under the corresponding `apps/v4/registry/new-york-v4/ui` directories (MIT). Local adaptations namespace utility classes, inherit the host theme, use local utility imports and geometric icon replacements, and direct portals to the current view's overlay root. Table forwards accessibility attributes to the table element. Raw primitives require their owning feature to manage controlled state and lifecycle.
+
+Each plugin build generates THIRD_PARTY_LICENSES.txt from the packages present in the actual bundled module graph, including their complete license and notice files.
