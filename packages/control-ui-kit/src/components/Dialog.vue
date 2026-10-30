@@ -3,7 +3,7 @@ import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDe
 import {useHostContext,useOverlayTarget} from '../host';
 import {Button} from './button';
 import {computed,useId,watch} from 'vue';
-const props=defineProps<{open:boolean;title:string;description?:string;preventClose?:boolean;showClose?:boolean;contentClass?:string}>();
+const props=withDefaults(defineProps<{open:boolean;title:string;description?:string;preventClose?:boolean;showClose?:boolean;contentClass?:string}>(),{showClose:true});
 function changeOpen(value:boolean){if(!props.preventClose)emit('update:open',value);}
 function guardClose(event:Event){if(props.preventClose)event.preventDefault();}
 function escape(event:KeyboardEvent){emit('escape',event);guardClose(event);}

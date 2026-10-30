@@ -676,9 +676,9 @@
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/9af188c0d070221e3454/index.js",
+    "entry": "dist/control-ui/da685c4bd8ad3d28a89b/index.js",
     "styles": [
-      "dist/control-ui/9af188c0d070221e3454/index.css"
+      "dist/control-ui/da685c4bd8ad3d28a89b/index.css"
     ]
   },
   "skills": [

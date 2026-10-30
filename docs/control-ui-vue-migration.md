@@ -9,6 +9,9 @@ This tracks the complete accepted migration, not a reduced completion target. Wo
 - Agent-wide Worker task table, filters, pagination, timing, notification warnings and exact task links.
 - Worker sidebar and full task page: model-scoped session list, four detail views, source reader, tool/timeline rendering and exact-scope single/batch deletion. Existing 21 panel behaviors and actual public registration/RPC routing now run under Vitest, plus focused component tests.
 - Entities and personnel, including organization/group sync and account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries. Existing 15 behavior cases run in Vitest; six Chromium cases cover four widths, standalone writes, automatic directory status, late Agent responses and cleanup.
+- Skills and associated CLI maintenance: descriptions, managed associations, update-policy drafts, confirmation, version/revision protection, stable retry requests, maintenance history and diagnostics.
+- Workspace configuration: lazy loading, capacity/occupancy, revision-protected saves, audit, focus return and stale-response isolation.
+- Native schedule management editor: inherited source scope, group/system plans, original request/permission checks, daily/custom/one-time schedule drafts, delivery-mode confirmation and truthful admission outcomes.
 - Audit filters, paging, actor provenance, before/after differences and unknown outcomes.
 - Recycle dialog, stable request IDs, revision checks, retention confirmation, last-page correction and readonly behavior.
 
@@ -16,8 +19,8 @@ The temporary `CompatSection.vue` boundary is still used by the remaining manage
 
 ## Still required for full completion
 
-- Projects, skills/CLI maintenance, workspace configuration, subagent definitions and the project sidebar.
-- Schedules, native/system task history, settings, audit and existing confirmation/admission semantics.
+- Projects shell, subagent definitions and the project sidebar.
+- Native/system task history and settings views in the schedule directory. The management editor is converted; the legacy history dialog still needs removal.
 - Historical/live diagnostics including explicit lease acquisition, release, virtualized logs, search, export and partial-source failures.
 - Complete the shared shadcn-vue controls; migrate UI tests to Vitest; remove temporary bridges and obsolete renderers/styles.
 - Expand real Chromium acceptance to every migrated surface and operation, independent installs and cross-plugin lifecycle.
@@ -31,3 +34,5 @@ The Chromium harness serves actual built JS/CSS and manifests from the isolated 
 The browser run exposed and fixed a `process.env.NODE_ENV` library-build reference and the need to serialize Vue proxy payloads at the RPC boundary. Host snapshots bind methods to their original receiver.
 
 Worker Chromium cases additionally cover all four views at 320/400/720/1280px, menu collision bounds, keyboard tabs, clipboard permission success, raw message dialogs, workspace metadata, partial batch failure, original scope/revision payloads, permission loss during an in-flight deletion and disposal. Vue app ID prefixes are shared-counter unique across independent plugin bundles; each sidebar view has its own flex/scroll root and themed portal.
+
+Project integration tests now run in Vitest (18 cases); the real SDK/session-action ownership contract remains a separate Node test. Workspace (5), maintenance (5), and schedule manager (21) behavior cases have migrated. Chromium adds policy confirmation/retry and workspace saving at four widths, and native schedule editor acceptance. Maintenance detail focus changes only when the selected identity changes, preserving search focus and caret during refresh.

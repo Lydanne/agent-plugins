@@ -96,7 +96,10 @@
     "ui/PeoplePage.vue",
     "ui/PeopleDialog.vue",
     "ui/EntitiesView.vue",
-    "graph-sync.mjs"
+    "graph-sync.mjs",
+    "ui/WorkspacePool.vue",
+    "ui/SkillMaintenance.vue",
+    "ui/ScheduleManager.vue"
   ],
   "engines": {
     "node": ">=24.19.0"
