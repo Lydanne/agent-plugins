@@ -24,7 +24,8 @@
 ## 验证结果
 
 - `pnpm typecheck`、`pnpm build`：通过，公开 SDK 类型检查通过。
-- 在全命令独立 `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH` 中执行 `pnpm test`：2,487 项通过。末次对话阅读器修复后，重新执行 Worker 包测试：Node 424、Vue 33 通过；其余未变源码复用有效结果。当前有效断言合计 2,488 项（API 41、AllDecision 55、共享 UI 8、Feishu 1,507、AgentRepo Node 316 / Vue 104、Worker Node 424 / Vue 33）。
+- 在全命令独立 `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH` 中执行 `pnpm test`：2,487 项通过。末次对话阅读器修复后，重新执行 Worker 包测试：Node 424、Vue 33 通过；其余未变源码复用有效结果。当前有效断言合计 2,493 项（API 41、AllDecision 55、共享 UI 8、Feishu 1,512、AgentRepo Node 316 / Vue 104、Worker Node 424 / Vue 33）。
+- 合并远端独立的 Feishu 文档处理修复后，再次通过类型检查、构建及 Feishu 1,512 项测试；其余源码和两个 UI 构建哈希未变化，复用以上有效结果。
 - `pnpm test:ui:e2e`：实际构建产物 Chromium **47/47** 通过，含原四档宽度、明暗主题、删除、确认、日志，以及新增宿主切换和 ShadowRoot 用例。
 - 两个 `pnpm pack` 归档核对通过：资源与当前 manifest 一致、只有当前哈希目录、不包含测试文件，完整第三方许可随包附带。
 

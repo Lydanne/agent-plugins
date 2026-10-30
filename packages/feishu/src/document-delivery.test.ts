@@ -12,7 +12,7 @@ vi.mock("./accounts.js",()=>({resolveFeishuRuntimeAccount:mocks.account}));
 vi.mock("./docx.js",()=>({createDoc:mocks.create,writeDoc:mocks.write}));
 vi.mock("./runtime.js",()=>({getFeishuRuntime:()=>({media:{loadWebMedia:mocks.load}})}));
 vi.mock("./client.js",()=>({createFeishuClient:()=>({im:{message:{create:mocks.messageCreate,reply:mocks.messageReply,get:mocks.messageGet,patch:mocks.messagePatch}},docx:{documentBlockChildren:{create:mocks.childrenCreate,get:mocks.childrenGet},documentBlock:{patch:mocks.patch}},drive:{media:{uploadAll:mocks.upload},permissionMember:{create:mocks.permission}}})}));
-import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient,reportDocumentTitle,normalizeDocumentHeadings} from "./document-delivery.js";
+import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient,reportDocumentTitle,normalizeDocumentHeadings,shiftDocumentHeadings} from "./document-delivery.js";
 import {withFeishuSendContext} from "./send-context.js";
 import {createFeishuClient} from "./client.js";
 import {sendMessageFeishu,sendCardFeishu,editMessageFeishu} from "./send.js";
@@ -117,13 +117,15 @@ it('does not rewrite fenced examples sharing the same path as the uploaded repor
  expect(result?.text).toBe(`结论\n[完整报告](https://feishu.cn/docx/doc-test)\n${example}`);
  expect(mocks.load).toHaveBeenCalledOnce();expect(mocks.write.mock.calls[0][2]).toContain(example);
 });
-it('publishes one entry for multiple reports while retaining both full report bodies',async()=>{
+it('transcribes only the first report and keeps other reports as original attachments in the same document',async()=>{
  mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.endsWith('report.md')?'# Worker evidence':'# Host audit'),fileName:path.split('/').at(-1)}));
  const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'核验总结\n\n[完整报告](/workspace/report.md)\n\n[完整报告](/workspace/completion.md)'});
  expect(result?.text).toBe('核验总结\n\n[完整报告](https://feishu.cn/docx/doc-test)');
  expect(mocks.load).toHaveBeenCalledTimes(2);
  expect(mocks.write.mock.calls[0][2]).toContain('# Worker evidence');
- expect(mocks.write.mock.calls[0][2]).toContain('# Host audit');
+ expect(mocks.write.mock.calls[0][2]).not.toContain('# Host audit');
+ expect(mocks.create).toHaveBeenCalledOnce();expect(mocks.upload.mock.calls.map(([r])=>r.data.file_name)).toEqual(['report.md','completion.md']);
+ expect(mocks.upload.mock.calls[1][0].data.file.toString()).toBe('# Host audit');
 });
 it('converts encoded local links while leaving prose and inline code paths untouched',async()=>{
  const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'资料：[空格报告](/workspace/my%20report.md)，证据 `./evidence.csv`；原件 /workspace/source.txt。'});
@@ -599,8 +601,8 @@ it('transcribes and uploads an original report and its staged media copy only on
  const input={cfg:{},to:'chat:oc_target',text:'# 【Runtime 错误】\nBrief SDK result\n# 【作品错误】\nBrief work result\n[完整报告](/workspace/page-error-full.md)\n[附件](/outbound/page-error-full---651c2eb7-d441-49cc-9100-7f6d6d3f242a.md)',mediaUrls:['/outbound/page-error-full---651c2eb7-d441-49cc-9100-7f6d6d3f242a.md']};
  const result=await prepareFeishuDocumentDelivery(input);const body=mocks.write.mock.calls[0][2];
  expect(mocks.load).toHaveBeenCalledTimes(2);expect(mocks.upload).toHaveBeenCalledOnce();expect(mocks.upload.mock.calls[0][0].data.file_name).toBe('page-error-full.md');
- expect(body.match(/^# 摘要$/gm)).toHaveLength(1);expect(body.match(/^# 【Runtime 错误】$/gm)).toHaveLength(1);expect(body.match(/^# 【作品错误】$/gm)).toHaveLength(1);
- expect(body).toContain('## 【Runtime 错误】\nBrief SDK result');expect(body).toContain('## 核验\nEvidence');expect(body).not.toContain('# page-error-full.md');expect(body.match(/\| 1 \| test \|/g)).toHaveLength(1);
+ expect(body.match(/^# 摘要$/gm)).toHaveLength(1);expect(body.match(/^## 【Runtime 错误】$/gm)).toHaveLength(2);expect(body.match(/^## 【作品错误】$/gm)).toHaveLength(2);
+ expect(body).toContain('## 【Runtime 错误】\nBrief SDK result');expect(body).toContain('#### 核验\nEvidence');expect(body).toContain('# page-error-full.md');expect(body.match(/\| 1 \| test \|/g)).toHaveLength(1);
  expect(result?.text).toContain('[完整报告](https://feishu.cn/docx/doc-test)');expect(result?.text).toContain('[附件](https://feishu.cn/docx/doc-test)');expect(result?.text).not.toContain('/outbound/');
  await prepareFeishuDocumentDelivery(input);expect(mocks.write).toHaveBeenCalledOnce();expect(mocks.upload).toHaveBeenCalledOnce();
 });
@@ -613,7 +615,7 @@ it('deduplicates same-name same-content references and counts only unique attach
 it('keeps same-named different-content reports and different named source files independently',async()=>{
  mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.startsWith('/first')?'# First report':'# Other report'),fileName:path.split('/').at(-1)}));
  await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:['/first/report.md','/second/report.md','/second/other.md']});
- expect(mocks.upload).toHaveBeenCalledTimes(3);const body=mocks.write.mock.calls[0][2];expect(body).toContain('# report.md\n\n## First report');expect(body).toContain('## Other report');expect(body).toContain('# other.md');
+ expect(mocks.upload).toHaveBeenCalledTimes(3);const body=mocks.write.mock.calls[0][2];expect(body).toContain('# First report');expect(body).not.toContain('# Other report');expect(mocks.upload.mock.calls.map(([r])=>r.data.file_name)).toEqual(['report.md','report.md','other.md']);
 });
 it('deduplicates the staged copy before nested discovery, resolving report evidence from its original directory',async()=>{
  mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.endsWith('.csv')?'id,value\n1,test':'# Report\n[Evidence](./evidence.csv)'),fileName:path.endsWith('.md')?'report.md':'evidence.csv'}));
@@ -646,4 +648,39 @@ it('uploads only one original attachment after fallback conversion for duplicate
  mocks.load.mockResolvedValue({buffer:Buffer.from('# Report'),fileName:'report.md'});mocks.write.mockRejectedValue(Error('converter failed'));
  const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[original](/workspace/report.md) [copy](/outbound/report.md)'});
  expect(mocks.upload).toHaveBeenCalledOnce();expect(result?.text).toContain('正文转换未完成');expect(result?.text).toContain('[copy](https://feishu.cn/docx/doc-test)');
+});
+
+it('does not expand secondary Markdown or read its embedded files, while primary evidence remains attached',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path==='/workspace/primary.md'?'# Primary\n[Main evidence](./primary.csv)':path==='/workspace/secondary.md'?'# Secondary\n[Other evidence](/denied/secondary.csv)':'id,value\n1,ok'),fileName:path.split('/').at(-1)}));
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'总结 [主报告](/workspace/primary.md) [补充报告](/workspace/secondary.md)'});
+ expect(mocks.load.mock.calls.map(([path])=>path)).toEqual(['/workspace/primary.md','/workspace/secondary.md','/workspace/primary.csv']);
+ expect(mocks.upload.mock.calls.map(([r])=>r.data.file_name)).toEqual(['primary.md','secondary.md','primary.csv']);
+ const body=mocks.write.mock.calls[0][2];expect(body).toContain('# Primary');expect(body).not.toContain('# Secondary');expect(body).not.toContain('id,value');
+ expect(mocks.upload.mock.calls[1][0].data.file.toString()).toContain('/denied/secondary.csv');
+});
+it('transcribes the first available readable document after missing files and binary evidence',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>{
+  if(path.endsWith('missing.md'))throw Object.assign(Error('missing'),{code:'ENOENT'});
+  return {buffer:path.endsWith('.zip')?Buffer.from([0xff,0xfe]):Buffer.from(path.endsWith('first.md')?'# First':'# Second'),fileName:path.split('/').at(-1)};
+ });
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:['/workspace/missing.md','/workspace/evidence.zip','/workspace/first.md','/workspace/second.md']});
+ expect(mocks.upload).toHaveBeenCalledTimes(3);const body=mocks.write.mock.calls[0][2];expect(body).toContain('# First');expect(body).not.toContain('# Second');
+});
+it('keeps a nested Markdown document as an attachment without transcribing it or expanding its own references',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.endsWith('primary.md')?'# Primary\n[Appendix](./appendix.md)':'# Appendix\n[Hidden](/denied/hidden.csv)'),fileName:path.split('/').at(-1)}));
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[Report](/workspace/primary.md)'});
+ expect(mocks.load.mock.calls.map(([path])=>path)).toEqual(['/workspace/primary.md','/workspace/appendix.md']);expect(mocks.upload).toHaveBeenCalledTimes(2);
+ const body=mocks.write.mock.calls[0][2];expect(body).toContain('# Primary');expect(body).not.toContain('# Appendix');
+});
+
+it('uses exactly summary, primary filename and attachments as H1 headings for multiple documents',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.endsWith('primary.md')?'# Source H1\n## Source H2\n### Source H3\n##### Source H5\nBody':'# SECONDARY_BODY_MUST_NOT_EXPAND'),fileName:path.split('/').at(-1)}));
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'# 总结分类\n已完成\n[主报告](/workspace/primary.md) [附录](/workspace/appendix.md)'});
+ const body=mocks.write.mock.calls[0][2];expect(body.match(/^# .+$/gm)).toEqual(['# 摘要','# primary.md','# 附件']);
+ expect(body).toContain('## Source H1\n### Source H2\n#### Source H3\n###### Source H5');expect(body).not.toContain('SECONDARY_BODY_MUST_NOT_EXPAND');expect(mocks.upload).toHaveBeenCalledTimes(2);
+});
+it('shifts report headings by exactly one level while retaining code and quoted content',()=>{
+ const code='```md\n# sample\n```\n\n> # quoted';
+ expect(shiftDocumentHeadings('# Title\n### Skipped level\n\n'+code)).toBe('## Title\n#### Skipped level\n\n'+code);
+ expect(shiftDocumentHeadings('Title\n====\n\n## Details')).toBe('## Title\n\n### Details');
 });
