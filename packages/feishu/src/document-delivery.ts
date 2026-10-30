@@ -27,15 +27,27 @@ function replaceLocalReferences(text:string,refs:Reference[]):string {
 
 /** Normalize report outlines without interpreting code, tables or quoted examples as headings. */
 export function normalizeDocumentHeadings(markdown:string,minDepth=1):string {
+ const levels:number[]=[];
+ return rewriteDocumentHeadings(markdown,depth=>{
+  while(levels.length && levels[levels.length-1]>=depth)levels.pop();
+  levels.push(depth);
+  return minDepth+levels.length-1;
+ });
+}
+
+/** A filename is H1; preserve each source heading's depth one level below it. */
+export function shiftDocumentHeadings(markdown:string):string {
+ return rewriteDocumentHeadings(markdown,depth=>depth+1);
+}
+
+function rewriteDocumentHeadings(markdown:string,headingDepth:(depth:number)=>number):string {
  const tree=fromMarkdown(markdown);
- const levels:number[]=[],edits:{start:number;end:number;text:string}[]=[];
+ const edits:{start:number;end:number;text:string}[]=[];
  for(const node of tree.children) {
   if(node.type!=="heading")continue;
   const start=node.position?.start.offset,end=node.position?.end.offset;
   if(start===undefined || end===undefined)continue;
-  while(levels.length && levels[levels.length-1]>=node.depth)levels.pop();
-  levels.push(node.depth);
-  const depth=Math.min(6,minDepth+levels.length-1);
+  const depth=Math.min(6,headingDepth(node.depth));
   const source=markdown.slice(start,end);
   const content=/^ {0,3}#{1,6}(?:\s|$)/.test(source)
    ? source.replace(/^ {0,3}#{1,6}[\t ]*/,"")
@@ -320,6 +332,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   const mediaLocalRoots = params.mediaLocalRoots ?? config?.localRoots ??
     (params.agentId ? getAgentScopedMediaLocalRoots(params.cfg, params.agentId) : undefined);
   let total = 0;
+  let primaryFilePath:string|undefined;
   const files = [];
   const uploadedPaths=new Set<string>(),fileIdentities=new Set<string>();
   const skipped:{path:string;size:number}[]=[];
@@ -361,19 +374,22 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
     let content:string|undefined;
     if(textual.has(extname(name).toLowerCase()) || bundleSql)try{content=new TextDecoder("utf-8",{fatal:true}).decode(loaded.buffer);}catch{}
     if(bundleSql && content===undefined)throw Object.assign(Error("SQL source is not UTF-8"),{code:"DOCX_SQL_ENCODING"});
-    if(content && /\.m(?:d|arkdown)$/i.test(name) && resolveLocalFilePath(input,workspaceDir)) {
+    if(content!==undefined && primaryFilePath===undefined)primaryFilePath=input;
+    // Only the primary document supplies prose and discovers embedded evidence.
+    // Secondary documents are opaque original attachments, not more body sections.
+    if(content && primaryFilePath===input && /\.m(?:d|arkdown)$/i.test(name) && resolveLocalFilePath(input,workspaceDir)) {
       const nested=findLocalFileReferences(content,dirname(input));
       for(const ref of nested)if(!inputs.includes(ref.path))inputs.push(ref.path);
       content=replaceLocalReferences(content,nested);
     }
-    files.push({path:input,buffer:loaded.buffer,name,content});
+    files.push({path:input,buffer:loaded.buffer,name,content:primaryFilePath===input || bundleSql?content:undefined});
   }
   let markdown = replaceLocalReferences(params.text ?? "",refs);
   if(!files.length && !skipped.length)return {text:markdown || "引用的本地文件不存在，已跳过上传。",mediaUrls:[]};
-  if(markdown.trim())markdown="# 摘要\n\n"+normalizeDocumentHeadings(markdown,2);
+  markdown="# 摘要\n\n"+(markdown.trim()?normalizeDocumentHeadings(markdown,2):"以下为本次交付的报告和附件。");
   const title = reportDocumentTitle(files[0]?.name ?? basename(skipped[0].path),config?.titleTemplate,params.workerReport);
   let sqlBundle = "";
-  const singleMarkdown=files.filter(file=>file.content!==undefined).length===1 && files.some(file=>/\.m(?:d|arkdown)$/i.test(file.name));
+  if(bundleSql && files.length)markdown+="\n\n# sql-sources.md";
   for (const file of files) {
     if(file.content===undefined)continue;
     const heading=file.name.replace(/([\\`*_\[\]<>#])/g,"\\$1");
@@ -381,18 +397,16 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       let fenceLength=3;
       for(const match of file.content.matchAll(/`+/g))fenceLength=Math.max(fenceLength,match[0].length+1);
       const fence="`".repeat(fenceLength);
-      const section=`\n\n## ${heading}\n\n${fence}sql\n${file.content}\n${fence}`;
+      const section=`\n\n${bundleSql?"##":"#"} ${heading}\n\n${fence}sql\n${file.content}\n${fence}`;
       if(textual.has(".sql"))markdown+=section;sqlBundle+=section;
     }
-    else if (/\.m(?:d|arkdown)$/i.test(file.name)) markdown += singleMarkdown
-      ? `\n\n${normalizeDocumentHeadings(file.content)}`
-      : `\n\n# ${heading}\n\n${normalizeDocumentHeadings(file.content,2)}`;
-    else markdown += `\n\n## ${heading}\n\n`+file.content.split(/\r?\n/).map(line=>line.replace(/([\\`*_\[\]<>#])/g,"\\$1")).join("\n");
+    else if (/\.m(?:d|arkdown)$/i.test(file.name)) markdown += `\n\n# ${heading}\n\n${shiftDocumentHeadings(file.content)}`;
+    else markdown += `\n\n# ${heading}\n\n`+file.content.split(/\r?\n/).map(line=>line.replace(/([\\`*_\[\]<>#])/g,"\\$1")).join("\n");
   }
   const attachments=bundleSql && files.length ? [{name:"sql-sources.md",buffer:Buffer.from(`# SQL 原文汇总（${files.length} 份）\n${sqlBundle}`,"utf8")}] : files;
   if(bundleSql && attachments.some(file=>file.buffer.length>maxBytes))throw Object.assign(Error("SQL bundle exceeds attachment budget"),{code:"DOCX_SQL_BUNDLE_SIZE"});
   const skippedNotice=skippedAttachmentNotice(skipped);
-  markdown+=skippedNotice;
+  markdown+="\n\n# 附件"+skippedNotice;
   // This expanded body belongs only in the document. Upload failure must never
   // turn a quoted report, source file or role manual into additional chat prose.
   const exceedsTextLimit=markdown.length > (config?.maxTextChars ?? 200000);
