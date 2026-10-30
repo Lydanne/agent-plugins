@@ -7,12 +7,13 @@ export function useOverlayTarget(){const target=inject(overlayKey);if(!target)th
 function snapshotWithMethods<T extends object>(value:T):T{
  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,typeof item==='function'?item.bind(value):item])) as T;
 }
-export function mountVueView(component:Component):ControlUiView{
+export function mountVueView(component:Component,options:{density?:'sidebar'|'page'}={}):ControlUiView{
  return (container,initial)=>{
   let current=initial,disposed=false;
   const document=container.ownerDocument;
   const root=document.createElement('div'),overlay=document.createElement('div');
-  root.dataset.ocpUi='';overlay.dataset.ocpUi='';overlay.dataset.ocpOverlay='';
+  root.dataset.ocpViewRoot='';root.dataset.ocpUi='';overlay.dataset.ocpUi='';overlay.dataset.ocpOverlay='';
+  if(options.density){root.dataset.ocpDensity=options.density;overlay.dataset.ocpDensity=options.density;}
   container.append(root);document.body.append(overlay);
   const snapshot=()=>({...current,host:{...snapshotWithMethods(current.host),connection:{...current.host.connection},agents:snapshotWithMethods(current.host.agents),sessions:snapshotWithMethods(current.host.sessions)},props:{...current.props}});
   const context=shallowRef(snapshot());
@@ -24,6 +25,13 @@ export function mountVueView(component:Component):ControlUiView{
   };
   const update=(next:ControlUiViewContext)=>{if(disposed)return;current=next;context.value=snapshot();syncTheme();};
   const feature=createApp(component);
+  // Vue IDs are application-local. Plugin bundles may have independent Vue runtimes.
+  const sequenceKey=Symbol.for('openclaw-plugins.control-ui-view-sequence.v1');
+  const registry=globalThis as unknown as Record<symbol,unknown>;
+  const previous=registry[sequenceKey];
+  const sequence=typeof previous==='number'&&Number.isSafeInteger(previous)?previous+1:1;
+  registry[sequenceKey]=sequence;feature.config.idPrefix='ocp-'+sequence;
+
   feature.provide(contextKey,context);feature.provide(overlayKey,overlay);
   let unsubscribe=()=>{};
   const dispose=()=>{if(disposed)return;disposed=true;unsubscribe();observer.disconnect();initial.signal.removeEventListener('abort',dispose);feature.unmount();overlay.remove();root.remove();};

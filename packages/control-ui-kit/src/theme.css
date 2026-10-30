@@ -26,3 +26,6 @@
 }
 [data-ocp-overlay]{position:fixed;inset:0;z-index:1000;pointer-events:none;}
 [data-ocp-overlay]>*{pointer-events:auto;}
+
+[data-ocp-ui][data-ocp-density=sidebar]{--ocp-primary:#557a91;font-size:12px;}
+[data-ocp-view-root][data-ocp-density=sidebar]{display:flex;flex-direction:column;flex:1 1 0%;min-height:0;min-width:0;width:100%;height:100%;}

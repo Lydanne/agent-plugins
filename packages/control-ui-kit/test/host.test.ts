@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
-import {defineComponent,h,nextTick} from 'vue';
+import {defineComponent,h,nextTick,useId} from 'vue';
 import type {ControlUiViewContext} from 'openclaw/plugin-sdk/control-ui';
 import {mountVueView,useHostContext,useOverlayTarget} from '../src/host';
 import {Button} from '../src/components/button';
@@ -46,4 +46,12 @@ it('portals dialogs outside clipped containers and closes on hiding the host',as
  expect(dialog.textContent).toContain('确认操作');expect(f.container.contains(dialog)).toBe(false);
  view.update?.({...f.ctx,presented:false});await nextTick();expect(close).toHaveBeenCalledWith(false);
  view.dispose?.();expect(document.querySelector('[role="dialog"]')).toBeNull();f.container.remove();
+});
+
+it('keeps generated accessibility IDs unique across mounted plugin apps',()=>{
+ const a=fixture(),b=fixture();
+ const component=defineComponent({setup(){const id=useId();return ()=>h('label',{id},'字段');}});
+ const av=mountVueView(component)(a.container,a.ctx)!,bv=mountVueView(component)(b.container,b.ctx)!;
+ expect(a.container.querySelector('label')!.id).not.toBe(b.container.querySelector('label')!.id);
+ av.dispose?.();bv.dispose?.();a.container.remove();b.container.remove();
 });

@@ -11,7 +11,9 @@
   "description": "Local Codex CLI delegation with Agent Repo project and repository skill routing",
   "scripts": {
     "build": "node --check source-revocations.mjs && node --check execution-supervisor.mjs && node --check task-service/store.mjs && node --check task-service/service.mjs && node --check adapters/automation.mjs && node --check hermes-templates.mjs && node --check task-queues.mjs && node --check workspace-runtime.mjs && node --check collaboration.mjs && node --check scheduled-status.mjs && node ../../scripts/build-agent-repo-api.mjs && node --check index.mjs && node --check jobs.mjs && node --check worker.mjs && node --check task-report.mjs && node --check source-tasks.mjs && node --check source-attachments.mjs && node --check diagnostics.mjs && node --check skill-refresh.mjs && node --check memory-context.mjs && node --check experience.mjs && node --check completion.mjs && node --check context-request.mjs && node --check main-capability-skill.mjs && node --check plugin-environment.mjs && node --check question-bridge.mjs && node --check locks.mjs && node --check dispatch-policy.mjs && node --check configuration.mjs && node config-schema.mjs && node --check session-inspector.mjs && node --check session-deletion.mjs && node --check collaboration-diagnostics.mjs && node --check agent-task-inspector.mjs && node build-ui.mjs && node --check repository-scope.mjs && node --check project-binding.mjs && node --check diagnostic-source.mjs",
-    "test": "node --test *.test.mjs task-service/*.test.mjs"
+    "test": "node --test *.test.mjs task-service/*.test.mjs && pnpm run test:ui",
+    "test:ui": "vitest run --config vitest.ui.config.ts",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.ui.json"
   },
   "files": [
     "timing.mjs",
@@ -72,7 +74,9 @@
     "migrate-model-config.mjs",
     "dist/worker-source-api.mjs",
     "source-revocations.mjs",
-    "execution-supervisor.mjs"
+    "execution-supervisor.mjs",
+    "ui",
+    "ui/WorkerPanel.vue"
   ],
   "engines": {
     "node": ">=24.19.0"

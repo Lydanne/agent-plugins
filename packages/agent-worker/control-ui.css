@@ -126,8 +126,6 @@
 
 .cq-panel .cq-original-button{font-size:9px;padding:2px 5px;border-color:#8882;color:#827b73;white-space:nowrap;flex:none}
 .cq-message-heading{flex-wrap:wrap}
-.cq-raw-dialog{width:min(760px,calc(100vw - 32px));height:min(780px,calc(100dvh - 48px));max-width:calc(100vw - 32px);max-height:calc(100dvh - 48px);padding:0;border:1px solid #8883;border-radius:12px;box-shadow:0 16px 60px #0003;overflow:hidden;background:var(--bg,#faf9f7);color:var(--text,#3b3834)}
-.cq-raw-dialog::backdrop{background:#0005;backdrop-filter:blur(2px)}
 .cq-panel.cq-modal-panel{padding:16px 20px;container-type:normal}
 .cq-modal-panel header{flex:none;gap:16px}
 .cq-modal-panel>.cq-muted{overflow-wrap:anywhere;flex:none}
@@ -136,7 +134,7 @@
 .cq-modal-body .cq-source-code{max-height:none}
 .cq-panel .cq-modal-source>summary{display:none}
 .cq-modal-body .cq-source-toolbar{position:sticky;top:0;z-index:1;background:var(--bg,#faf9f7)}
-@media(max-width:480px){.cq-raw-dialog{width:calc(100vw - 16px);max-width:calc(100vw - 16px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px)}.cq-panel.cq-modal-panel{padding:12px}}
+@media(max-width:480px){[data-ocp-overlay] .cq-original-modal{width:calc(100vw - 16px);max-width:calc(100vw - 16px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px)}.cq-panel.cq-modal-panel{padding:12px}}
 
 .cq-modal-body .cq-source-code{font-size:12px;line-height:1.85}.cq-modal-body .cq-source-section>summary{font-size:12px;padding:9px 10px}
 
@@ -191,7 +189,6 @@
 .cq-panel .cq-delete:disabled { opacity: .5; cursor: not-allowed; }
 .cq-row-meta { flex-wrap: wrap; }
 
-.cq-raw-dialog.cq-delete-dialog { width: min(440px, calc(100vw - 32px)); height: fit-content; overflow: auto; }
 .cq-delete-dialog .cq-modal-panel { height: auto; flex: none; box-sizing: border-box; padding: 20px; }
 .cq-delete-dialog h2 { font-size: 16px; margin: 0 0 12px; }
 .cq-delete-dialog p { margin: 0 0 12px; overflow-wrap: anywhere; }
@@ -200,12 +197,6 @@
 
 /* Session actions live in a menu; selection mode exposes only batch actions. */
 .cq-panel .cq-more{position:relative;flex:none;margin:0;color:var(--text,#3b3834)}
-.cq-more>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:28px;height:28px;box-sizing:border-box;cursor:pointer;padding:0;border:0;border-radius:4px;background:transparent;white-space:nowrap}
-.cq-more>summary::-webkit-details-marker{display:none}
-.cq-more>summary:hover,.cq-more[open]>summary{background:#8881}
-.cq-more-actions{position:absolute;right:0;top:calc(100% + 4px);z-index:5;display:flex;flex-direction:column;min-width:132px;padding:4px;border:1px solid #8884;border-radius:7px;background:var(--bg,#faf9f7);box-shadow:0 6px 20px #0002}
-.cq-panel .cq-more-actions button{display:block;border:0;text-align:left;padding:7px 10px;white-space:nowrap;font-size:12px}
-.cq-more-actions button:disabled{opacity:.5;cursor:not-allowed}
 .cq-selection-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 0;border-bottom:1px solid #8883;font-size:11px;flex:none}
 .cq-selection-bar label{display:flex;align-items:center;gap:5px;cursor:pointer}
 .cq-panel input[type=checkbox]{width:15px;height:15px;flex:none;margin:0;accent-color:#557a91;cursor:pointer}
@@ -219,13 +210,11 @@
 .cq-bulk-feedback>button{flex:none;font-size:10px}
 .cq-delete-targets{max-height:180px;overflow:auto;margin:0 0 12px;padding-left:20px;overflow-wrap:anywhere}
 
-.cq-more-up>.cq-more-actions{top:auto;bottom:calc(100% + 4px)}
 .cq-panel .cq-row-open:disabled{cursor:not-allowed;opacity:.6}
 
 .cq-header-actions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
 .cq-panel>header>strong{min-width:0;flex:1}
 .cq-panel .cq-header-actions .cq-refresh{padding:4px 6px}
-.cq-more>summary svg{display:block;flex:none}
 
 .cq-elapsed,.cq-call-elapsed{font-variant-numeric:tabular-nums;color:#827b73;font-size:10px;white-space:normal}
 .cq-call-name{flex:1;min-width:0;overflow-wrap:anywhere}
@@ -233,3 +222,5 @@
 .cq-run-heading,.cq-task-heading{flex-wrap:wrap;gap:6px}
 
 .cq-row-meta .cq-elapsed{font-size:inherit}
+
+.cq-panel .cq-detail-tabs [aria-selected=true]{color:inherit;border-bottom-color:#6d8ea1;font-weight:600;background:transparent;}

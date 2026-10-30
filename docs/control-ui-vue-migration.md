@@ -7,6 +7,7 @@ This tracks the complete accepted migration, not a reduced completion target. Wo
 - AgentRepo management shell and module navigation, preserving the content region and focus.
 - Overview, independent source errors, resource counts, maintenance warnings and Worker summary.
 - Agent-wide Worker task table, filters, pagination, timing, notification warnings and exact task links.
+- Worker sidebar and full task page: model-scoped session list, four detail views, source reader, tool/timeline rendering and exact-scope single/batch deletion. Existing 21 panel behaviors and actual public registration/RPC routing now run under Vitest, plus focused component tests.
 - Audit filters, paging, actor provenance, before/after differences and unknown outcomes.
 - Recycle dialog, stable request IDs, revision checks, retention confirmation, last-page correction and readonly behavior.
 
@@ -14,7 +15,6 @@ The temporary `CompatSection.vue` boundary is still used by the remaining manage
 
 ## Still required for full completion
 
-- Worker sidebar and full task page: conversation list, four detail views, original-record reader, tool rendering, exact-scope single/batch deletion.
 - Entities and personnel, including sync/account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries.
 - Projects, skills/CLI maintenance, workspace configuration, subagent definitions and the project sidebar.
 - Schedules, native/system task history, settings, audit and existing confirmation/admission semantics.
@@ -26,6 +26,8 @@ The temporary `CompatSection.vue` boundary is still used by the remaining manage
 
 `pnpm typecheck`, `pnpm build`, isolated `pnpm test`, and `pnpm test:ui:e2e` are the final gates. Run builds/tests from the isolated checkout because the registered source directory is production-loaded. Do not pull new UI manifests into that live checkout or restart production without deployment authorization.
 
-The Chromium harness serves actual built JS/CSS and manifests from the isolated checkout, with a synthetic implementation of the public host contract. Unsupported actions fail explicitly. It does not use production config, sessions, tokens or databases. The initial suite covers audit and recycle at 320/400/720/1280px, host themes, portal bounds, keyboard focus, unknown write retries, permission loss, cleanup and the Agent-wide Worker task link/draft.
+The Chromium harness serves actual built JS/CSS and manifests from the isolated checkout, with a synthetic implementation of the public host contract. Unsupported actions fail explicitly. It does not use production config, sessions, tokens or databases. The suite covers audit and recycle at 320/400/720/1280px, host themes, portal bounds, keyboard focus, unknown write retries, permission loss, cleanup and the Agent-wide Worker task link/draft.
 
 The browser run exposed and fixed a `process.env.NODE_ENV` library-build reference and the need to serialize Vue proxy payloads at the RPC boundary. Host snapshots bind methods to their original receiver.
+
+Worker Chromium cases additionally cover all four views at 320/400/720/1280px, menu collision bounds, keyboard tabs, clipboard permission success, raw message dialogs, workspace metadata, partial batch failure, original scope/revision payloads, permission loss during an in-flight deletion and disposal. Vue app ID prefixes are shared-counter unique across independent plugin bundles; each sidebar view has its own flex/scroll root and themed portal.

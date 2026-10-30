@@ -220,11 +220,9 @@ test('a captured legacy worker path can launch through a temporary compatibility
 });
 
 
-test('renamed plugin identity matches the manifest and Control UI session routing',async()=>{
+test('renamed plugin identity matches the manifest',async()=>{
  const manifest=JSON.parse(await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8'));
  assert.equal(plugin.id,'agent-worker');assert.equal(manifest.id,plugin.id);
- const ui=await readFile(new URL('./control-ui.mjs',import.meta.url),'utf8');
- assert.ok(ui.includes("pluginId:'agent-worker'"));assert.ok(!ui.includes("pluginId:'codex-query'"));
 });
 
 test('Agent-owned skill context root changes session policy independently of the business cwd',()=>{
