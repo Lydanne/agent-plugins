@@ -1,3 +1,4 @@
+import {databaseTransaction} from './database.mjs';
 import {recyclePut} from './recycle-store.mjs';
 import {graphDatabase,savePerson,personView as view,nodeById,putNode,audit,now} from './graph-storage.mjs';
 import {createHash,randomUUID} from 'node:crypto';
@@ -8,7 +9,7 @@ const personId=input=>createHash('sha256').update(JSON.stringify(identity(input)
 export function createPeopleStore(root){
  const read=(db,id)=>{const row=db.prepare('SELECT value FROM graph_people WHERE id=?').get(id);return row?JSON.parse(row.value):null;};
  const write=(db,record)=>savePerson(db,record);
- function transaction(callback){const db=graphDatabase(root);try{db.exec('BEGIN IMMEDIATE');const value=callback(db);db.exec('COMMIT');return value;}finally{db.close();}}
+ function transaction(callback){const db=graphDatabase(root);try{return databaseTransaction(db,callback);}finally{db.close();}}
  return {
   observe(input){const ids=identity(input),id=personId(ids);return transaction(db=>{
    const tombstone=nodeById(db,'person:'+id);if(tombstone?.purged)return view({...ids,id,directory:{name:null,email:null,departments:[]},overrides:{},revision:tombstone.revision,deletedAt:tombstone.updatedAt});const prior=read(db,id);if(prior?.deletedAt)return view(prior);const now=new Date().toISOString(),directory={...prior?.directory};

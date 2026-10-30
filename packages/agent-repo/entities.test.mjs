@@ -14,7 +14,7 @@ test('typed upserts are idempotent, reject stale/conflicting writes and preserve
  const {root,store}=fixture(t),first=store.upsert(observation);assert.equal(first.created,true);assert.equal(store.upsert(observation).unchanged,true);
  const next=store.upsert({...observation,name:'工单中心',attributes:{owner:'支持团队'},observedAt:'2026-01-02T00:00:00.000Z',revision:first.entity.revision});assert.equal(next.entity.id,first.entity.id);assert.equal(next.entity.attributes.url,observation.attributes.url);assert.equal(next.entity.attributes.owner,'支持团队');assert.equal(next.created,false);
  assert.throws(()=>store.upsert(observation),/过期/);assert.throws(()=>store.upsert({...observation,name:'冲突',observedAt:next.entity.observedAt}),/冲突/);assert.throws(()=>store.upsert({...observation,revision:first.entity.revision,observedAt:'2026-01-03T00:00:00.000Z'}),/变化/);
- assert.equal(statSync(join(root,'.runtime/entities/entities.sqlite')).mode&0o777,0o600);
+ assert.equal(statSync(join(root,'.runtime/agent_repo.sqlite')).mode&0o777,0o600);
  assert.equal(store.upsert({...observation,attributes:{url:null},observedAt:'2026-01-03T00:00:00.000Z'}).entity.attributes.url,null);
  assert.equal(createEntityStore(root).list().total,1);
 });

@@ -19,7 +19,7 @@ test('legacy operations migrate once and explicitly preserve missing identity an
 });
 test('private audit survives reopen and refuses symlinked paths; panel identity never trusts payload or credentials',t=>{
  const root=mkdtempSync(join(tmpdir(),'audit-test-'));t.after(()=>rmSync(root,{recursive:true,force:true}));let id;
- rootAudit(root,db=>{id=auditBegin(db,{agentId:'main',feature:'logs',targetId:'logs',action:'clear'});});assert.equal(statSync(join(root,'.runtime/audit/audit.sqlite')).mode&0o777,0o600);
+ rootAudit(root,db=>{id=auditBegin(db,{agentId:'main',feature:'logs',targetId:'logs',action:'clear'});});assert.equal(statSync(join(root,'.runtime/agent_repo.sqlite')).mode&0o777,0o600);
  assert.equal(rootAudit(root,db=>auditQuery(db,'main')).records[0].status,'pending');rootAudit(root,db=>auditFinish(db,id,'unknown',null));assert.equal(rootAudit(root,db=>auditQuery(db,'main')).records[0].status,'unknown');
  const actor=panelAuditActor({client:{connId:'trusted',token:'SECRET'},payload:{actorId:'forged',name:'forged'}});assert.equal(actor.id,'trusted');assert.equal(actor.name,null);assert.ok(!JSON.stringify(actor).includes('SECRET'));assert.ok(!JSON.stringify(actor).includes('forged'));
  const linked=join(root,'linked');mkdirSync(linked);symlinkSync(join(root,'.runtime'),join(linked,'.runtime'));assert.throws(()=>rootAudit(linked,()=>{}),/目录/);

@@ -4,7 +4,7 @@ AgentRepo 是实体、来源和关系的唯一存储拥有者。每个 Agent 独
 
 ## 模型与存储
 
-所有新写入进入 `<Agent Repo>/.runtime/entities/entities.sqlite`，目录 0700、数据库 0600，拒绝符号链接。SQLite 事务串行检查和写入，图模型无需依赖外部图数据库。
+所有新写入进入 `<Agent Repo>/.runtime/agent_repo.sqlite`，目录 0700、数据库 0600，拒绝符号链接。SQLite 事务串行检查和写入，图模型无需依赖外部图数据库。
 
 - `graph_sources`：来源类别 kind（channel/program/ai/manual）、namespace、scope（租户/应用/账号隔离范围）。
 - `graph_nodes`：稳定 ID、实体类型、来源 ID、来源外部 ID、状态和 JSON 属性。内置人员、组织、部门、系统服务、资产；字段类型 string/number/boolean/strings，null 清空，省略保留。
@@ -79,12 +79,14 @@ const result = producer.upsert({
 
 首次打开 v2 数据库时以事务执行 migration-v2：迁移旧 entities JSON 记录，保留 ID 和修订；将旧 people.sqlite 的采集值和人工更正迁入 graph_people，建立人员实体，并将原始采集的部门引用迁为部门及成员关系（人工显示更正不冒充渠道事实）；提交后旧 entities 表删除。旧 people.sqlite 保留为只读历史，不再写入或重复导入。
 
-生产切换前必须使用 SQLite backup API 保存所有绑定 Agent 的两个旧库，并在副本演练迁移、完整性及字段一致性。迁移失败回滚本事务。部署需停止旧插件写入后切换服务；热重载必须等已接纳工作完成，不能中断活动任务。
+生产切换前必须使用 SQLite backup API 保存所有绑定 Agent 的全部旧库，并在副本演练迁移、完整性及字段一致性。迁移失败回滚本事务。部署需停止旧插件写入后切换服务；热重载必须等已接纳工作完成，不能中断活动任务。
 
-回滚旧代码必须同时恢复匹配的迁移前实体库，并先备份 v2 的新增写入供后续核对。不能将迁移前备份直接覆盖仍在运行的新服务，也不能只回滚代码而留下不兼容表结构。
+回滚旧代码必须核对并恢复匹配的迁移前独立库，先一致性备份统一库的新增写入供后续处理。不能将迁移前备份直接覆盖仍在运行的新服务，也不能仅回滚代码后继续使用过期旧库而丢失切换后的数据。
 
 ## 管理入口和验收
 
 AgentRepo 实体页统一显示五类实体；详情可展开关联及方向，保留飞书人员同步和更正入口。operator.read 才可浏览关系和审计。agent_repo 增加 relation_types/relations/graph/entity_history 只读动作，均绑定当前可信 Agent，不接受项目或任意路径。
 
 专项测试覆盖来源隔离、端点类型、环、数量约束、事务回滚、预校验、证据断联、快照完整性及水位、幂等冲突、迁移与人工更正、飞书组织及父链同步、失败保留关系。隔离测试和只读生产回归不能称为真实飞书入站业务验收。
+
+统一数据库首次初始化时，先按 [数据库管理](database.md) 只读导入原 entities.sqlite、audit.sqlite、settings.sqlite 和 logs.sqlite，保留所有图及回收站记录。上文的 migration-v2 在统一库内检查旧实体/人员的转换标记，已有标记时跳过，不重新引入旧人员。原数据库文件保持原样；临时兼容 entities 表仅在统一库内转换后删除。生产切换须备份全部旧库；统一库使用 WAL，运行中的备份不能只复制主文件。连接和版本由 database.mjs 管理，graph-storage.mjs 保留图领域投影及人员兼容逻辑。

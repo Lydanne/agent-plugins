@@ -1,7 +1,6 @@
-import {DatabaseSync} from 'node:sqlite';
-import {chmodSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
-import {privateFile,graphDatabase} from './graph-storage.mjs';
+import {graphDatabase} from './graph-storage.mjs';
+import {withRepositoryDatabase} from './database.mjs';
 
 // Audit metadata is allowlisted by callers. Never persist tool arguments, auth headers or full chat bodies.
 export function auditTable(db){db.exec(`CREATE TABLE IF NOT EXISTS audit_events(id TEXT PRIMARY KEY,agent TEXT NOT NULL,feature TEXT NOT NULL,target TEXT NOT NULL,at INTEGER NOT NULL,body TEXT NOT NULL);
@@ -31,7 +30,7 @@ export function auditQuery(db,agentId,p={}){
  const records=db.prepare('SELECT body FROM audit_events WHERE '+sql+' ORDER BY at DESC,id DESC LIMIT ? OFFSET ?').all(...values,limit,offset).map(r=>JSON.parse(r.body));
  return {records,total,nextOffset:offset+limit<total?offset+limit:null};
 }
-export function rootAudit(root,callback){const db=new DatabaseSync(privateFile(root,['audit','audit.sqlite']));try{chmodSync(db.location(),0o600);auditTable(db);return callback(db);}finally{db.close();}}
+export const rootAudit=withRepositoryDatabase;
 
 // Adapt the existing transactional entity audit without inventing human attribution.
 export function entityAuditQuery(root,agentId,p={}){
