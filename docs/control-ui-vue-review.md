@@ -19,22 +19,31 @@
 | P2 | ShadowRoot 内挂载时，body Portal 主题停留在旧颜色。主题观察沿 composed ancestry 跨越 ShadowRoot.host | Chromium：实际构建产物挂入 ShadowRoot，改变宿主颜色后 Portal 同步，卸载清理 |
 | P3 | 技能维护 failed/unknown 回执被统一描述为“已受理”。现在分别显示失败或待核验，避免误解结果 | `skill-maintenance-page.test.mjs`：两种回执均不显示完成或已受理 |
 
+## 收尾复核补充
+
+同三个子 Agent 对 `cf7be81` 的修复再检查后，新增确认并修复以下边界问题：
+
+| 级别 | 问题与修复 | 回归证据 |
+| --- | --- | --- |
+| P2 | 动态热度/活动排序可能让相邻分页重叠，追加时重复显示同一模型会话。现在按 topic、executionScope、modelSessionScope 合并：保留原顺序，更新最新快照，不合并其他模型 | Worker UI：重叠页只显示三个唯一身份，旧条目更新热度/任务数；原分页失败重试测试仍通过 |
+| P2 | 宿主 unsubscribe 或组件卸载钩子抛错会截断后续清理。现在各项清理独立执行，卸载期间收集钩子异常，根节点/Portal/observer/信号与其他钩子继续清理，最后报告错误。宿主交接仍安装新生命周期 | 共享 host：同时抛出宿主/卸载异常时仍调用 unmounted 并移除根和 Portal；单个旧宿主错误不阻止新实例订阅 |
+| P2 | 父窗口加载入口却把容器传入 iframe 时，Reka 的全局 scroll/focus helpers 会影响错误文档。为保持现有能力范围，明确入口须在挂载文档所属窗口加载，并在任何 DOM、订阅或 RPC 副作用前拒绝错误的跨文档容器；同文档 ShadowRoot 仍支持 | Chromium：错误跨文档调用被明确拒绝，父窗口样式、两个文档 DOM、订阅及 RPC 均不增加；原 ShadowRoot 用例通过 |
+
 还检查了七个管理模块、项目与人员/实体兼容入口、工作区、技能、回收站、审计、日志的功能路径，以及公开 page/panel/navigation ID、RPC payload、分块读取、权限边界、revision/requestId 和导航桥。没有确认需要新增模块或新功能的遗漏。本次修复不涉及后端调度、存储或 Worker 执行机制。
 
 ## 验证结果
 
 - `pnpm typecheck`、`pnpm build`：通过，公开 SDK 类型检查通过。
-- 在全命令独立 `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH` 中执行 `pnpm test`：2,487 项通过。末次对话阅读器修复后，重新执行 Worker 包测试：Node 424、Vue 33 通过；其余未变源码复用有效结果。当前有效断言合计 2,493 项（API 41、AllDecision 55、共享 UI 8、Feishu 1,512、AgentRepo Node 316 / Vue 104、Worker Node 424 / Vue 33）。
-- 合并远端独立的 Feishu 文档处理修复后，再次通过类型检查、构建及 Feishu 1,512 项测试；其余源码和两个 UI 构建哈希未变化，复用以上有效结果。
-- `pnpm test:ui:e2e`：实际构建产物 Chromium **47/47** 通过，含原四档宽度、明暗主题、删除、确认、日志，以及新增宿主切换和 ShadowRoot 用例。
+- 在全命令独立 `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH` 中执行 `pnpm test`：**2,496 项全部通过**（API 41、AllDecision 55、共享 UI 10、Feishu 1,512、AgentRepo Node 316 / Vue 104、Worker Node 424 / Vue 34）。
+- `pnpm test:ui:e2e`：实际构建产物 Chromium **48/48** 通过，含原四档宽度、明暗主题、删除、确认、日志，以及宿主切换、ShadowRoot 和跨文档零副作用断言。
 - 两个 `pnpm pack` 归档核对通过：资源与当前 manifest 一致、只有当前哈希目录、不包含测试文件，完整第三方许可随包附带。
 
 当前独立 checkout 的 `.tmp/releases/` 归档已替换为 review 后版本：
 
 | 归档 | UI 哈希目录 | SHA-256 |
 | --- | --- | --- |
-| `agent-repo-0.1.0.tgz` | `a33a24080f0e3800b05c` | `fbe8dda965cbda076f4b559ca34d0154bc5cfd944b333ce668048da07a81e82d` |
-| `agent-worker-1.0.1.tgz` | `de1a16e4341be48806fb` | `e28158bd95085e5c38743775b9ff6b43a33e1d504da4ca01fc9f3a0e1006e2bf` |
+| `agent-repo-0.1.0.tgz` | `936634e3be126d38d72d` | `ff85a1229a5c4e2828f4efcf7d89dc390cdcdeaed6325fdcff17b1b6b597a8bf` |
+| `agent-worker-1.0.1.tgz` | `e5418691e17075343dcd` | `992a47c5ffd9d8ace48c9ebb7b0487267e739ef80cf05a8682e9d822f4d32036` |
 
 ## 边界
 

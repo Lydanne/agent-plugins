@@ -8,6 +8,9 @@ function snapshotWithMethods<T extends object>(value:T):T{
  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,typeof item==='function'?item.bind(value):item])) as T;
 }
 function mountInstance(component:Component,options:{density?:'sidebar'|'page'},container:HTMLElement,initial:ControlUiViewContext){
+  // Reka's focus guards and scroll locks use the entry module's document.
+  // Reject a foreign-document container before touching either document or the host.
+  if(container.ownerDocument!==globalThis.document)throw Error('Control UI must be loaded in the mounting document window');
   if(initial.signal.aborted||initial.host.signal?.aborted)return {update:(_next:ControlUiViewContext)=>{},dispose:()=>{}};
   let current=initial,disposed=false;
   const document=container.ownerDocument;
@@ -36,7 +39,20 @@ function mountInstance(component:Component,options:{density?:'sidebar'|'page'},c
   feature.provide(contextKey,context);feature.provide(overlayKey,overlay);
   let unsubscribe=()=>{},mounted=false;
   const signals=[...new Set([initial.signal,initial.host.signal].filter(Boolean))];
-  const dispose=()=>{if(disposed)return;disposed=true;unsubscribe();observer.disconnect();for(const signal of signals)signal.removeEventListener('abort',dispose);if(mounted)feature.unmount();overlay.remove();root.remove();};
+  const dispose=()=>{
+   if(disposed)return;disposed=true;
+   const errors:unknown[]=[];
+   const clean=(release:()=>void)=>{try{release();}catch(error){errors.push(error);}};
+   clean(unsubscribe);clean(()=>observer.disconnect());
+   for(const signal of signals)clean(()=>signal.removeEventListener('abort',dispose));
+   // Keep a failing component hook from preventing other hooks and timers retiring.
+   const errorHandler=feature.config.errorHandler;
+   feature.config.errorHandler=error=>{errors.push(error);};
+   clean(()=>{if(mounted)feature.unmount();});feature.config.errorHandler=errorHandler;
+   clean(()=>overlay.remove());clean(()=>root.remove());
+   if(errors.length===1)throw errors[0];
+   if(errors.length)throw new AggregateError(errors,'Control UI cleanup failed');
+  };
   const observer=new document.defaultView!.MutationObserver(syncTheme);
   for(let node:Element|null=container;node;){
    observer.observe(node,{attributes:true,attributeFilter:['class','style','data-theme']});
@@ -48,7 +64,7 @@ function mountInstance(component:Component,options:{density?:'sidebar'|'page'},c
    if(disposed)feature.unmount();
    else{const release=current.host.subscribe(()=>{if(!disposed)update(current);});if(disposed)release();else unsubscribe=release;syncTheme();}
   }
-  catch(error){dispose();throw error;}
+  catch(error){try{dispose();}catch(cleanupError){throw new AggregateError([error,cleanupError],'Control UI mount and cleanup failed');}throw error;}
   return {update,dispose};
 }
 
@@ -61,8 +77,9 @@ export function mountVueView(component:Component,options:{density?:'sidebar'|'pa
     // A different host or cancellation signal denotes a new public view lifetime.
     // Retire old requests, dialogs and leases before accepting the new authority.
     if(next.host!==current.host||next.signal!==current.signal){
-     active.dispose();const replacement=mountInstance(component,options,container,next);
-     current=next;active=replacement;
+     let releaseError:unknown;try{active.dispose();}catch(error){releaseError=error;}
+     const replacement=mountInstance(component,options,container,next);current=next;active=replacement;
+     if(releaseError!==undefined)throw releaseError;
     }else{current=next;active.update(next);}
    },
    dispose(){if(disposed)return;disposed=true;active.dispose();},

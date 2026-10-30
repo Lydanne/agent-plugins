@@ -49,7 +49,7 @@ export function useWorkerPanel(projectPage:()=>boolean){
    }else{
     const result=JSON.parse(JSON.stringify(await invoke<SessionList>('list',{query:query.value,projectId:project.value||undefined,sort:sort.value,offset:requestedOffset,limit:30}))) as SessionList;
     if(token!==generation||!validScope(key))return;
-    offset.value=requestedOffset;data.value=null;rows.value=append?[...rows.value,...result.sessions]:result.sessions;list.value=result;projectIds.value=result.projectIds??[];
+    offset.value=requestedOffset;data.value=null;rows.value=append?[...new Map([...rows.value,...result.sessions].map(row=>[sessionKey(row),row])).values()]:result.sessions;list.value=result;projectIds.value=result.projectIds??[];
     let invalidated=0;for(const row of rows.value){const previous=checked.get(sessionKey(row));if(previous&&(row.canDelete!==true||row.deletionRevision!==previous.deletionRevision)){checked.delete(sessionKey(row));invalidated++;}}
     if(invalidated)deleteFeedback.value={failed:true,text:(deleteFeedback.value?.failed?deleteFeedback.value.text+'；':'')+`${invalidated} 个会话已变化或不可删除，已取消选择，请核对后重新选择。`};
    }

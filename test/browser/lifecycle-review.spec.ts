@@ -23,3 +23,15 @@ test('replacing a host retires its active log lease and routes fresh reads only 
  await expect.poll(()=>page.evaluate(()=>(window as any).fixture.logLeases().length)).toBe(0);await expect(page.locator('.ar-console-stats')).toHaveText('24 条记录');await expect.poll(()=>page.evaluate(()=>(window as any).newLifetime.calls.some((p:any)=>p.actionId==='projects-diagnosticHistory'))).toBe(true);expect(await page.evaluate(()=>(window as any).fixture.subscriberCount())).toBe(0);
  await page.evaluate(()=>(window as any).newLifetime.controller.abort());await expect(page.locator('[data-ocp-view-root]')).toHaveCount(0);expect(await page.evaluate(()=>(window as any).newLifetime.listeners.size)).toBe(0);await expect(page.locator('[data-ocp-overlay]')).toHaveCount(0);
 });
+
+test('a parent-realm entry rejects a foreign document before acquiring global modal effects',async({page})=>{
+ await page.goto('/?surface=worker');await expect(page.locator('html')).toHaveAttribute('data-ready','true');
+ const result=await page.evaluate(async()=>{
+  const f=(window as any).fixture,manifest=await fetch('/plugins/agent-repo/openclaw.plugin.json').then(r=>r.json()),module=await import('/plugins/agent-repo/'+manifest.controlUi.entry);
+  const frame=document.createElement('iframe');frame.srcdoc='<body><main id="mount"></main></body>';document.body.append(frame);await new Promise(resolve=>frame.onload=resolve);
+  const doc=frame.contentDocument!,calls=f.calls.length,subscriptions=f.subscriberCount(),parentOverflow=document.body.style.overflow,parentPointer=document.body.style.pointerEvents;let error='';
+  try{module.mountAgentRepo(doc.getElementById('mount'),{host:f.host,props:{section:'audit'},signal:new AbortController().signal,presented:true});}catch(e){error=String(e);}
+  const result={error,newCalls:f.calls.length-calls,newSubscriptions:f.subscriberCount()-subscriptions,frameRoots:doc.querySelectorAll('[data-ocp-view-root],[data-ocp-overlay]').length,parentIntact:document.body.style.overflow===parentOverflow&&document.body.style.pointerEvents===parentPointer,frameOverflow:doc.body.style.overflow};frame.remove();return result;
+ });
+ expect(result.error).toContain('mounting document window');expect(result.newCalls).toBe(0);expect(result.newSubscriptions).toBe(0);expect(result.frameRoots).toBe(0);expect(result.parentIntact).toBe(true);expect(result.frameOverflow).toBe('');
+});

@@ -216,3 +216,10 @@ test('job-only deep links retain the resolved execution and model scope when loa
  const ctx=uiContext(async(_method,p)=>{calls.push(p.payload);if(!p.payload.jobId){assert.equal(p.payload.executionScope,session.executionScope);assert.equal(p.payload.modelSessionScope,session.modelSessionScope);}return {ok:true,result:{session,records:[],offset:p.payload.offset,hasMore:p.payload.offset===0,currentTasks:[],taskHistory:[]}};},{agentId:'main',sessionKey:'agent:main:test',topic:'same',jobId:'exact-job'});
  f.track(f.ui.mountPanel(f.container,ctx));await settle();await press(f,'加载更早任务');await settle();assert.equal(calls.length,2);assert.equal(calls[0].jobId,'exact-job');assert.ok(!calls[1].jobId);assert.equal(calls[1].executionScope,'verified-exec');assert.equal(calls[1].modelSessionScope,'verified-model');
 });
+
+test('overlapping dynamically sorted pages merge exact session identities without merging other models',async()=>{
+ const f=await browserFixture({after:onTestFinished},panelEntry),row={topic:'same',executionScope:'exec',modelSessionScope:'model-a',status:'completed',tags:[],heat:1,taskCount:1,interactionCount:1};
+ const ctx=uiContext(async(_method,p)=>({ok:true,result:{...listing(null),sessions:p.payload.offset?[{...row,heat:9,taskCount:2},{...row,modelSessionScope:'model-b'},{...row,topic:'new'}]:[row],groupCounts:{history:3},hasMore:!p.payload.offset}}),{agentId:'main',sessionKey:'agent:main:test'});
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();await press(f,'加载更多会话');await settle();
+ const entries=[...f.container.querySelectorAll('.cq-row')];assert.equal(entries.length,3);assert.equal(new Set(entries.map(node=>node.dataset.recordKey)).size,3);assert.match(entries[0].textContent,/热度 9/);assert.match(entries[0].textContent,/2 个任务/);
+});

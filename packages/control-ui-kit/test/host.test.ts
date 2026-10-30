@@ -74,3 +74,18 @@ it('does not mount an already-aborted lifetime and observes the public host abor
  const view=mountVueView(component)(f.container,f.ctx)!;expect(setup).toHaveBeenCalledTimes(1);hostController.abort();expect(f.listeners.size).toBe(0);expect(f.container.children).toHaveLength(0);view.dispose?.();
  const cancelled=fixture();cancelled.controller.abort();const never=mountVueView(component)(cancelled.container,cancelled.ctx)!;expect(setup).toHaveBeenCalledTimes(1);expect(cancelled.listeners.size).toBe(0);expect(cancelled.container.children).toHaveLength(0);never.dispose?.();f.container.remove();cancelled.container.remove();
 });
+
+it('finishes independent cleanup even when the host disposer or a component hook throws',()=>{
+ const f=fixture(),releaseError=Error('synthetic unsubscribe failure'),hookError=Error('synthetic hook failure'),unmounted=vi.fn();
+ Object.assign(f.ctx.host,{subscribe:()=>()=>{throw releaseError;}});
+ const component=defineComponent({setup(){return ()=>h('p','mounted');},beforeUnmount(){throw hookError;},unmounted});
+ const view=mountVueView(component)(f.container,f.ctx)!;
+ expect(()=>view.dispose?.()).toThrow(AggregateError);expect(unmounted).toHaveBeenCalledOnce();expect(f.container.children).toHaveLength(0);expect(document.querySelector('[data-ocp-overlay]')).toBeNull();expect(()=>view.dispose?.()).not.toThrow();f.container.remove();
+});
+it('still installs a replacement lifetime after an old host unsubscribe error',async()=>{
+ const a=fixture(),b=fixture(),error=Error('unsubscribe failed');Object.assign(a.ctx.host,{subscribe:()=>()=>{throw error;}});
+ const component=defineComponent({setup(){const context=useHostContext();return ()=>h('p',String(context.value.props.topic));}});
+ const view=mountVueView(component)(a.container,a.ctx)!;
+ expect(()=>view.update?.({...b.ctx,props:{topic:'replacement'}})).toThrow(error);await nextTick();expect(a.container.textContent).toBe('replacement');expect(b.listeners.size).toBe(1);
+ view.dispose?.();expect(b.listeners.size).toBe(0);a.container.remove();b.container.remove();
+});
