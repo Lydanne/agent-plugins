@@ -11,6 +11,7 @@
 | `pnpm typecheck` | 所有工作区类型检查通过 |
 | `pnpm build` | 所有插件构建通过，两个 UI 生成独立内容哈希资源 |
 | `pnpm test` | 2,465 项通过：AgentRepo API 41、AllDecision 55、共享 UI 6、Feishu 1,499、AgentRepo Node 316 / Vue 98、AgentWorker Node 424 / Vue 26 |
+| Feishu 并发增量复验 | 合并远端独立的文档处理提交后，类型检查和构建重新通过；Feishu 1,507 项通过。其余源码及 UI 构建哈希未变化，复用上列有效结果 |
 | `pnpm test:ui:e2e` | Chromium 45 项通过，加载实际构建 JS/CSS 和公开宿主模拟器 |
 | 独立安装包 | 两个 `pnpm pack` 归档均核对 manifest 资源存在、仅包含当前 UI 哈希目录、不包含测试文件、包含第三方完整许可 |
 
