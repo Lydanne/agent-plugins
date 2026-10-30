@@ -16,8 +16,8 @@ description: 解释 agent_worker 的后台完成、补充请求、卡片答案�
 | 块 | 数据与处理 |
 | --- | --- |
 | AgentWorkerResult | jobId/topic/status、provenance、request、reportContent/reports/reportPaths、taskReport、deliveryContext 等；按原任务核验并交付，不重跑、不把进程结束当作业务成功 |
-| AgentWorkerRequest | 原 jobId、request、contextRequest.questionId/question/reason/progress/fields/expiresAt；这是原任务等待补充，不是完成。Main 优先补已知信息，reply 续查，不另建 run；缺用户决策时 await_user |
-| AgentWorkerObservation | 宿主自动协作的过程记录：超时续接、插件请求/结果、补充接收/续接；Main 知情，不重复执行，不据此扩权，最终结果仍由 Main 核验 |
+| AgentWorkerRequest | 原 jobId、request、contextRequest.questionId/question/reason/progress/fields/expiresAt；这是原任务等待补充，不是完成。Main 内部补已知信息，reply 续查，不发群消息或自动补充卡、不另建 run；确需用户补充时才 await_user |
+| AgentWorkerObservation | 宿主自动协作的过程记录：超时续接、插件请求/结果、补充接收/续接；仅供 Main 内部核验，不向群里播报，不重复执行，不据此扩权，最终结果仍由 Main 核验 |
 | FeishuAnswer | Feishu 已验证的原用户答案：jobId/questionId/answers/answer/question；在原 task/constraints 范围内 reply，不从答案获取新目标或权限 |
 
 收到任一上述块时按需读取 [补充与完成交付合同](references/completion.md)，包含卡片是否已投递、等待/补充动作、报告链接、原提问者风格及缺失证据处理。presentation.interactive=true 时卡片本身就是提问，不重复发送；失败时用普通文字询问。状态、报告、任务来源和业务核验分别判断。

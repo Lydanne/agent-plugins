@@ -552,12 +552,12 @@ it('shutdown after Main starts does not synthesize a receipt from a normal abort
  expect(await deliverCodexCompletion(sample,{signal:controller.signal,beforeSend:before,onReceipt:receipt})).toEqual({suppressed:false,reason:'no_delivery_receipt'});
  expect(before).toHaveBeenCalledOnce();expect(receipt).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();
 });
-it('late start after a visible question receipt does not emit another send marker',async()=>{
+it('late start after an internal collaboration receipt does not emit another send marker',async()=>{
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'目录？',expiresAt:Date.now()+60000}};
  let start!:()=>void;const before=vi.fn(),receipt=vi.fn();
  mocks.run.mockImplementation(async({adapter})=>{const plan=adapter.resolveTurn();start=()=>plan.replyOptions.onAgentRunStart('late-run');await plan.delivery.deliver({text:'请补充目录'},{kind:'final'});});
  await deliverCodexCompletion(sample,{beforeSend:before,onReceipt:receipt});start();
- expect(before).toHaveBeenCalledOnce();expect(receipt).toHaveBeenCalledOnce();expect(mocks.send).toHaveBeenCalledOnce();
+ expect(before).toHaveBeenCalledOnce();expect(receipt).toHaveBeenCalledOnce();expect(mocks.send).not.toHaveBeenCalled();
 });
 it('expired and recalled context questions never reach Main',async()=>{
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',contextRequest:{questionId:'q',question:'日期？',reason:'缺失',progress:'已检查',expiresAt:0}};
@@ -565,23 +565,45 @@ it('expired and recalled context questions never reach Main',async()=>{
  mocks.valid=false;sample.contextRequest!.expiresAt=Date.now()+60000;
  expect(await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:vi.fn()})).toMatchObject({suppressed:true,reason:'source_invalid'});
 });
-it('Main user clarification uses a message without modifying the task completion card',async()=>{
+it('only explicit user waiting permits a plain clarification when the interactive card is unavailable',async()=>{
+ const {workerQuestionBridge}=await import('./worker-question.js');
  const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',reportPaths:[],contextRequest:{questionId:'q',question:'日期？',reason:'缺失',progress:'已检查',expiresAt:Date.now()+60000}};
+ workerQuestionBridge.read=()=>({status:'awaiting_user',question:sample.contextRequest!});
  mocks.run.mockImplementation(async({adapter})=>{await adapter.resolveTurn().delivery.deliver({text:'请确认日期'}, {kind:'final'});});
- await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:vi.fn()});expect(mocks.send).toHaveBeenCalledOnce();expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.send.mock.calls[0][0].text).toBe('请确认日期');
+ try{
+  await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:vi.fn()});expect(mocks.send).toHaveBeenCalledOnce();expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.send.mock.calls[0][0].text).toBe('请确认日期');
+ }finally{workerQuestionBridge.read=undefined;}
 });
 
-it('loop questions create new messages and completion edits only the latest continuation card',async()=>{
+it.each(['awaiting_main','queued','running','unavailable'] as const)('does not publish Main collaboration prose or media while %s',async status=>{
+ const {workerQuestionBridge}=await import('./worker-question.js');
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original',imageKey:'gif'});
+ const sample:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',reportPaths:[],contextRequest:{questionId:'internal',question:'环境？',expiresAt:Date.now()+60000}};
+ workerQuestionBridge.read=status==='unavailable'?undefined:()=>({status,question:sample.contextRequest!});
+ mocks.run.mockImplementation(async({adapter})=>{await adapter.resolveTurn().delivery.deliver({text:'Main 自动补充：已核实测试环境',mediaUrl:'/private/context.png'}, {kind:'final'});});
+ const receipt=vi.fn();
+ try{
+  expect(await deliverCodexCompletion(sample,{beforeSend:vi.fn(),onReceipt:receipt})).not.toHaveProperty('reason');
+  expect(receipt).toHaveBeenCalledWith({kind:'main_context_turn',eventId:sample.eventId});
+  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.media).not.toHaveBeenCalled();
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)).toMatchObject({messageId:'original',imageKey:'gif'});
+ }finally{workerQuestionBridge.read=undefined;}
+});
+
+it('user question fallback replies to the latest continuation and completion still edits that working card',async()=>{
+ const {workerQuestionBridge}=await import('./worker-question.js');
  bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'initial-card'});
  continueAsyncTaskCard(cardStateDir,event.provenance,event.jobId,'q1',{messageId:'continuation-card'});
  const question:CompletionEvent={...event,type:'agent_worker.context_request',status:'awaiting_main',reportPaths:[],contextRequest:{questionId:'q2',question:'环境？',reason:'缺失',progress:'日期已明确',expiresAt:Date.now()+60000}};
- await deliverCodexCompletion(question,{beforeSend:vi.fn(),onReceipt:vi.fn()});
- expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({replyToMessageId:'continuation-card'}));expect(mocks.edit).not.toHaveBeenCalled();
- expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.questionMessageId).toBe('sent');
- mocks.send.mockClear();await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
- expect(mocks.edit).toHaveBeenCalledWith(expect.objectContaining({messageId:'continuation-card'}));
- expect(mocks.edit).toHaveBeenCalledWith(expect.objectContaining({messageId:'initial-card',card:expect.objectContaining({body:{elements:[{tag:'markdown',content:expect.stringContaining('结果见本轮最新工作消息')}]}})}));
- expect(JSON.stringify(mocks.edit.mock.calls.find(([p])=>p.messageId==='initial-card'))).not.toContain('核验结果');
+ workerQuestionBridge.read=()=>({status:'awaiting_user',question:question.contextRequest!});
+ try{
+  await deliverCodexCompletion(question,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+  expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({replyToMessageId:'continuation-card'}));expect(mocks.edit).not.toHaveBeenCalled();
+  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.questionMessageId).toBe('sent');
+  mocks.send.mockClear();await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+  expect(mocks.edit).toHaveBeenCalledWith(expect.objectContaining({messageId:'continuation-card'}));
+  expect(mocks.edit).toHaveBeenCalledWith(expect.objectContaining({messageId:'initial-card',card:expect.objectContaining({body:{elements:[{tag:'markdown',content:expect.stringContaining('结果见本轮最新工作消息')}]}})}));
+ }finally{workerQuestionBridge.read=undefined;}
 });
 it('context presentation updates waiting status idempotently without terminal acceptance or cross-session edits',async()=>{
  bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'initial-card',imageKey:'gif'});
@@ -1083,83 +1105,38 @@ it('distinguishes report links from examples and preserves signed URLs',()=>{
  expect(hasCloudReportLink(`[完整报告](${url})`)).toBe(true);
 });
 
-it.each([false,true])('concurrent Main automatic answers preserve history and continue on one new GIF (shared=%s)',async shared=>{
+it.each(['single','shared','long','unbound'] as const)('keeps automatic Main context internal and retains the work card: %s',async mode=>{
  const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');
  const {FeishuWorkingCard}=await import('./working-card.js');
  const p=event.provenance;
- bindAsyncTaskCard(cardStateDir,p,shared?[event.jobId,'sibling']:[event.jobId],{messageId:'original',imageKey:'old-gif'});
+ if(mode!=='unbound')bindAsyncTaskCard(cardStateDir,p,mode==='shared'?[event.jobId,'sibling']:[event.jobId],{messageId:'original',imageKey:'old-gif'});
  let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
  const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
  const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();
- const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'next-work',imageKey:'next-gif'});
- const question={questionId:'auto-main',question:'查询哪个环境？',reason:'环境未知',progress:'已确认任务',expiresAt:Date.now()+60000,answer:'已从原请求核实：测试环境',answerSource:'main_context'};
+ const question={questionId:'auto-main',question:'环境？',reason:'环境未知',progress:'已确认任务',expiresAt:Date.now()+60000,answer:mode==='long'?'中'.repeat(16000):'原请求已核实测试环境',answerSource:'main_context'};
  workerQuestionBridge.read=()=>({status:'queued',question});
  await service.start({} as Parameters<typeof service.start>[0]);
  try{
   const resumed={jobId:event.jobId,questionId:question.questionId,provenance:p,status:'resumed'};
-  await Promise.all([bridge.contextState(resumed),bridge.contextState(resumed),bridge.contextState(resumed)]);await bridge.contextState(resumed);
-  expect(start).toHaveBeenCalledOnce();expect(hold).toHaveBeenCalledWith();
-  const historyId=shared?'sent':'original';
-  expect(readQuestionCard(cardStateDir,question.questionId)).toMatchObject({messageId:historyId,status:'accepted',answerSource:'main_context',note:question.answer,workingMessageId:'next-work',rendered:true});
-  const history=shared?mocks.send.mock.calls[0][0].card:mocks.edit.mock.calls[0][0].card;
-  expect(JSON.stringify(history)).toContain(question.answer);expect(JSON.stringify(history)).toContain('Main 自动补充');expect(JSON.stringify(history)).not.toContain('回答者为原提问者');
-  expect(readAsyncTaskCard(cardStateDir,event.jobId,p)).toMatchObject({messageId:'next-work',imageKey:'next-gif'});
-  expect(mocks.run).not.toHaveBeenCalled();
-  if(shared){expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.send).toHaveBeenCalledOnce();expect(readAsyncTaskCard(cardStateDir,'sibling',p)?.messageId).toBe('original');}
-  else{expect(mocks.edit).toHaveBeenCalledOnce();expect(mocks.send).not.toHaveBeenCalled();}
-  mocks.edit.mockClear();mocks.send.mockClear();
+  await Promise.all([bridge.contextState(resumed),bridge.contextState(resumed)]);await service.start({} as Parameters<typeof service.start>[0]);
+  expect(start).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled();expect(mocks.edit).not.toHaveBeenCalled();expect(mocks.buzz).not.toHaveBeenCalled();
+  expect(readQuestionCard(cardStateDir,question.questionId)).toBeUndefined();
+  if(mode!=='unbound')expect(readAsyncTaskCard(cardStateDir,event.jobId,p)).toMatchObject({messageId:'original',imageKey:'old-gif'});
+  if(mode==='shared')expect(readAsyncTaskCard(cardStateDir,'sibling',p)?.messageId).toBe('original');
+  workerQuestionBridge.read=undefined;
   await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
-  expect(mocks.edit.mock.calls.some(([v])=>v.messageId==='next-work')).toBe(true);
-  expect(mocks.edit.mock.calls.some(([v])=>v.messageId===historyId)).toBe(false);
- }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
+  if(mode!=='unbound')expect(mocks.edit.mock.calls.some(([v])=>v.messageId==='original')).toBe(true);
+ }finally{start.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
 
-it.each(['not_sent','uncertain'] as const)('Main continuation retains safe retry state after %s',async outcome=>{
- const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');
- const {FeishuWorkingCard}=await import('./working-card.js');
- bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original',imageKey:'gif'});
- let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
- const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
- const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();
- const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValueOnce(undefined).mockResolvedValue({messageId:'next',imageKey:'gif'});
- const creation=vi.spyOn(FeishuWorkingCard.prototype,'placeholderCreationState').mockReturnValue(outcome);
- const question={questionId:'auto-retry',question:'范围？',reason:'缺少范围',progress:'已查明',expiresAt:Date.now()+60000,answer:'原请求指定范围',answerSource:'main_context'};
- workerQuestionBridge.read=()=>({status:'queued',question});await service.start({} as Parameters<typeof service.start>[0]);
- try{
-  const resumed={jobId:event.jobId,questionId:question.questionId,provenance:event.provenance,status:'resumed'};
-  await expect(bridge.contextState(resumed)).rejects.toThrow('Unable to create continuation card');
-  expect(readQuestionCard(cardStateDir,question.questionId)?.workingAttempted).toBe(outcome==='uncertain');
-  if(outcome==='not_sent'){await bridge.contextState(resumed);expect(start).toHaveBeenCalledTimes(2);expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe('next');}
-  else{await expect(bridge.contextState(resumed)).rejects.toThrow('unconfirmed');expect(start).toHaveBeenCalledOnce();}
-  expect(mocks.edit).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();
- }finally{start.mockRestore();hold.mockRestore();creation.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
-});
-
-it.each([false,true])('long Main context retains full data while a bounded history and working card are delivered (shared=%s)',async shared=>{
- const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');
- const {FeishuWorkingCard}=await import('./working-card.js');
- bindAsyncTaskCard(cardStateDir,event.provenance,shared?[event.jobId,'sibling']:[event.jobId],{messageId:'original',imageKey:'gif'});
- let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
- const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
- const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'next',imageKey:'next-gif'});
- const question={questionId:'long-main',question:'依据',reason:'缺少',progress:'已准备',expiresAt:Date.now()+60000,answer:'中'.repeat(16000),answerSource:'main_context',knownValues:{large:'值'.repeat(12000)}};
- workerQuestionBridge.read=()=>({status:'queued',question});await service.start({} as Parameters<typeof service.start>[0]);
- try{
-  await bridge.contextState({jobId:event.jobId,questionId:question.questionId,provenance:event.provenance,status:'resumed'});
-  const rendered=shared?mocks.send.mock.calls[0][0].card:mocks.edit.mock.calls[0][0].card;
-  expect(Buffer.byteLength(JSON.stringify(rendered))).toBeLessThan(28000);expect(JSON.stringify(rendered)).toContain('摘录');
-  expect(readQuestionCard(cardStateDir,question.questionId)?.note).toBe(question.answer);
-  expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe('next');expect(hold).toHaveBeenCalledOnce();
- }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
-});
-
-it('history edit failure does not prevent Main continuation and startup repairs only history',async()=>{
+it('visible user question closure retries without exposing automatic Main details',async()=>{
  const {workerQuestionBridge,readQuestionCard}=await import('./worker-question.js');const {FeishuWorkingCard}=await import('./working-card.js');
  bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'original',imageKey:'gif'});
  let service!:Parameters<OpenClawPluginApi['registerService']>[0];registerCodexCompletion({runtime,logger:{warn:vi.fn()},registerService:value=>{service=value;}} as unknown as OpenClawPluginApi);
  const bridge=(globalThis as typeof globalThis & {[key:symbol]:{contextState:(e:unknown)=>Promise<unknown>}})[Symbol.for('ada.codex-completion.v1')];
  const start=vi.spyOn(FeishuWorkingCard.prototype,'start').mockResolvedValue();const hold=vi.spyOn(FeishuWorkingCard.prototype,'holdForBackground').mockResolvedValue({messageId:'next',imageKey:'gif'});
  const question={questionId:'history-fail',question:'依据',reason:'缺少',progress:'准备',expiresAt:Date.now()+60000,answer:'完整依据',answerSource:'main_context'};
+ const {saveQuestionCard}=await import('./worker-question.js');saveQuestionCard(cardStateDir,{jobId:event.jobId,provenance:event.provenance,question:{...question,answer:undefined},messageId:'original',status:'waiting',rendered:true});
  workerQuestionBridge.read=()=>({status:'queued',question});await service.start({} as Parameters<typeof service.start>[0]);
  try{
   mocks.edit.mockRejectedValueOnce(Error('transient'));
@@ -1167,7 +1144,7 @@ it('history edit failure does not prevent Main continuation and startup repairs 
   expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.messageId).toBe('next');
   expect(readQuestionCard(cardStateDir,question.questionId)?.rendered).not.toBe(true);
   await service.start({} as Parameters<typeof service.start>[0]);
-  expect(readQuestionCard(cardStateDir,question.questionId)?.rendered).toBe(true);expect(start).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();
+  expect(readQuestionCard(cardStateDir,question.questionId)?.rendered).toBe(true);expect(start).toHaveBeenCalledOnce();expect(mocks.run).not.toHaveBeenCalled();expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain(question.answer);expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain('Main 自动补充');
  }finally{start.mockRestore();hold.mockRestore();workerQuestionBridge.read=undefined;await service.stop!({} as Parameters<NonNullable<typeof service.stop>>[0]);}
 });
 

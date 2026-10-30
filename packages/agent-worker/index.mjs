@@ -265,7 +265,7 @@ async function queryInternal(params,context={}) {
    presentation=await contextPresentation(completionBridge.contextState,{jobId:original.jobId,questionId:params.questionId,provenance:original.provenance,status:params.action==='await_user'?'awaiting_user':'resumed',contextRequest:resumed.contextRequest});
    if(presentation.state==='failed')console.error('Worker context presentation update failed; task state remains authoritative');
   }
-  return wrap({jobId:resumed.jobId,topic:resumed.topic,status:resumed.status,questionId:params.questionId,accepted:true,presentation,instruction:params.action==='await_user'?waitingPresentationInstruction(presentation):'补充上下文已受理；保留原任务及 Worker 会话。'+(continuationHeld?'宿主保留本轮的新工作卡显示后续进度，不另发重复受理消息。':'沿用当前任务的交付位置。')+'结束当前轮次，不创建新的 run，不重复 reply 或轮询。'});
+  return wrap({jobId:resumed.jobId,topic:resumed.topic,status:resumed.status,questionId:params.questionId,accepted:true,presentation,instruction:params.action==='await_user'?waitingPresentationInstruction(presentation):'补充上下文已受理；保留原任务及 Worker 会话。内部自动补充不发送群消息、不生成补充历史卡或新工作卡。'+(continuationHeld?'宿主保留本轮的新工作卡显示后续进度，不另发重复受理消息。':'沿用当前任务的交付位置。')+'结束当前轮次，不创建新的 run，不重复 reply 或轮询。'});
  }
  if(params.action==='status')return wrap(jobs.status(params.jobId,scope));
  if(params.action==='wait')return wrap(await waitForQueryJob(params,context,jobs));

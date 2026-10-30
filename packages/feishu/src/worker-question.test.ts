@@ -262,3 +262,10 @@ it('outer callback retries an expired saved envelope and does not poison a faile
   await vi.waitFor(()=>expect(readQuestionCard(stateDir,'q')?.status).toBe('accepted'));
  }finally{workerQuestionBridge.action=undefined;processedCardActions.clear();}
 });
+
+it('closes a visible user question without rendering internal Main answers or known values',()=>{
+ const card:QuestionCard={...fixture(),status:'accepted',answerSource:'main_context',note:'内部自动查证详情'};
+ card.question={...card.question,answer:'内部自动查证详情',knownValues:{env:'内部环境详情'}};
+ const raw=JSON.stringify(renderQuestionCard(card));
+ expect(raw).toContain('原任务继续处理');expect(raw).not.toContain(card.note);expect(raw).not.toContain('内部环境详情');expect(raw).not.toContain('Main 自动补充');expect(raw).not.toContain('worker.question.submit');
+});
