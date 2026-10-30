@@ -9,11 +9,17 @@
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "vitest": "^3.2.0",
-    "typescript": "^5.9.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.0.0",
-    "happy-dom": "21.0.1"
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "esbuild": "^0.25.0",
+    "happy-dom": "21.0.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.0",
+    "vue-tsc": "^3.3.14"
   },
   "repository": {
     "type": "git",
