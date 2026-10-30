@@ -792,6 +792,34 @@
             "default": "/feishu/events",
             "type": "string"
           },
+          "directorySync": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "default": true,
+                "type": "boolean"
+              },
+              "organizationIntervalMinutes": {
+                "default": 60,
+                "type": "integer",
+                "minimum": 15,
+                "maximum": 1440
+              },
+              "fullIntervalMinutes": {
+                "default": 360,
+                "type": "integer",
+                "minimum": 60,
+                "maximum": 10080
+              },
+              "eventDebounceSeconds": {
+                "default": 10,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30
+              }
+            },
+            "additionalProperties": false
+          },
           "webhookHost": {
             "type": "string"
           },
@@ -2515,6 +2543,34 @@
                 "webhookPath": {
                   "type": "string"
                 },
+                "directorySync": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "organizationIntervalMinutes": {
+                      "default": 60,
+                      "type": "integer",
+                      "minimum": 15,
+                      "maximum": 1440
+                    },
+                    "fullIntervalMinutes": {
+                      "default": 360,
+                      "type": "integer",
+                      "minimum": 60,
+                      "maximum": 10080
+                    },
+                    "eventDebounceSeconds": {
+                      "default": 10,
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 30
+                    }
+                  },
+                  "additionalProperties": false
+                },
                 "webhookHost": {
                   "type": "string"
                 },
@@ -4095,6 +4151,26 @@
         "workspaceSync.timeoutMs": {
           "label": "同步超时（毫秒） / Sync timeout (ms)"
         },
+        "directorySync": {
+          "label": "组织目录持续同步 / Continuous directory sync",
+          "help": "飞书事件局部刷新，定期全量校准。 / Refresh changed departments and periodically reconcile the directory."
+        },
+        "directorySync.enabled": {
+          "label": "启用自动同步 / Enable automatic sync",
+          "help": "默认开启；关闭后仍可手动同步。 / Enabled by default; manual sync remains available when disabled."
+        },
+        "directorySync.organizationIntervalMinutes": {
+          "label": "组织信息间隔（分钟） / Organization interval (minutes)",
+          "help": "默认 60 分钟。 / Default: 60 minutes."
+        },
+        "directorySync.fullIntervalMinutes": {
+          "label": "全量部门校准间隔（分钟） / Full directory interval (minutes)",
+          "help": "默认 360 分钟。 / Default: 360 minutes."
+        },
+        "directorySync.eventDebounceSeconds": {
+          "label": "事件合并窗口（秒） / Event debounce (seconds)",
+          "help": "默认 10 秒，同部门合并读取。 / Default: 10 seconds; coalesce reads for the same department."
+        },
         "departmentReplyStyles": {
           "label": "部门回复风格 / Department reply styles",
           "help": "按列表顺序匹配部门名称，首条命中生效；空列表关闭，账号配置整体覆盖全局。 / Match department names in list order; first match wins. An empty list disables matching; account rules replace global rules."
@@ -4992,6 +5068,26 @@
         },
         "accounts.*.workspaceSync.timeoutMs": {
           "label": "同步超时（毫秒） / Sync timeout (ms)"
+        },
+        "accounts.*.directorySync": {
+          "label": "组织目录持续同步 / Continuous directory sync",
+          "help": "飞书事件局部刷新，定期全量校准。 / Refresh changed departments and periodically reconcile the directory."
+        },
+        "accounts.*.directorySync.enabled": {
+          "label": "启用自动同步 / Enable automatic sync",
+          "help": "默认开启；关闭后仍可手动同步。 / Enabled by default; manual sync remains available when disabled."
+        },
+        "accounts.*.directorySync.organizationIntervalMinutes": {
+          "label": "组织信息间隔（分钟） / Organization interval (minutes)",
+          "help": "默认 60 分钟。 / Default: 60 minutes."
+        },
+        "accounts.*.directorySync.fullIntervalMinutes": {
+          "label": "全量部门校准间隔（分钟） / Full directory interval (minutes)",
+          "help": "默认 360 分钟。 / Default: 360 minutes."
+        },
+        "accounts.*.directorySync.eventDebounceSeconds": {
+          "label": "事件合并窗口（秒） / Event debounce (seconds)",
+          "help": "默认 10 秒，同部门合并读取。 / Default: 10 seconds; coalesce reads for the same department."
         },
         "accounts.*.departmentReplyStyles": {
           "label": "部门回复风格 / Department reply styles",

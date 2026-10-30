@@ -19,6 +19,9 @@ import { normalizeNullableString } from "openclaw/plugin-sdk/string-coerce-runti
 const FEISHU_INGRESS_PAYLOAD_VERSION = 1;
 const FEISHU_INGRESS_POLL_INTERVAL_MS = 500;
 const FEISHU_DURABLE_EVENT_TYPES = new Set([
+  "contact.department.created_v3",
+  "contact.department.updated_v3",
+  "contact.department.deleted_v3",
   "drive.notice.comment_add_v1",
   "im.message.receive_v1",
   "im.message.recalled_v1",
@@ -174,6 +177,12 @@ function inspectFeishuIngressEnvelope(
       );
     }
     return { eventId, eventType, laneKey: `chat:${chatId}${message && isFeishuRawProgressMessage(message) ? ":progress" : message && isFeishuRawSteerMessage(message) ? ":steer" : ""}` };
+  }
+  if(eventType.startsWith("contact.department.")){
+    const object=isRecord(event.object)?event.object:null,oldObject=isRecord(event.old_object)?event.old_object:null;
+    const departmentId=normalizeNullableString(object?.open_department_id)??normalizeNullableString(oldObject?.open_department_id),tenantKey=normalizeNullableString(nestedHeader?.tenant_key)??normalizeNullableString(envelope.tenant_key);
+    if(!departmentId||!tenantKey){if(allowInvalidLane)return {eventId,eventType,laneKey:`invalid:${eventType}:${eventId}`};throw new FeishuIngressPermanentError("invalid-event","Department event is missing department or tenant identity.");}
+    return {eventId,eventType,laneKey:`directory:${tenantKey}:${departmentId}`};
   }
   const noticeMeta = isRecord(event.notice_meta) ? event.notice_meta : null;
   const fileType = normalizeNullableString(noticeMeta?.file_type);

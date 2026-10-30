@@ -13,7 +13,7 @@
     }
   },
   "scripts": {
-    "build": "node --check database.mjs && node --check recycle-bin.mjs && node --check audit.mjs && node --check graph.mjs && node --check graph-storage.mjs && node --check graph-schema.mjs && node --check scheduled-requests.mjs && node ../../scripts/build-agent-repo-api.mjs && node --check entities.mjs && node --check people-query.mjs && node --check people.mjs && node --check index.mjs && node --check repositories.mjs && node --check configuration.mjs && node --check cli.mjs && node --check preparation.mjs && node --check repository-skills.mjs && node --check scheduled-tasks.mjs && node --check repository-log.mjs && node --check sync-history.mjs && node --check scheduled-sync.mjs && node --check runtime-sync.mjs && node --check workspace-sync.mjs && node --check project-service.mjs && node --check worker-skill.mjs && node --check skill-maintenance.mjs && node --check worker-skill-lock.mjs && node --check plugin-catalog.mjs && node --check worker-protocol.mjs && node --check project-inspector.mjs && node --check subagents.mjs && node build-ui.mjs && node --check diagnostic-source.mjs && node --check log-console.mjs",
+    "build": "node --check database.mjs && node --check recycle-bin.mjs && node --check audit.mjs && node --check graph-sync.mjs && node --check graph.mjs && node --check graph-storage.mjs && node --check graph-schema.mjs && node --check scheduled-requests.mjs && node ../../scripts/build-agent-repo-api.mjs && node --check entities.mjs && node --check people-query.mjs && node --check people.mjs && node --check index.mjs && node --check repositories.mjs && node --check configuration.mjs && node --check cli.mjs && node --check preparation.mjs && node --check repository-skills.mjs && node --check scheduled-tasks.mjs && node --check repository-log.mjs && node --check sync-history.mjs && node --check scheduled-sync.mjs && node --check runtime-sync.mjs && node --check workspace-sync.mjs && node --check project-service.mjs && node --check worker-skill.mjs && node --check skill-maintenance.mjs && node --check worker-skill-lock.mjs && node --check plugin-catalog.mjs && node --check worker-protocol.mjs && node --check project-inspector.mjs && node --check subagents.mjs && node build-ui.mjs && node --check diagnostic-source.mjs && node --check log-console.mjs",
     "test": "node --test *.test.mjs",
     "typecheck": "vue-tsc --noEmit -p tsconfig.ui.json"
   },
@@ -76,6 +76,7 @@
     "graph.mjs",
     "graph-schema.mjs",
     "graph-storage.mjs",
+    "graph-sync.mjs",
     "audit.mjs",
     "audit-page.mjs",
     "recycle-store.mjs",

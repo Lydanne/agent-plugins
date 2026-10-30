@@ -1,3 +1,4 @@
+import {organizationEventHandlers} from './organization-events.js';
 import { groupContextEventHandlers, invalidateGroupContext } from "./group-context-events.js";
 import {handlePeopleJoin} from './people-group-sync.js';
 import { recallTaskSource } from "./source-task.js";
@@ -308,6 +309,7 @@ function registerEventHandlers(
 
   eventDispatcher.register({
     ...groupContextEventHandlers(accountId),
+    ...organizationEventHandlers(cfg,accountId,context.resolveIngressLifecycle),
     "im.message.receive_v1": createFeishuMessageReceiveHandler({
       cfg,
       channelRuntime,

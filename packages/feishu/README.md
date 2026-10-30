@@ -671,3 +671,9 @@ Main 接收 AgentWorkerObservation 过程记录，包含超时续接、结构化
 ### 飞书组织与全部部门同步
 
 `feishu-organization-sync` 通过 AgentRepo 图服务保存实际组织、完整部门目录和组织归属/父子关系。首次没有同步回执时后台初始化；管理员可在 AgentRepo 实体页选择当前 Agent 绑定的账号，明确发起“同步飞书组织与全部部门”。从根部门 0 分页、逐级遍历，不依赖机器人见过的联系人。组织信息需要 tenant:tenant:readonly，根目录查询需要全员通讯录范围及相应部门读取权限；不足时展示 partial/failed 和实际所需权限，不伪造组织、不清理关系。完整快照仅维护部门的组织关系，保留人员关系及人工更正。状态持久保存在 AgentRepo 统一库，刷新不重新执行，未知回执不自动重放。不新增周期计划，不自动变更飞书权限或发送消息。详细协议见 [实体图](../../docs/entity-library.md)。
+
+### 组织与部门持续同步
+
+飞书插件通过统一 AgentRepo 来源能力主动维护目录：部门事件合并 10 秒后局部刷新，层级变化或大量变化合并为全量；组织每小时、完整部门目录每 6 小时校准。默认启用，可通过账号继承配置 `directorySync` 调整 `enabled`、`organizationIntervalMinutes`、`fullIntervalMinutes`、`eventDebounceSeconds`。配置并发布 `contact.department.created_v3`、`contact.department.updated_v3`、`contact.department.deleted_v3` 事件订阅后才有实时事件触发；未收到事件时管理页显示订阅待验证，周期校准仍工作。
+
+持久队列、执行租约和同步回执统一保存在 agent_repo.sqlite。来源写入串行，同账号目录请求并发最多 2；失败退避、重启恢复。完整目录中未发现部门仅进入待核验，不自动断联；可信删除证据核验通过后结束该部门组织层级关系，保留人员关系与历史。详情见 docs/entity-library.md。
