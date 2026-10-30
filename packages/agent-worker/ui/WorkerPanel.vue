@@ -36,8 +36,8 @@ function remove(row:SessionRow){confirmDelete([row]);}
     </template></div></Tabs>
   </template>
  </section>
- <Dialog :open="!!confirmation" :title="confirmation?.bulk?'删除所选的 '+confirmation.rows.length+' 个会话？':'删除会话？'" :show-close="false" :prevent-close="deleting" content-class="cq-delete-modal" @update:open="value=>{if(!value)closeDelete()}"><div v-if="confirmation" class="cq-delete-dialog"><ul class="cq-delete-targets"><li v-for="(row,index) in confirmation.rows" :key="index">{{safe(sessionName(row))}}</li></ul><p>将从列表移除{{confirmation.bulk?'所选会话':'此会话'}}及其 {{deleteTaskCount}} 条历史任务；再次使用此主题会开启新会话。已生成的报告和附件保留。</p><p class="cq-error" role="alert">{{confirmation.error}}</p><div class="cq-delete-actions"><Button variant="outline" :disabled="deleting" @click="closeDelete()">取消</Button><Button variant="destructive" :disabled="deleting" @click="executeDelete">{{confirmation.bulk?'确认批量删除':'确认删除'}}</Button></div></div></Dialog>
- <Dialog :open="!!original" :title="(original?.actor??'')+' 原始消息'" :show-close="false" content-class="cq-original-modal" @update:open="value=>{if(!value)original=null}"><section v-if="original" class="cq-panel cq-modal-panel"><header><strong>{{original.actor}} 原始消息</strong><Button variant="ghost" class="cq-dialog-close" @click="original=null">关闭</Button></header><div class="cq-muted">任务 {{safe(original.record.jobId)}} · {{time(original.snapshot?.at??original.record.createdAt)}}</div><p class="cq-muted">展示已保存且经过脱敏的消息快照。</p><div class="cq-scroll cq-modal-body"><SourceView class="cq-modal-source" title="原始 JSON" :value="originalPayload" :redact="safe" :initial-open="true"/></div></section></Dialog>
+ <Dialog size="confirm" :open="!!confirmation" :title="confirmation?.bulk?'删除所选的 '+confirmation.rows.length+' 个会话？':'删除会话？'" :show-close="false" :prevent-close="deleting" content-class="cq-delete-modal" @update:open="value=>{if(!value)closeDelete()}"><div v-if="confirmation" class="cq-delete-dialog"><ul class="cq-delete-targets"><li v-for="(row,index) in confirmation.rows" :key="index">{{safe(sessionName(row))}}</li></ul><p>将从列表移除{{confirmation.bulk?'所选会话':'此会话'}}及其 {{deleteTaskCount}} 条历史任务；再次使用此主题会开启新会话。已生成的报告和附件保留。</p><p class="cq-error" role="alert">{{confirmation.error}}</p></div><template #footer><div v-if="confirmation" class="cq-delete-actions"><Button variant="outline" :disabled="deleting" @click="closeDelete()">取消</Button><Button variant="destructive" :disabled="deleting" @click="executeDelete">{{confirmation.bulk?'确认批量删除':'确认删除'}}</Button></div></template></Dialog>
+ <Dialog :show-header="false" :body-padding="false" :body-scroll="false" size="detail" :open="!!original" :title="(original?.actor??'')+' 原始消息'" :show-close="false" content-class="cq-original-modal" @update:open="value=>{if(!value)original=null}"><section v-if="original" class="cq-panel cq-modal-panel"><header><strong>{{original.actor}} 原始消息</strong><Button variant="ghost" class="cq-dialog-close" @click="original=null">关闭</Button></header><div class="cq-muted">任务 {{safe(original.record.jobId)}} · {{time(original.snapshot?.at??original.record.createdAt)}}</div><p class="cq-muted">展示已保存且经过脱敏的消息快照。</p><div class="cq-scroll cq-modal-body"><SourceView class="cq-modal-source" title="原始 JSON" :value="originalPayload" :redact="safe" :initial-open="true"/></div></section></Dialog>
 </template>
 <style scoped>
 .cq-panel{min-height:0;}
@@ -47,7 +47,7 @@ function remove(row:SessionRow){confirmDelete([row]);}
 .cq-delete-dialog{max-width:100%;overflow-wrap:anywhere;}
 </style>
 <style>
-[data-ocp-overlay] .cq-original-modal{width:min(760px,calc(100vw - 32px));max-width:calc(100vw - 32px);height:min(780px,calc(100dvh - 48px));padding:0;overflow:hidden;display:flex;flex-direction:column;}
+[data-ocp-overlay] .cq-original-modal{height:min(780px,calc(100dvh - 48px));padding:0;overflow:hidden;display:flex;flex-direction:column;}
 [data-ocp-overlay] .cq-original-modal>h2{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden;}
-[data-ocp-overlay] .cq-delete-modal{width:min(440px,calc(100vw - 32px));}
+
 </style>

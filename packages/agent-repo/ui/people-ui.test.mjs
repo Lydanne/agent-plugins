@@ -15,7 +15,7 @@ test('people manager searches, saves explicit corrections and confirms deletion'
  const save=calls.find(call=>call.action==='updatePerson');assert.equal(save.payload.patch.name,'姓名更正');assert.equal(save.payload.patch.giteaUsername,'custom-account');assert.equal(save.payload.revision,'r1');
  const search=f.container.querySelector('[aria-label="搜索人员"]');search.value='研发';search.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();click(f.container,'搜索');await settle();assert.deepEqual(calls.at(-1),{action:'people',payload:{query:'研发',offset:0}});
  [...f.container.querySelectorAll('summary')].find(node=>node.textContent==='更多操作').click();await settle();click(f.container,'删除人员');await settle();assert.equal(calls.some(call=>call.action==='deletePerson'),false);click(f.container,'确认删除本地资料');await settle();assert.deepEqual(calls.find(call=>call.action==='deletePerson').payload,{id:'id',revision:'r1',confirmed:true});
- f.container.querySelector('[aria-label="关闭人员资料"]').click();await settle();assert.equal(f.container.children.length,0);
+ f.container.querySelector('[role="dialog"] .ocp-dialog-header [aria-label="关闭"]').click();await settle();assert.equal(f.container.children.length,0);
 });
 test('read-only manager cannot mutate and closing rejects stale responses',async ()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../people-ui.mjs')),pending=deferred();
