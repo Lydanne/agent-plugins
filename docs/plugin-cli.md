@@ -100,3 +100,20 @@ openclaw agent-worker automation rerun --agent main --params '{"taskId":"<已终
 ## 隔离验证
 
 在仓库独立 checkout 构建后执行 `node scripts/plugin-cli-host-probe.mjs`，在随机端口、临时配置/状态和测试仓库启动真实 Gateway，核对两个插件的 CLI 发现、工具调用、管理动作、离线检查、文件参数及 Agent 不匹配拒绝。不读取生产凭据、不运行模型、不创建 Worker 任务。该验证不代表生产部署或真实飞书端到端验收。
+
+
+## Worker task context and direct plugin calls
+
+Worker executions inherit their identity rather than supply --agent/--session. The host allocates a fresh workerId per execution round; jobId remains the original task ID. OPENCLAW_WORKER_ID, OPENCLAW_JOB_ID and compact OPENCLAW_WORKER_CONTEXT are available to every child shell command. OPENCLAW_WORKER_CLI_URL/TOKEN identify a loopback-only, current-execution capability; never print them, put them in shared skills, or substitute operator credentials. They are delivered over the worker stdin boundary, not persisted in job/request JSON. Full task/context/constraints and original requester/project/session come from `context` or the plugin's host-bound workerContext, not from editable CLI parameters. Ending/cancelling the job, invalidating its source, resuming into another workerId, or stopping the broker invalidates the old capability.
+
+```sh
+openclaw agent-worker context
+openclaw agent-worker plugin list
+openclaw agent-worker plugin describe --tool feishu_doc
+openclaw agent-worker plugin call --tool feishu_doc --params '{"action":"read","doc_token":"<authorized-document>"}'
+openclaw agent-repo person --params '{"openId":"<verified-person>"}'
+```
+
+Plugin calls go through the original session's tools.invoke policy and a shared adapter that reconstructs the task context before plugin execution. Plugins opt in through workerContextApi; agent-repo, agent-worker and feishu-conversation are integrated. Generic core tools, arbitrary RPC and management actions are not available through this capability. Descriptions and schemas come from the currently loaded plugin tools; the catalog reports taskBound=false for plugins without the adapter. Administrative changes, orchestration and new authorization remain Main-owned. IDs alone confer no permission. This provides an identity/context foundation, not a new semantic authorization engine for arbitrary natural-language constraints.
+
+Instructions are published under ~/.agents/skills/openclaw-main-<AgentID>/ with immutable revisions and content-addressed CLI references. No per-job identity or credentials are written there. On successful publication, only an owned, verified legacy <codexHome>/skills entrypoint is renamed to SKILL.md.migrated; old immutable revisions remain for queued continuations. Worker receives load/reuse/reload notices for the current version. Unowned or modified legacy skills are preserved. No publication occurs during metadata-only CLI discovery.

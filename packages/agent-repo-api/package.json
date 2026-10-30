@@ -27,6 +27,10 @@
     "./worker-source": {
       "types": "./worker-source.d.mts",
       "import": "./worker-source.mjs"
+    },
+    "./worker-cli": {
+      "types": "./worker-cli.d.mts",
+      "import": "./worker-cli.mjs"
     }
   },
   "files": [
@@ -47,10 +51,12 @@
     "workspace-lock.mjs",
     "worker-source.mjs",
     "worker-source.d.mts",
-    "plugin-cli.mjs"
+    "plugin-cli.mjs",
+    "worker-cli.mjs",
+    "worker-cli.d.mts"
   ],
   "scripts": {
-    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs && node --check worker-source.mjs && node --check plugin-cli.mjs",
+    "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs && node --check worker-source.mjs && node --check plugin-cli.mjs && node --check worker-cli.mjs",
     "test": "node --test *.test.mjs",
     "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck entities.type-test.mts diagnostics.type-test.mts"
   },

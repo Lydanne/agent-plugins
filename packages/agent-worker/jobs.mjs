@@ -40,7 +40,7 @@ const agentOf=job=>job.agentId??job.provenance?.agentId??job.project?.agentId??'
 const sameQueue=(a,b)=>(a.provenance?.automation&&b.provenance?.automation||agentOf(a)===agentOf(b))&&taskClassOf(a)===taskClassOf(b);
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,prepareWorker,logger}) {
  const revocations=createSourceRevocations(root);
  const lock=join(root,'scheduler-lock');
  let timer;
@@ -252,17 +252,17 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     }
     continue;
    }
-   const claimed={...job,resumePending:false,status:'running',startedAt:job.startedAt??Date.now(),heartbeatAt:Date.now()};
+   const claimed={...job,workerId:randomUUID(),resumePending:false,status:'running',startedAt:job.startedAt??Date.now(),heartbeatAt:Date.now()};
    // Persist the reservation BEFORE spawning. An interrupted dispatch remains
    // unknown and occupied, never automatically spawning a second business worker.
    writeJson(file,claimed);running.push(claimed);
-   let child;
+   let child,workerCli;
    const failed=()=>{terminalJob({...claimed,status:'failed',error:'Could not start job worker',finishedAt:Date.now(),heartbeatAt:Date.now()},request);};
-   try{child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
+   try{workerCli=prepareWorker?.(claimed,request);child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
    catch{failed();continue;}
    child.stdin.on('error',()=>{});child.once('error',failed);
    writeJson(join(root,job.jobId+'.process.json'),{pid:child.pid});
-   child.stdin.end(JSON.stringify({...request,params:request.resumeParams??request.params}));child.unref();
+   child.stdin.end(JSON.stringify({...request,runtime:{...request.runtime,...(workerCli?{workerCli}:{})},params:request.resumeParams??request.params}));child.unref();
   }
  }
  function tick(){
@@ -289,6 +289,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
   return (job.contributorApprovals??[]).some(r=>r.status==='approved'&&r.source.senderId===source.senderId&&r.approvedBy===job.provenance.senderId&&(r.mode==='worker'||r.mode==='once'&&r.requestId===approvalId&&r.questionId===questionId&&contributorSourceIdentity(r.source)===contributorSourceIdentity(source)));
  }
  return {
+  raw(jobId){if(!/^[0-9a-f-]{36}$/.test(jobId)||existsSync(join(root,jobId+'.cancel')))throw Error('Worker job unavailable');return readJson(join(root,jobId+'.json'));},
   async prepareSteering(jobId,scope,answer,requester,source,authorize){
    const release=await acquireLock(lock);
    try{

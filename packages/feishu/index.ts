@@ -1,3 +1,4 @@
+import {workerContextApi} from '../agent-repo-api/worker-cli.mjs';
 import {registerOrganizationSync} from './src/organization-sync.js';
 import {registerSourceRecallDelivery} from './src/source-task.js';
 import {registerScheduledRequestAdapter} from './src/scheduled-request.js';
@@ -36,6 +37,7 @@ export default defineBundledChannelEntry({
     exportName: "setFeishuRuntime",
   },
   registerFull(api) {
+    api=workerContextApi(api);
     registerFeishuCli(api);
     registerFeishuContextProtocol(api);
     registerFeishuPeopleResolver(api);

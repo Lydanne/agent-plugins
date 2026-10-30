@@ -4,12 +4,17 @@ import {isAbsolute,dirname,join} from 'node:path';
 
 export async function mainSkillNotice(descriptor,previousRevision,agentId) {
  if(!descriptor)return undefined;
- const {name,path}=descriptor;
+ const {name}=descriptor;let {path}=descriptor;
  let {revision,revisionPath}=descriptor;
  if(descriptor.agentId!==agentId||typeof name!=='string'||!/^openclaw-main-[A-Za-z0-9_-]{1,50}$/.test(name)||
   !/^[a-f0-9]{64}$/.test(revision)||!isAbsolute(path)||!isAbsolute(revisionPath)||revisionPath!==join(dirname(path),'revisions',revision+'.md'))throw Error('Invalid Agent Repo Worker skill descriptor');
- const current=JSON.parse(await readFile(join(dirname(path),'.agent-repo.json'),'utf8'));
+ let current=JSON.parse(await readFile(join(dirname(path),'.agent-repo.json'),'utf8'));
  if(current.owner!=='agent-repo'||current.agentId!==agentId||!/^[a-f0-9]{64}$/.test(current.revision))throw Error('Invalid Agent Repo Worker skill ownership');
+ if(current.migratedTo){
+  if(!isAbsolute(current.migratedTo)||!current.migratedTo.endsWith('/'+name+'/SKILL.md'))throw Error('Invalid global Worker skill migration');
+  path=current.migratedTo;current=JSON.parse(await readFile(join(dirname(path),'.agent-repo.json'),'utf8'));
+  if(current.owner!=='agent-repo'||current.agentId!==agentId||!/^[a-f0-9]{64}$/.test(current.revision))throw Error('Invalid global Worker skill ownership');
+ }
  revision=current.revision;revisionPath=join(dirname(path),'revisions',revision+'.md');
  const body=await readFile(revisionPath,'utf8');
  if(createHash('sha256').update(body).digest('hex')!==revision)throw Error('Agent Repo Worker skill revision mismatch');

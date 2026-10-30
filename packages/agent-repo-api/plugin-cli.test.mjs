@@ -12,7 +12,7 @@ class Command {
 }
 function setup(spec,request=async()=>({ok:true,output:{content:[{type:'text',text:'{"value":1}'}]}})){
  const program=new Command(),output=[],calls=[];let closed=0,connected=0,registration;
- registerPluginCli({registerCli(callback,metadata){registration=metadata;callback({program,config:{fixture:true}});}},spec,{write:v=>output.push(v),connect:async()=>{connected++;return {request:async(...args)=>{calls.push(args);return request(...args);},close(){closed++;}};}});
+ registerPluginCli({registerCli(callback,metadata){registration=metadata;callback({program,config:{fixture:true}});}},spec,{env:{},write:v=>output.push(v),connect:async()=>{connected++;return {request:async(...args)=>{calls.push(args);return request(...args);},close(){closed++;}};}});
  return {program,output,calls,registration,get closed(){return closed;},get connected(){return connected;}};
 }
 const spec={pluginId:'agent-repo',tools:[{name:'agent_repo',actions:['list','people_stats']},{name:'agent_entity_sync',command:'entity-sync',actions:['upsert']}],actions:['list','chunk','workspacePoolSave','diagnosticStart','diagnosticRead','diagnosticRenew','diagnosticStop'],prefix:'projects-'};
@@ -116,4 +116,13 @@ test('diagnostic watch uses the actual diagnostic hub cursor contract and stops 
   assert.equal(f.output.at(-1).ok,true);assert.equal(f.output.at(-1).result.stopped,true);
   assert.equal(f.calls.find(c=>c[1].actionId==='projects-diagnosticRead')[1].payload.afterSeq,0);
  }finally{hub.dispose();source.dispose();process.exitCode=old;}
+});
+
+test('generic plugin discovery/describe/call outside a Worker never becomes an operator tool invocation',async()=>{
+ const old=process.exitCode;
+ try{
+  const f=setup({...spec,pluginId:'agent-worker'});
+  for(const action of ['list','describe','call'])await f.program.get('agent-worker','plugin',action).handler({...options,tool:'dangerous_tool'});
+  assert.equal(f.calls.length,0);assert.equal(f.output.length,3);assert.ok(f.output.every(value=>value.ok===false));
+ }finally{process.exitCode=old;}
 });

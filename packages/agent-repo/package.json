@@ -103,7 +103,8 @@
     "ui/LogConsole.vue",
     "ui/ProjectsView.vue",
     "cli-capabilities.mjs",
-    "dist/plugin-cli.mjs"
+    "dist/plugin-cli.mjs",
+    "dist/worker-cli.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

@@ -124,7 +124,7 @@ test('detached workers consume persisted configuration even after the scheduling
 test('registration uses configured storage',async t=>{
  const config=await fixture(t),factories=[],services=[];
  plugin.register({pluginConfig:config,logger:console,registerService:s=>services.push(s),registerTool:f=>factories.push(f)});
- assert.equal(factories.length,1);assert.deepEqual(services.map(service=>service.id),['agent-worker-automation','agent-worker-diagnostics','agent-worker-scheduled-status','agent-worker-scheduler','agent-worker-questions','agent-worker-collaboration','agent-worker-completion','agent-worker-source-control']);
+ assert.equal(factories.length,1);assert.deepEqual(services.map(service=>service.id),['agent-worker-cli-context','agent-worker-automation','agent-worker-diagnostics','agent-worker-scheduled-status','agent-worker-scheduler','agent-worker-questions','agent-worker-collaboration','agent-worker-completion','agent-worker-source-control']);
  const tool=factories[0]({sessionKey:'plain-conversation'});
  const response=await tool.execute('',{action:'run',topic:'registered',task:'read',context:'none',constraints:'read only',waitSeconds:5});
  assert.equal(JSON.parse(response.content[0].text).status,'completed');
@@ -297,4 +297,19 @@ test('Main reply timeout defaults to thirty minutes and rejects unsafe configura
  assert.equal(resolveConfiguration().mainReplyTimeoutMs,1800000);
  for(const value of [0,59999,86400001,1.5,'1800000'])assert.throws(()=>resolveConfiguration({mainReplyTimeoutMs:value}),/mainReplyTimeoutMs/);
  assert.equal(resolveConfiguration({mainReplyTimeoutMs:60000}).mainReplyTimeoutMs,60000);assert.equal(resolveConfiguration({mainReplyTimeoutMs:86400000}).mainReplyTimeoutMs,86400000);
+});
+
+test('scheduler injects its claimed Worker/job identity into Codex without persisting the task credential',async t=>{
+ const config=await fixture(t),scope='agent:main:main',root=join(config.state,'jobs');
+ const script=await readFile(config.cli,'utf8');
+ await writeFile(config.cli,script.replace("let input='';","appendFileSync('worker-env.jsonl',JSON.stringify({workerId:process.env.OPENCLAW_WORKER_ID,jobId:process.env.OPENCLAW_JOB_ID,credentialPresent:!!process.env.OPENCLAW_WORKER_CLI_TOKEN})+String.fromCharCode(10));let input='';"));
+ const jobs=createJobs({root,node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:()=>config,prepareWorker:(job,request)=>{
+  assert.equal(request.scope,scope);assert.match(job.workerId,/^[0-9a-f-]{36}$/);
+  return {url:'http://127.0.0.1:1/invoke',token:'fixture-task-secret',context:{version:1,agentId:'main',sessionKey:scope,workerId:job.workerId,jobId:job.jobId}};
+ }});
+ const completed=await jobs.run({topic:'identity',task:'read',context:'fixture',constraints:'read-only',waitSeconds:5},scope,{agentId:'main',sessionKey:scope});
+ assert.equal(completed.status,'completed');const saved=readJson(join(root,completed.jobId+'.json'));
+ const observed=JSON.parse((await readFile(join(config.cwd,'worker-env.jsonl'),'utf8')).trim());
+ assert.deepEqual(observed,{workerId:saved.workerId,jobId:completed.jobId,credentialPresent:true});
+ const request=await readFile(join(root,completed.jobId+'.request.json'),'utf8');assert.ok(!request.includes('fixture-task-secret'));assert.equal(JSON.parse(request).runtime.workerCli,undefined);
 });
