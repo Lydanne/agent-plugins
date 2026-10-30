@@ -16,6 +16,15 @@ test('Agent Repo generates a deterministic active-plugin catalog plus protocol w
  assert.equal(body,renderWorkerSkill('main',{plugins:plugins.plugins.toReversed()},catalog));
  assert.throws(()=>renderWorkerSkill('other',plugins,catalog));
 });
+test('generated collaboration skill invites clarification beyond missing parameters while preserving the request protocol',()=>{
+ const body=renderWorkerSkill('main',plugins,catalog);
+ for(const guidance of ['任务意图、业务术语与规则','证据冲突、工具用法、权限边界','不限于缺少参数或需要宿主插件','不必穷尽所有排查','继续可独立完成的步骤','已知事实及来源','无新增证据不重复询问同一缺口','不生成完成报告'])assert.ok(body.includes(guidance),guidance);
+ const example=JSON.parse(body.match(/最终只返回 JSON：(\{.*?\})。只允许/)[1]);
+ assert.equal(example.type,'request');
+ assert.equal(example.questionId,undefined);
+ assert.ok(example.reason.includes('Main'));
+ for(const boundary of ['原 task 和 constraints 始终有效','不把超时当授权','每个任务最多 5 次','原 jobId/questionId'])assert.ok(body.includes(boundary),boundary);
+});
 test('publication isolates Agents, preserves pinned revisions and keeps global skills explicit-only',async()=>{
  const root=await mkdtemp(join(tmpdir(),'repo-worker-skill-'));
  try {

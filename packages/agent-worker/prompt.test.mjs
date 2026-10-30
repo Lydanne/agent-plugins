@@ -58,3 +58,13 @@ test('task people are channel-bound context, never model supplied parameters',()
  assert.equal(JSON.parse(buildTaskPrompt({...params,people})).people,undefined);
  const prompt=JSON.parse(buildTaskPrompt(params,{people}));assert.deepEqual(prompt.people,people);assert.match(prompt.peoplePolicy,/记录人为 requester/);
 });
+
+test('clarification guidance remains visible with a custom Worker responsibility',()=>{
+ const prompt=JSON.parse(buildTaskPrompt({...params,responsibility:'核验本次问题'}));
+ assert.equal(prompt.responsibility,'核验本次问题');
+ assert.match(prompt.reportInstructions,/都可以向 Main 提问/);
+ assert.match(prompt.reportInstructions,/先核对已有信息/);
+ assert.match(prompt.reportInstructions,/读取 Main 协作技能/);
+ assert.match(prompt.reportInstructions,/等待上下文期间不生成完成报告/);
+ assert.equal(prompt.contextRequestInstructions,undefined);
+});
