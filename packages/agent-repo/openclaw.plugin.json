@@ -209,5 +209,12 @@
     "styles": [
       "dist/control-ui/936634e3be126d38d72d/index.css"
     ]
-  }
+  },
+  "cliCommands": [
+    {
+      "name": "agent-repo",
+      "description": "agent-repo tools and management",
+      "hasSubcommands": true
+    }
+  ]
 }

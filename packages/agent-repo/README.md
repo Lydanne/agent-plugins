@@ -1,5 +1,7 @@
 # Agent Repo 支持插件
 
+专用 CLI：`openclaw agent-repo` 覆盖工具和管理动作；完整命令、参数与来源限制见 [插件 CLI 指南](../../docs/plugin-cli.md)。
+
 OpenClaw 插件 ID 和包名均为 `agent-repo`。代码属于 openclaw-plugins；独立的 **Agent Repo**（例如 ada-agent） 继续维护角色、skills、tools、projects.json 和原生记忆 Markdown。此插件不携带任何 Agent 的角色、私人记忆、业务源码或登录状态。
 
 当前能力：

@@ -1,3 +1,4 @@
+import {automationActions} from '../cli-capabilities.mjs';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 import {openTaskStore,fault} from '../task-service/store.mjs';
@@ -33,7 +34,7 @@ export function registerAutomation(api,{configuration,jobs,invoke}){
   return session.runWithWorkAdmission({...location(t),signal},abortSignal=>agent.runEmbeddedAgent({agentId:t.request.agentId,sessionKey:t.sessionKey,sessionId:t.sessionId,config:cfg,workspaceDir:agent.resolveAgentWorkspaceDir(cfg,t.request.agentId),provider,model,thinkLevel:entry.thinkingLevel??agent.resolveThinkingDefault({cfg,provider,model}),runId:randomUUID(),prompt,timeoutMs:Math.max(1,t.deadline-Date.now()),abortSignal,disableMessageTool:true,toolBindings:{agentWorkerAutomation:binding}}));
  }};
  const service=createTaskService({store,jobs,main,invoke,policy,logger:api.logger});
- for(const action of ['submit','get','cancel','rerun'])api.registerGatewayMethod?.('agent-worker.automation.'+action,async({client,params,respond})=>{
+ for(const action of automationActions)api.registerGatewayMethod?.('agent-worker.automation.'+action,async({client,params,respond})=>{
   try{if(config().gateway?.auth?.mode==='none')throw fault('AUTHENTICATION_REQUIRED');const owner=automationCaller(client,policy);if(action!=='submit'&&(!params||typeof params.taskId!=='string'||Object.keys(params).some(k=>!(action==='rerun'?['taskId','operationId']:['taskId']).includes(k))))throw fault('INVALID_REQUEST');if(!capable&&['submit','rerun'].includes(action))throw fault('HOST_CAPABILITY_UNAVAILABLE');
    const result=action==='submit'?service.submit(owner,params):action==='get'?service.get(owner,params.taskId):action==='cancel'?service.cancel(owner,params.taskId):service.rerun(owner,params.taskId,params.operationId);respond(true,result);
   }catch(e){respond(false,undefined,{code:e.code??'AUTOMATION_UNAVAILABLE',message:e.code??'AUTOMATION_UNAVAILABLE'});}

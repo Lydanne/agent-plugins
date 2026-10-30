@@ -683,5 +683,12 @@
   },
   "skills": [
     "./skills"
+  ],
+  "cliCommands": [
+    {
+      "name": "agent-worker",
+      "description": "agent-worker tools and management",
+      "hasSubcommands": true
+    }
   ]
 }

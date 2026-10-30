@@ -1,5 +1,8 @@
+import {registerPluginCli} from './dist/plugin-cli.mjs';
+import {repoToolActions,projectActions,diagnosticActions} from './cli-capabilities.mjs';
+import {main as localCli} from './cli.mjs';
 import {registerRecycleService} from './recycle-bin.mjs';
-import {registerScheduledRequests} from './scheduled-requests.mjs';
+import {scheduledRequestToolParameters,registerScheduledRequests} from './scheduled-requests.mjs';
 import {createDiagnosticHub} from './dist/diagnostics-api.mjs';
 import {installRepositoryDiagnostics} from './diagnostic-source.mjs';
 import {createMainPluginCatalogReader} from './plugin-catalog.mjs';
@@ -27,7 +30,7 @@ export function projectTool(config,context,hostConfig={},prepareScope,syncScope)
  return {
   name:'agent_repo',label:'Agent repo project registry',
   description:'查询当前 Agent 的项目与技能（list/inspect/skills）、人员（people/person/people_stats）和本地实体（entity_types/entities/entity）。字段、来源及范围见 agent-repo-context 技能。skills 可触发配置的安全同步，明确要求更新代码时才用 sync；人员与实体查询不传项目选择。资料不授予新权限，多候选须消歧；worker_skill 按当前可信 Main 的已加载插件与候选工具生成或刷新全局 Codex 协作技能。不接受其他 Agent、任意路径或命令。',
-  parameters:{type:'object',properties:{...peopleParameters,...entityParameters,repository:{type:'string',pattern:'^(?:project|projects/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:/repositories/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$',description:'skills/sync 使用登记的 projects/<项目ID> 或其 repositories/<仓库>；仅有一个项目时可省略；多个项目必须明确选择。子仓库继承根技能，同名子仓库优先。'},action:{type:'string',enum:['list','inspect','skills','sync','worker_skill',...peopleActions,...entityReadActions]},projectId:{type:'string',pattern:'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}},required:['action'],additionalProperties:false},
+  parameters:{type:'object',properties:{...peopleParameters,...entityParameters,repository:{type:'string',pattern:'^(?:project|projects/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:/repositories/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$',description:'skills/sync 使用登记的 projects/<项目ID> 或其 repositories/<仓库>；仅有一个项目时可省略；多个项目必须明确选择。子仓库继承根技能，同名子仓库优先。'},action:{type:'string',enum:repoToolActions},projectId:{type:'string',pattern:'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}},required:['action'],additionalProperties:false},
   async execute(_id,params) {
    if(!params||Object.keys(params).some(key=>!['action','projectId','repository',...Object.keys(peopleParameters),...Object.keys(entityParameters)].includes(key))||!['list','inspect','skills','sync','worker_skill',...peopleActions,...entityReadActions].includes(params.action))throw Error('Invalid agent_repo arguments');
    if(params.action==='worker_skill'){if(Object.keys(params).some(key=>key!=='action'))throw Error('Worker skill does not accept project or business selectors');const service=getAgentRepoService(context);if(!service.prepareWorkerSkill)throw Error('Worker skill publishing is unavailable');return {content:[{type:'text',text:JSON.stringify(await service.prepareWorkerSkill())}]};}
@@ -49,6 +52,8 @@ export function projectTool(config,context,hostConfig={},prepareScope,syncScope)
  };
 }
 export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',register(api) {
+ registerPluginCli(api,{pluginId:'agent-repo',tools:[{name:'agent_repo',actions:repoToolActions},{name:'agent_entity_sync',command:'entity-sync',actions:['register_type','upsert']},{name:'agent_schedule',command:'schedule',actions:scheduledRequestToolParameters.properties.action.enum}],actions:[...projectActions,...diagnosticActions],prefix:'projects-',local:localCli});
+ if(api.registrationMode==='cli-metadata')return;
  const config=resolveConfiguration(api.pluginConfig);
  const hostConfig=()=>api.config??{};
  const prepareWorkerSkill=createWorkerSkillPublisher(hostConfig,createMainPluginCatalogReader({

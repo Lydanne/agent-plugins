@@ -1,3 +1,4 @@
+import {workerInspectionActions} from './cli-capabilities.mjs';
 import {automationDeletionBlocked} from './task-service/deletion.mjs';
 import {createSessionDeletion,sessionDeletionState,sessionSupplements,sessionSubmissionState} from './session-deletion.mjs';
 import {collaborationDiagnostics} from './collaboration-diagnostics.mjs';
@@ -124,7 +125,7 @@ export function registerInspector(api,inspector,{now=()=>Date.now()}={}){
  const transfers=new Map();
  const prune=()=>{for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);};
  const part=(transferId,value,index)=>({encoding:'json-chunks',transferId,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
- for(const action of ['list','detail','chunk','agentTasks','deleteSession'])register({id:'inspect-'+action,description:action==='deleteSession'?'Delete the selected settled Worker session in the current conversation':action==='agentTasks'?'Read current Agent task summaries across conversations':'Read current conversation Codex '+action,requiredScopes:action==='deleteSession'?['operator.write']:['operator.read'],handler:async context=>{
+ for(const action of workerInspectionActions)register({id:'inspect-'+action,description:action==='deleteSession'?'Delete the selected settled Worker session in the current conversation':action==='agentTasks'?'Read current Agent task summaries across conversations':'Read current conversation Codex '+action,requiredScopes:action==='deleteSession'?['operator.write']:['operator.read'],handler:async context=>{
   try{
    if(typeof context.sessionKey!=='string'||!context.sessionKey)throw Error('Missing scope');
    prune();
