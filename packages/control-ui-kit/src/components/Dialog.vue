@@ -11,7 +11,7 @@ function escape(event:KeyboardEvent){if(externalNativeModal())return;emit('escap
 const emit=defineEmits<{'update:open':[value:boolean];escape:[event:KeyboardEvent]}>();
 const context=useHostContext(),target=useOverlayTarget();
 let returnFocus:HTMLElement|null=null;
-watch(()=>props.open,value=>{if(value){const active=target.ownerDocument.activeElement;returnFocus=active instanceof HTMLElement?active:null;}},{immediate:true,flush:'sync'});
+watch(()=>props.open,value=>{if(value){const active=target.ownerDocument.activeElement;returnFocus=active instanceof target.ownerDocument.defaultView!.HTMLElement?active:null;}},{immediate:true,flush:'sync'});
 function restoreFocus(event:Event){
  const destination=props.returnFocus?.()??returnFocus;
  if(destination?.isConnected&&context.value.presented&&context.value.host.connection.canRead){event.preventDefault();destination.focus({preventScroll:true});}

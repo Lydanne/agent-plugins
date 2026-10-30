@@ -187,3 +187,32 @@ test('public page registrations and actual RPC routing retain agent-worker ident
  const ctx=uiContext(async(method,params)=>{calls.push({method,...params});return {ok:true,result:listing(null)};},{agentId:'main',sessionKey:'agent:main:fixture'});
  f.track(panels[0].mount(f.container,ctx));await settle();assert.equal(calls.length,1);assert.equal(calls[0].method,'plugins.sessionAction');assert.equal(calls[0].pluginId,'agent-worker');assert.equal(calls[0].actionId,'inspect-list');assert.equal(calls[0].agentId,'main');assert.equal(calls[0].sessionKey,'agent:main:fixture');
 });
+
+test('slow reads are not repeatedly invalidated by the five-second background refresh',async()=>{
+ vi.useFakeTimers({toFake:['setInterval','clearInterval']});onTestFinished(()=>vi.useRealTimers());
+ const f=await browserFixture({after:onTestFinished},panelEntry),pending=deferred();let reads=0;
+ const ctx=uiContext(async()=>{reads++;return pending.promise;},{agentId:'main',sessionKey:'agent:main:test'});f.track(f.ui.mountPanel(f.container,ctx));await settle();
+ vi.advanceTimersByTime(10000);await settle();assert.equal(reads,1);
+ pending.resolve({ok:true,result:listing(null,2)});await settle();assert.equal(f.container.querySelector('[aria-label="Agent Worker 会话"]').getAttribute('aria-busy'),'false');assert.match(f.container.textContent,/运行 2 个任务/);
+});
+for(const kind of ['sessions','records','history'])test(`failed ${kind} pagination retries the same page and prevents double submission`,async()=>{
+ const f=await browserFixture({after:onTestFinished},panelEntry),pending=deferred(),payloads=[];
+ const row={topic:'paged',status:'completed',tags:[],heat:0,taskCount:2,interactionCount:1,executionScope:'exec',modelSessionScope:'model'};
+ const record=n=>({jobId:'record-'+n,status:'completed',createdAt:n+1,request:{availability:'available',task:'Task '+n},events:[],eventsAvailability:'available'});
+ let failed=false;
+ const ctx=uiContext(async(_method,p)=>{
+  payloads.push(p.payload);const next=kind==='history'?p.payload.historyOffset:p.payload.offset;
+  if(next&&!failed){failed=true;return pending.promise;}
+  return {ok:true,result:kind==='sessions'?{...listing(null),sessions:[{...row,topic:'paged-'+next}],groupCounts:{history:2},hasMore:!next}:{session:row,records:[record(next)],offset:p.payload.offset,currentTasks:[],taskHistory:[],historyHasMore:!next,hasMore:!next}};
+ },{agentId:'main',sessionKey:'agent:main:test',...(kind==='sessions'?{}:{topic:'paged'})});
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();if(kind==='history'){await press(f,'任务信息');await settle();}
+ const label=kind==='sessions'?'加载更多会话':kind==='records'?'加载更早任务':'加载更多历史任务';let button=[...f.container.querySelectorAll('button')].find(b=>b.textContent===label);assert.ok(button);button.click();button.click();await settle();assert.equal(payloads.length,2);
+ pending.reject(Error('Temporary page failure'));await settle();button=[...f.container.querySelectorAll('button')].find(b=>b.textContent===label);assert.ok(button);button.click();await settle();
+ const field=kind==='history'?'historyOffset':'offset';assert.deepEqual(payloads.map(p=>p[field]),[0,kind==='records'?1:30,kind==='records'?1:30]);
+ if(kind==='sessions')assert.equal(f.container.querySelectorAll('.cq-row').length,2);if(kind==='records')assert.equal(f.container.querySelectorAll('.cq-run').length,2);
+});
+test('job-only deep links retain the resolved execution and model scope when loading older tasks',async()=>{
+ const f=await browserFixture({after:onTestFinished},panelEntry),calls=[],session={topic:'same',executionScope:'verified-exec',modelSessionScope:'verified-model',status:'completed',tags:[],heat:0,taskCount:2,interactionCount:1};
+ const ctx=uiContext(async(_method,p)=>{calls.push(p.payload);if(!p.payload.jobId){assert.equal(p.payload.executionScope,session.executionScope);assert.equal(p.payload.modelSessionScope,session.modelSessionScope);}return {ok:true,result:{session,records:[],offset:p.payload.offset,hasMore:p.payload.offset===0,currentTasks:[],taskHistory:[]}};},{agentId:'main',sessionKey:'agent:main:test',topic:'same',jobId:'exact-job'});
+ f.track(f.ui.mountPanel(f.container,ctx));await settle();await press(f,'加载更早任务');await settle();assert.equal(calls.length,2);assert.equal(calls[0].jobId,'exact-job');assert.ok(!calls[1].jobId);assert.equal(calls[1].executionScope,'verified-exec');assert.equal(calls[1].modelSessionScope,'verified-model');
+});

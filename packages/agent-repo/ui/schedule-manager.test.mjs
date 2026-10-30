@@ -132,3 +132,11 @@ for(const options of [{write:false},{tasks:[{...task,busy:true}]},{tasks:[{...ta
  const f=await fixture({after:onTestFinished},options);assert.equal(f.container.querySelector('[aria-label="任务正文"]').disabled,true);
  assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='保存设置').disabled,true);assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
 });
+
+test('a refreshed catalog cannot rebase old edit drafts onto a newer revision',async()=>{
+ const tasks=[structuredClone(task)],f=await fixture({after:onTestFinished},{tasks,mutate:async payload=>{assert.equal(payload.expectedRevision,task.revision);throw Error('计划版本已变化，请重新读取核对');}});
+ const input=f.container.querySelector('[aria-label="任务名称"]');input.value='Local name';input.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
+ tasks[0]={...tasks[0],revision:'remote-r2',task:'Remote task',schedule:{...tasks[0].schedule,expr:'0 10 * * *'}};click(f.container,'刷新');await settle();
+ assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'Local name');f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));await settle();click(f.container,'确认执行');await settle();
+ assert.equal(f.calls.find(c=>c.action==='scheduleManage').payload.expectedRevision,task.revision);assert.match(f.container.textContent,/计划版本已变化/);assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'Local name');
+});

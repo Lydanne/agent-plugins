@@ -33,21 +33,23 @@ export function useWorkerPanel(projectPage:()=>boolean){
  function cancelSelection(){clearSelection();focusSelector('header .cq-more button');}
  function closeDelete(force=false){if(!deleting.value||force){confirmation.value=null;focusSelector('.cq-refresh');}}
  function confirmDelete(chosen:SessionRow[],bulk=false){if(!alive||deleting.value||!writable.value||!chosen.length||chosen.some(row=>row.canDelete!==true))return;menu.value=null;confirmation.value={rows:chosen.map(row=>({...row})),bulk,error:''};}
- async function refresh(append=false,appendHistory=false){
+ async function refresh(append=false,appendHistory=false,page?:{offset?:number;historyOffset?:number;clearJobId?:boolean}){
   if(!alive||deleting.value||confirmation.value||menu.value||context.value.signal.aborted||!context.value.presented||!context.value.host.connection.canRead||!target.value.sessionKey)return;
-  const token=++generation,key=binding.value;loading.value=true;
+  const token=++generation,key=binding.value,requestedOffset=page?.offset??offset.value,requestedHistory=page?.historyOffset??historyOffset.value;loading.value=true;
   try{
    if(selected.value){
-    const result=JSON.parse(JSON.stringify(await invoke<DetailPage>('detail',{topic:selected.value,executionScope:selectedScope.value,modelSessionScope:selectedModelScope.value,projectId:project.value||undefined,offset:offset.value,limit:1,historyOffset:historyOffset.value,jobId:selectedJobId.value}))) as DetailPage;
+    const result=JSON.parse(JSON.stringify(await invoke<DetailPage>('detail',{topic:selected.value,executionScope:selectedScope.value,modelSessionScope:selectedModelScope.value,projectId:project.value||undefined,offset:requestedOffset,limit:1,historyOffset:requestedHistory,jobId:page?.clearJobId?undefined:selectedJobId.value}))) as DetailPage;
     if(token!==generation||!validScope(key))return;
-    const previous=data.value;offset.value=result.offset??offset.value;
+    const previous=data.value;offset.value=result.offset??requestedOffset;historyOffset.value=requestedHistory;
+    if(result.session){selectedScope.value=result.session.executionScope??null;selectedModelScope.value=result.session.modelSessionScope??null;}
+    if(page?.clearJobId)selectedJobId.value=undefined;
     if(append&&previous)result.records=[...result.records,...previous.records];
     if(appendHistory&&previous)result.taskHistory=[...new Map([...(previous.taskHistory??[]),...(result.taskHistory??[])].filter(task=>!(result.currentTasks??[]).some(current=>current.jobId===task.jobId)).map(task=>[task.jobId,task])).values()].sort((a,b)=>(b.createdAt??0)-(a.createdAt??0));
     data.value=result;
    }else{
-    const result=JSON.parse(JSON.stringify(await invoke<SessionList>('list',{query:query.value,projectId:project.value||undefined,sort:sort.value,offset:offset.value,limit:30}))) as SessionList;
+    const result=JSON.parse(JSON.stringify(await invoke<SessionList>('list',{query:query.value,projectId:project.value||undefined,sort:sort.value,offset:requestedOffset,limit:30}))) as SessionList;
     if(token!==generation||!validScope(key))return;
-    data.value=null;rows.value=append?[...rows.value,...result.sessions]:result.sessions;list.value=result;projectIds.value=result.projectIds??[];
+    offset.value=requestedOffset;data.value=null;rows.value=append?[...rows.value,...result.sessions]:result.sessions;list.value=result;projectIds.value=result.projectIds??[];
     let invalidated=0;for(const row of rows.value){const previous=checked.get(sessionKey(row));if(previous&&(row.canDelete!==true||row.deletionRevision!==previous.deletionRevision)){checked.delete(sessionKey(row));invalidated++;}}
     if(invalidated)deleteFeedback.value={failed:true,text:(deleteFeedback.value?.failed?deleteFeedback.value.text+'；':'')+`${invalidated} 个会话已变化或不可删除，已取消选择，请核对后重新选择。`};
    }
@@ -59,9 +61,9 @@ export function useWorkerPanel(projectPage:()=>boolean){
  function resetProject(){clearSelection();generation++;offset.value=0;rows.value=[];data.value=null;list.value=null;error.value='';void refresh();}
  function search(){clearSelection();generation++;offset.value=0;rows.value=[];void refresh();}
  function refreshButton(){historyOffset.value=0;if(!selected.value)offset.value=0;void refresh();}
- function more(){offset.value+=30;void refresh(true);}
- function earlier(){selectedJobId.value=undefined;offset.value++;void refresh(true);}
- function moreHistory(){historyOffset.value+=30;void refresh(false,true);}
+ function more(){if(!loading.value)void refresh(true,false,{offset:offset.value+30});}
+ function earlier(){if(!loading.value)void refresh(true,false,{offset:offset.value+1,clearJobId:true});}
+ function moreHistory(){if(!loading.value)void refresh(false,true,{historyOffset:historyOffset.value+30});}
  function setView(value:string){view.value=value;scroll.value?.scrollTo(0,0);}
  function setFilter(value:string){filter.value=value;scroll.value?.scrollTo(0,0);}
  function toggleTask(task:TaskSummary){if(data.value?.records.some(r=>r.jobId===task.jobId)){if(collapsed.has(task.jobId))collapsed.delete(task.jobId);else collapsed.add(task.jobId);return;}collapsed.delete(task.jobId);selectedJobId.value=task.jobId;offset.value=task.index;void refresh(false,true);}
@@ -87,7 +89,7 @@ export function useWorkerPanel(projectPage:()=>boolean){
  watch(binding,()=>{generation++;deleteRun++;deleting.value=false;menu.value=null;clearSelection();deleteFeedback.value=null;confirmation.value=null;original.value=null;collapsed.clear();project.value=target.value.projectId??'';selected.value=target.value.topic??null;selectedScope.value=target.value.executionScope;selectedModelScope.value=target.value.modelSessionScope;selectedJobId.value=target.value.jobId;query.value='';rows.value=[];data.value=null;list.value=null;projectIds.value=[];error.value='';loading.value=false;offset.value=0;historyOffset.value=0;void refresh();},{flush:'sync'});
  watch([()=>context.value.presented,()=>context.value.host.connection.canRead,()=>context.value.host.connection.canWrite],()=>{generation++;deleteRun++;deleting.value=false;menu.value=null;clearSelection();confirmation.value=null;original.value=null;loading.value=false;if(!context.value.host.connection.canRead){rows.value=[];data.value=null;list.value=null;}if(context.value.presented&&context.value.host.connection.canRead)void refresh();},{flush:'sync'});
  let clock:ReturnType<typeof setInterval>,timer:ReturnType<typeof setInterval>;
- onMounted(()=>{clock=setInterval(()=>{if(alive&&context.value.presented&&context.value.host.connection.canRead)now.value=Date.now();},1000);timer=setInterval(()=>{const active=root.value?.ownerDocument.activeElement;if((offset.value===0||selectedJobId.value)&&historyOffset.value===0&&!(root.value?.contains(active??null)&&active?.matches('input,select,textarea')))void refresh();},5000);void refresh();});
+ onMounted(()=>{clock=setInterval(()=>{if(alive&&context.value.presented&&context.value.host.connection.canRead)now.value=Date.now();},1000);timer=setInterval(()=>{if(loading.value)return;const active=root.value?.ownerDocument.activeElement;if((offset.value===0||selectedJobId.value)&&historyOffset.value===0&&!(root.value?.contains(active??null)&&active?.matches('input,select,textarea')))void refresh();},5000);void refresh();});
  onBeforeUnmount(()=>{alive=false;generation++;deleteRun++;clearInterval(clock);clearInterval(timer);});
  return {context,target,root,scroll,writable,selected,view,filter,query,project,sort,rows,data,list,projects,error,loading,now,menu,selectionMode,checked,collapsed,deleting,deleteFeedback,confirmation,original,originalPayload,history,eligible,allChecked,someChecked,safe,multiple,pick,toggle,selectAll,cancelSelection,confirmDelete,closeDelete,executeDelete,refresh,choose,back,resetProject,search,refreshButton,more,earlier,moreHistory,setView,setFilter,toggleTask,showOriginal};
 }

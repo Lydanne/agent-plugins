@@ -4,6 +4,7 @@ import SourceView from './SourceView.vue';
 import MessageText from './MessageText.vue';
 import ToolCalls from './ToolCalls.vue';
 import ProcessTimeline from './ProcessTimeline.vue';
+import ConversationRecord from './ConversationRecord.vue';
 import type {TaskRecord} from './models';
 const redact=(value:string)=>value;
 const task:TaskRecord={jobId:'fixture-job',status:'running',createdAt:1000,request:{availability:'available'},events:[]};
@@ -33,4 +34,23 @@ describe('Worker Vue record components',()=>{
   const wrapper=mount(ProcessTimeline,{props:{record,redact,now:9000}});
   expect(wrapper.findAll('.cq-stage strong').map(row=>row.text())).toEqual(['任务受理','Worker 开始执行','Worker · 请求上下文','Main · 等待用户补充','用户 · 卡片选择','已完成']);expect(wrapper.text()).toContain('依据：原消息');expect(wrapper.text()).toContain('查询范围');wrapper.unmount();
  });
+});
+
+it('keeps expanded timeline tools and focused nodes when earlier events arrive',async()=>{
+ const event=(id:string,at:number)=>({event:'item.completed',time:at,item:{id,type:'command_execution',command:id,status:'completed',exit_code:0}});
+ const a=event('A',4000),b=event('B',5000),wrapper=mount(ProcessTimeline,{attachTo:document.body,props:{record:{...task,events:[a,b]},redact,now:9000}});
+ const original=wrapper.findAll('.cq-calls>details')[0]!.element as HTMLDetailsElement;original.open=true;const summary=original.querySelector('summary')!;summary.tabIndex=0;summary.focus();
+ await wrapper.setProps({record:{...task,events:[event('X',3000),a,b]}});
+ const retained=wrapper.findAll('.cq-calls>details').find(node=>node.text().includes('工具命令 · A'))!.element;
+ expect(retained).toBe(original);expect(original.open).toBe(true);expect(document.activeElement).toBe(summary);wrapper.unmount();
+});
+
+it('keeps an expanded message code reader when an earlier reply arrives',async()=>{
+ const event=(id:string,at:number,text:string)=>({event:'item.completed',time:at,item:{id,type:'agent_message',text}});
+ const a=event('A',4000,'```json\n{"complete":"value"}\n```'),b=event('B',5000,'Later reply');
+ const record={...task,questions:[{id:'question',createdAt:2000,question:'Original question'}],events:[a,b]};
+ const wrapper=mount(ConversationRecord,{props:{record,view:'records',filter:'all',redact,now:9000}});
+ const reader=wrapper.findAllComponents(SourceView)[0]!;const original=reader.element as HTMLDetailsElement;original.open=true;await reader.trigger('toggle');expect(reader.findAll('.cq-source-line')).toHaveLength(1);
+ await wrapper.setProps({record:{...record,events:[event('X',3000,'Earlier reply'),a,b]}});
+ const retained=wrapper.findAllComponents(SourceView)[0]!;expect(retained.element).toBe(original);expect(original.open).toBe(true);expect(retained.findAll('.cq-source-line')).toHaveLength(1);wrapper.unmount();
 });

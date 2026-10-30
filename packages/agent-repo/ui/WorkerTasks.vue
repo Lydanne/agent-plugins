@@ -30,7 +30,7 @@ onMounted(()=>{
  timer=setInterval(()=>{const focused=root.value?.ownerDocument.activeElement;if(!root.value?.contains(focused??null)||!focused?.matches('input,select,textarea'))void refresh(true);},5000);
  void refresh();
 });
-watch([()=>context.value.presented,()=>context.value.host.connection.canRead,()=>props.agentId],()=>{generation++;if(context.value.presented&&context.value.host.connection.canRead)void refresh();else{data.value=null;loading.value=false;}},{flush:'sync'});
+watch([()=>context.value.presented,()=>context.value.host.connection.canRead,()=>context.value.host.connection.canWrite,()=>props.agentId],()=>{generation++;if(context.value.presented&&context.value.host.connection.canRead)void refresh();else{data.value=null;loading.value=false;}},{flush:'sync'});
 onBeforeUnmount(()=>{generation++;clearInterval(clock);clearInterval(timer);stop();});
 </script>
 <template>

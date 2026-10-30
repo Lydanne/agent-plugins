@@ -36,3 +36,10 @@ test('organization directory sync exposes incomplete coverage and keeps retry re
  ctx.host.connection.canWrite=true;f.track(f.ui.mountEntitiesPage(f.container,ctx));await settle();click(f.container,'同步飞书组织与全部部门');await settle();click(f.container,'同步飞书组织与全部部门');await settle();const requests=calls.filter(c=>c.actionId==='projects-directorySync');assert.equal(requests.length,2);assert.equal(requests[0].payload.requestId,requests[1].payload.requestId);assert.equal(requests[0].payload.accountId,'a');assert.match(f.container.textContent,/27\/27/);assert.match(f.container.textContent,/资料仍不完整/);assert.match(f.container.textContent,/tenant:tenant:readonly/);
  ctx.host.connection.canWrite=false;ctx.notify();await settle();assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='同步飞书组织与全部部门').disabled,true);
 });
+
+test('refreshing while directory sync is pending does not leave its button permanently busy',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../entities-page.mjs')),pending=deferred();let starts=0;
+ const ctx=host(async(_method,p)=>{if(p.actionId==='projects-directorySync'){starts++;return pending.promise.then(result=>({ok:true,result}));}return {ok:true,result:p.actionId==='projects-directorySyncInfo'?{available:true,accounts:[{accountId:'account'}],run:null}:p.actionId==='projects-entityTypes'?{types,total:3}:{entities:[record],total:1,nextOffset:null}};});
+ ctx.host.connection.canWrite=true;f.track(f.ui.mountEntitiesPage(f.container,ctx));await settle();click(f.container,'同步飞书组织与全部部门');await settle();assert.equal(starts,1);click(f.container,'刷新资料');await settle();
+ pending.resolve({status:'completed',storedDepartments:1,departments:1,errors:[]});await settle();assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='同步飞书组织与全部部门').disabled,false);
+});

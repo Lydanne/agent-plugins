@@ -47,3 +47,10 @@ test('long skill instructions stay searchable and complete in detail without exp
  click(f.container,longProvider.skills[0].name);await settle();assert.equal(f.container.querySelector('.ar-maintenance-description').textContent,description);
  click(f.container,'返回列表');await settle();assert.ok(f.container.querySelector('.ar-maintenance-detail')===null);assert.equal(f.window.document.activeElement.dataset.itemKey,'fixture.cli:'+longProvider.skills[0].name);
 });
+
+for(const status of ['failed','unknown'])test(`maintenance ${status} receipts explain the actual outcome`,async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../skill-maintenance-page.mjs'));
+ const ctx=uiContext(async(_m,p)=>({ok:true,result:p.actionId==='projects-maintenanceRun'?{status}:snapshot}));ctx.host.connection.canWrite=true;
+ f.track(f.ui.mountSkillMaintenance(f.container,ctx,'main',{sources}));await settle();click(f.container,'关联 CLI');await settle();click(f.container,'Fixture CLI');await settle();click(f.container,'检查更新');await settle();
+ assert.match(f.container.textContent,status==='failed'?/维护操作失败/:/维护结果待核验/);assert.ok(!f.container.textContent.includes('维护请求已受理'));assert.ok(!f.container.textContent.includes('维护操作已完成'));
+});

@@ -1,5 +1,7 @@
 # AgentRepo / AgentWorker Vue 重构验收记录
 
+本记录保留首次重构基线验收结果。后续整体 Review 的修复、复验及当前安装包见 [Review 记录](control-ui-vue-review.md)。
+
 验证日期：2026-10-30（Asia/Shanghai）。Node v24.22.1，pnpm 10.33.2。实现与验证均在独立 checkout 执行。
 
 全部正式入口及兼容入口已使用 Vue 3 + TypeScript + shadcn-vue；完整功能清单见 [迁移清单](control-ui-vue-migration.md)。公开入口、导航标识、RPC action/payload、分块协议、revision/requestId 语义保持兼容。管理中心跨会话查询与 Worker 当前会话查询各自封装。

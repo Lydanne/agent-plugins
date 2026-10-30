@@ -239,3 +239,11 @@ test('OpenClaw linked tasks show native schedule, admission status, source and r
  const ctx=uiContext(async(_method,p)=>({ok:true,result:p.actionId==='projects-taskRecord'?{...task.records[0],logs:[{stage:'原群回复',status:'delivered',reason:'消息 receipt-one'}]}:{...catalog('main'),scheduledTasks:[task]}}));
  f.track(f.ui.mountProjects(f.container,ctx));await settle();assert.match(f.container.textContent,/OpenClaw 联动/);assert.match(f.container.textContent,/每天 09:00/);assert.match(f.container.textContent,/Main 已接纳/);assert.ok(!f.container.textContent.includes('undefined'));await openTask(f);await click(f.container,'任务设置');await settle();assert.ok(!f.container.textContent.includes('undefined'));assert.match(f.container.textContent,/native-one/);assert.match(f.container.textContent,/Requester/);await click(f.container,'执行记录');await settle();await openRun(f);assert.match(f.container.textContent,/消息已送达/);assert.match(f.container.textContent,/receipt-one/);
 });
+
+test('leaving an unfinished task record and reopening it starts a fresh read',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),pending=deferred();let reads=0;
+ const ctx=uiContext(async(_method,p)=>p.actionId==='projects-taskRecord'?(++reads===1?pending.promise:{ok:true,result:recordResult(p,{logs:[{stage:'Current reopened record',status:'completed'}]})}):{ok:true,result:taskCatalog('main',{records:[{date:'2026-10-14',status:'completed',failures:[]}]})});
+ f.track(f.ui.mountProjects(f.container,ctx));await settle();await openTask(f);await openRun(f);assert.equal(reads,1);
+ await click(f.container,'返回执行记录');await openRun(f);assert.equal(reads,2);assert.match(f.container.textContent,/Current reopened record/);
+ pending.resolve({ok:true,result:{taskId:'repo-sync:main',runId:'repo-sync:main:2026-10-14',logs:[{stage:'Stale first request'}]}});await settle();assert.ok(!f.container.textContent.includes('Stale first request'));
+});

@@ -55,3 +55,22 @@ it('keeps generated accessibility IDs unique across mounted plugin apps',()=>{
  expect(a.container.querySelector('label')!.id).not.toBe(b.container.querySelector('label')!.id);
  av.dispose?.();bv.dispose?.();a.container.remove();b.container.remove();
 });
+
+it('retires the old host and cancellation lifetime while preserving same-lifetime updates',async()=>{
+ const a=fixture(),b=fixture();let mounts=0;
+ const component=defineComponent({setup(){mounts++;const ctx=useHostContext();return ()=>h('input',{value:String(ctx.value.host.connection.canRead)});}});
+ const view=mountVueView(component)(a.container,a.ctx)!;const original=a.container.querySelector('input');
+ a.notify();view.update?.({...a.ctx,props:{topic:'same-lifetime'}});await nextTick();expect(mounts).toBe(1);expect(a.container.querySelector('input')).toBe(original);
+ view.update?.(b.ctx);await nextTick();expect(mounts).toBe(2);expect(a.listeners.size).toBe(0);expect(b.listeners.size).toBe(1);
+ a.controller.abort();expect(a.container.querySelector('input')).not.toBeNull();
+ Object.assign(b.ctx.host.connection,{canRead:false});b.notify();await nextTick();expect(a.container.querySelector('input')!.value).toBe('false');
+ const replacement=new AbortController();view.update?.({...b.ctx,signal:replacement.signal});await nextTick();expect(mounts).toBe(3);expect(b.listeners.size).toBe(1);
+ b.controller.abort();expect(a.container.querySelector('input')).not.toBeNull();replacement.abort();expect(a.container.children).toHaveLength(0);expect(b.listeners.size).toBe(0);
+ view.dispose?.();a.container.remove();b.container.remove();
+});
+it('does not mount an already-aborted lifetime and observes the public host abort signal',()=>{
+ const f=fixture(),hostController=new AbortController(),setup=vi.fn();Object.assign(f.ctx.host,{signal:hostController.signal});
+ const component=defineComponent({setup(){setup();return ()=>h('p','mounted');}});
+ const view=mountVueView(component)(f.container,f.ctx)!;expect(setup).toHaveBeenCalledTimes(1);hostController.abort();expect(f.listeners.size).toBe(0);expect(f.container.children).toHaveLength(0);view.dispose?.();
+ const cancelled=fixture();cancelled.controller.abort();const never=mountVueView(component)(cancelled.container,cancelled.ctx)!;expect(setup).toHaveBeenCalledTimes(1);expect(cancelled.listeners.size).toBe(0);expect(cancelled.container.children).toHaveLength(0);never.dispose?.();f.container.remove();cancelled.container.remove();
+});

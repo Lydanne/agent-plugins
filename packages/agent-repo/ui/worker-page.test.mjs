@@ -34,3 +34,10 @@ test('management clocks tick locally, refresh terminal status, and stop reads af
  vi.advanceTimersByTime(5000);await settle();assert.match(f.container.textContent,/总用时 21s/);
  view.dispose();const before=reads;vi.advanceTimersByTime(10000);await settle();assert.equal(reads,before);
 });
+
+test('a permission update during a pending read reloads the compatibility Worker module',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../worker-page.mjs')),pending=deferred();let reads=0;
+ const ctx=uiContext(async()=>++reads===1?pending.promise:{ok:true,result});f.track(f.ui.mountWorkerPage(f.container,ctx,'main'));await settle();
+ ctx.host.connection.canWrite=false;ctx.notify();await settle();assert.equal(reads,2);assert.equal(f.container.querySelector('[aria-label="Agent Worker 任务管理"]').getAttribute('aria-busy'),'false');
+ pending.resolve({ok:true,result:{...result,taskTotal:999}});await settle();assert.ok(!f.container.textContent.includes('999 个'));assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='刷新任务').disabled,false);
+});
