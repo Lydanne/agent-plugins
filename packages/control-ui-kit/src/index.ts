@@ -7,6 +7,8 @@ export {default as Input} from './components/input/Input.vue';
 export {Badge} from './components/badge';
 export {default as NativeSelect} from './components/native-select/NativeSelect.vue';
 export {default as Popover} from './components/Popover.vue';
+export {default as AdvancedFilters} from './components/AdvancedFilters.vue';
+export {default as HelpTip} from './components/HelpTip.vue';
 export * from './components/checkbox';
 export * from './components/switch';
 export * from './components/tooltip';

@@ -8,7 +8,7 @@ async function ready(page:import('@playwright/test').Page,section='audit'){
 for(const width of [320,400,720,1280])test(`audit and portal fit ${width}px with inherited light/dark theme`,async({page})=>{
  await page.setViewportSize({width,height:900});const errors=await ready(page);
  await expect(page.getByRole('heading',{name:'审计',exact:true})).toBeVisible();
- await page.getByText(/测试计划 0/).first().click();await expect(page.getByRole('cell',{name:'source',exact:true})).toBeVisible();
+ await page.getByText(/测试计划 0/).first().click();await expect(page.getByRole('cell',{name:'source',exact:true})).toBeVisible();await page.getByRole('dialog',{name:'审计详情',exact:true}).getByRole('button',{name:'关闭',exact:true}).click();
  await page.getByRole('button',{name:'打开回收站'}).click();const dialog=page.getByRole('dialog',{name:'回收站',exact:true});await expect(dialog).toBeVisible();await expect(dialog).toContainText('共 26 项');
  const box=await dialog.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width);
  await page.evaluate(()=>{(window as any).fixture.setTheme('dark');});await expect(dialog).toHaveCSS('background-color','rgb(36, 38, 37)');
@@ -61,4 +61,15 @@ test('a native host modal stays interactive above a plugin modal',async({page})=
 
 test('plugin utility initialization leaves host Tailwind variables and native controls intact',async({page})=>{
  await ready(page);const state=await page.evaluate(()=>{const parent=document.createElement('section');parent.style.setProperty('--tw-shadow','host-shadow');parent.style.setProperty('--tw-translate-x','123px');const button=document.createElement('button');button.textContent='Host control';parent.append(button);document.body.append(parent);const css=getComputedStyle(button);const result={shadow:css.getPropertyValue('--tw-shadow').trim(),translate:css.getPropertyValue('--tw-translate-x').trim(),display:css.display};parent.remove();return result;});expect(state.shadow).toBe('host-shadow');expect(state.translate).toBe('123px');expect(state.display).toBe('inline-block');
+});
+
+test('advanced audit filters apply atomically, cancel drafts and close on Agent changes',async({page})=>{
+ await ready(page);await expect(page.getByRole('textbox',{name:'发起人 ID',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'审计高级筛选',exact:true}).click();let dialog=page.getByRole('dialog',{name:'审计高级筛选',exact:true});
+ await dialog.getByRole('textbox',{name:'发起人 ID',exact:true}).fill('draft-actor');await dialog.getByRole('button',{name:'取消',exact:true}).click();
+ await page.getByRole('button',{name:'刷新审计'}).click();expect(await page.evaluate(()=>(window as any).fixture.calls.filter((p:any)=>p.actionId==='projects-audit').at(-1).payload.actorId)).toBeUndefined();
+ await page.getByRole('button',{name:'审计高级筛选',exact:true}).click();await expect(dialog.getByRole('textbox',{name:'发起人 ID',exact:true})).toHaveValue('');
+ await dialog.getByRole('textbox',{name:'发起人 ID',exact:true}).fill('confirmed-actor');await dialog.getByRole('button',{name:'应用筛选'}).click();await expect(dialog).toBeHidden();await expect(page.getByText('已应用 1 项高级条件')).toBeVisible();
+ expect(await page.evaluate(()=>(window as any).fixture.calls.filter((p:any)=>p.actionId==='projects-audit').at(-1).payload.actorId)).toBe('confirmed-actor');
+ await page.getByRole('button',{name:'审计高级筛选',exact:true}).click();await page.evaluate(()=>(window as any).fixture.host.agents.select('other'));await expect(dialog).toHaveCount(0);
 });

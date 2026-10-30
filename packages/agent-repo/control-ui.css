@@ -582,3 +582,61 @@
 
 [data-ocp-ui] .ar-console-find [data-slot="checkbox"] { min-height: 0; width: 16px; height: 16px; padding: 0; }
 .ar-schedule-form>.ar-schedule-body{grid-column:1/-1}.ar-schedule-body textarea{box-sizing:border-box;width:100%;min-width:0;resize:vertical;padding:10px;font:inherit;line-height:1.6;background:var(--bg);color:inherit;border:1px solid #8884;border-radius:6px}
+
+/* Shared management rhythm: compact controls, content first, secondary tasks in overlays. */
+.ar-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-left:auto}
+.ar-list-toolbar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:0 0 24px;padding:16px;background:color-mix(in srgb,var(--ar-ink) 3%,transparent);border:1px solid var(--ar-line);border-radius:10px}
+.ar-quick-filters{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.ar-quick-filters label{display:grid;gap:6px;font-size:12px;color:var(--ar-muted);min-width:150px}
+.ar-filter-summary{color:var(--ar-accent,#496d63);font-size:12px;align-self:center}
+.ar-entities-header .ar-heading-actions{margin-left:auto}
+[data-ocp-overlay] .ar-entities-sync{border:0;background:transparent;padding:16px 0;margin:0;display:grid;gap:12px}
+[data-ocp-overlay] .ar-entities-sync p{margin:0;line-height:1.7;font-size:13px}
+[data-ocp-overlay] .ar-entities-sync small{color:var(--ocp-muted);font-size:12px;line-height:1.6}
+[data-ocp-overlay] .ar-entities-sync button{justify-self:start}
+[data-ocp-overlay] .ar-person-editor .ar-people-form{border:0;background:transparent;padding:20px 0 0;margin:0}
+[data-ocp-overlay] .ar-person-editor .ar-people-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+[data-ocp-overlay] .ar-person-editor .ar-people-edit-field{display:grid;gap:6px;font-size:13px}
+[data-ocp-overlay] .ar-person-editor .ar-people-edit-field small{color:var(--ocp-muted)}
+[data-ocp-overlay] .ar-person-editor .ar-people-form-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:20px;margin-top:20px;border-top:1px solid var(--ocp-border)}
+.ar-recycle-settings-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:12px 0}
+[data-ocp-overlay] .ar-recycle-policy{display:grid;gap:16px;padding:20px 0}
+[data-ocp-overlay] .ar-recycle-policy label{display:grid;gap:8px}
+[data-ocp-overlay] .ar-log-confirm{display:block;border:0;background:transparent;padding:8px 0;margin:0;font-size:13px;line-height:1.8}
+[data-ocp-overlay] .ar-log-confirm button{margin:16px 8px 0 0}
+@container agent-management (max-width:720px){.ar-section-heading{gap:12px;align-items:flex-start;flex-wrap:wrap}.ar-heading-actions{justify-content:flex-start;margin-left:0}.ar-list-toolbar{padding:12px;gap:10px}.ar-quick-filters{flex:1}.ar-quick-filters label{min-width:120px;flex:1}}
+@media(max-width:420px){[data-ocp-overlay] .ar-person-editor .ar-people-edit-grid{grid-template-columns:1fr}}
+.ar-people-page-controls{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:12px 0;margin:0 0 16px;border-bottom:1px solid var(--ar-line)}
+.ar-people-page-controls>label{display:grid;gap:6px;margin-left:auto;min-width:220px;max-width:100%;font-size:12px;color:var(--ar-muted)}
+.ar-people-page-controls .ar-filter-summary{align-self:center}
+.ar-section-heading h2,.ar-entities-header h2{font-size:21px;letter-spacing:-.025em;line-height:1.3}
+.ar-section-heading>div>p,.ar-entities-header>div>p{font-size:13px;line-height:1.6;margin-top:6px}
+.ar-entities-toolbar{gap:10px;margin:0 0 20px}
+.ar-entities-toolbar>input{max-width:560px}
+.ar-entities-list>button{border-radius:8px;transition:background .12s ease}
+.ar-entities-result-heading{margin-bottom:12px}
+.ar-worker-table-wrap{border:1px solid var(--ar-line);border-radius:10px;overflow:auto}
+.ar-worker-table thead th{background:color-mix(in srgb,var(--ar-ink) 3%,var(--ar-surface));font-size:12px;color:var(--ar-muted);font-weight:500}
+.ar-worker-table tbody tr:hover{background:color-mix(in srgb,var(--ar-ink) 2%,transparent)}
+.ar-worker-table td .ar-description{font-size:12px;line-height:1.6}
+@container agent-management (max-width:560px){.ar-people-page-controls>label{margin-left:0;flex:1;min-width:180px}}
+.ar-audit-table-wrap{overflow:auto;border:1px solid var(--ar-line);border-radius:10px;background:color-mix(in srgb,var(--ar-ink) 1%,transparent)}
+.ar-audit-table th{text-align:left;font-size:12px;font-weight:500;color:var(--ar-muted);background:color-mix(in srgb,var(--ar-ink) 3%,var(--ar-surface));white-space:nowrap}
+.ar-audit-table td{font-size:13px;vertical-align:middle}
+.ar-audit-table th,.ar-audit-table td{padding:12px 16px;border-bottom:1px solid var(--ar-line)}
+.ar-audit-table tr:last-child td{border-bottom:0}
+.ar-audit-time{white-space:nowrap;font-size:12px!important;color:var(--ar-muted)}
+.ar-audit-table .ar-audit-target{padding:0;height:auto;max-width:320px;white-space:normal;overflow-wrap:anywhere;text-align:left;font-weight:600;color:var(--ar-ink);justify-content:flex-start}
+.ar-audit-action{display:block;margin-top:3px;font-size:12px;color:var(--ar-muted)}
+.ar-audit-status{display:inline-block;white-space:nowrap;font-size:11px;padding:3px 8px;border-radius:5px;background:color-mix(in srgb,var(--ar-ink) 6%,transparent);color:var(--ar-muted)}
+.ar-audit-status[data-status=succeeded]{color:#528272;background:color-mix(in srgb,#528272 10%,transparent)}
+.ar-audit-status[data-status=failed]{color:#af5446;background:color-mix(in srgb,#af5446 10%,transparent)}
+[data-ocp-overlay] .ar-audit-detail h3{font-size:18px;line-height:1.4;margin:16px 0 6px}
+[data-ocp-overlay] .ar-audit-detail p{font-size:13px;line-height:1.7;margin:12px 0;overflow-wrap:anywhere}
+[data-ocp-overlay] .ar-audit-detail pre,[data-ocp-overlay] .ar-audit-detail dd{overflow-wrap:anywhere;white-space:pre-wrap;font-size:12px}
+[data-ocp-overlay] .ar-audit-detail table{font-size:13px;margin:16px 0}
+[data-ocp-overlay] .ar-audit-detail th,[data-ocp-overlay] .ar-audit-detail td{padding:10px;text-align:left;border-bottom:1px solid var(--ocp-border);overflow-wrap:anywhere;white-space:normal}
+[data-ocp-overlay] .ar-audit-detail summary{cursor:pointer;font-size:13px;padding:12px 0}
+@container agent-management (max-width:560px){.ar-audit-table th,.ar-audit-table td{padding:10px}.ar-audit-target{min-width:120px}.ar-audit-time{white-space:normal;min-width:100px}}
+
+.ar-quick-filters label>[data-slot=native-select-wrapper],.ar-people-page-controls label>[data-slot=native-select-wrapper]{width:100%}

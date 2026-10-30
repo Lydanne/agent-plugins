@@ -3,7 +3,7 @@ import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDe
 import {useHostContext,useOverlayTarget} from '../host';
 import {Button} from './button';
 import {computed,watch} from 'vue';
-const props=withDefaults(defineProps<{open:boolean;title:string;description?:string;preventClose?:boolean;showClose?:boolean;contentClass?:string;returnFocus?:()=>HTMLElement|null}>(),{showClose:true});
+const props=withDefaults(defineProps<{open:boolean;title:string;sessionScoped?:boolean;description?:string;preventClose?:boolean;showClose?:boolean;contentClass?:string;returnFocus?:()=>HTMLElement|null}>(),{showClose:true,sessionScoped:true});
 function externalNativeModal(){return Array.from(target.ownerDocument.querySelectorAll('dialog[open]')).some(dialog=>{try{return dialog.matches(':modal')&&!target.contains(dialog);}catch{return false;}});}
 function changeOpen(value:boolean){if(!props.preventClose&&(value||!externalNativeModal()))emit('update:open',value);}
 function guardClose(event:Event){if(props.preventClose)event.preventDefault();}
@@ -20,7 +20,7 @@ function restoreFocus(event:Event){
 watch([
  ()=>context.value.presented,()=>context.value.host.connection.canRead,()=>context.value.host.connection.canWrite,
  ()=>context.value.props.agentId??context.value.host.agents.selectedId,
- ()=>context.value.props.sessionKey??context.value.host.sessions.selectedKey,
+ ()=>props.sessionScoped?(context.value.props.sessionKey??context.value.host.sessions.selectedKey):undefined,
  ()=>context.value.props.projectId,()=>context.value.props.jobId,()=>context.value.props.topic,
 ],()=>emit('update:open',false),{flush:'sync'});
 const visible=computed(()=>props.open&&context.value.presented&&context.value.host.connection.canRead);

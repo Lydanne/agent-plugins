@@ -12,8 +12,8 @@ test('full page is Agent-wide without a conversation and supports statistics, fi
  f.track(f.ui.mountPeoplePage(f.container,ctx));await settle();
  assert.ok(f.container.querySelector('dialog')===null);assert.match(f.container.textContent,/跨会话统一管理/);assert.match(f.container.textContent,/测试同事/);assert.match(f.container.textContent,/匹配人员/);
  assert.equal(calls[0].sessionKey,'agent:main:agent-repo-people');assert.equal(calls[0].agentId,'main');
- select(f.window,f.container,'账号关联状态','unknown');await settle();assert.equal(calls.at(-1).payload.giteaSource,'unknown');
- select(f.window,f.container,'资料完整度','email');await settle();assert.equal(calls.at(-1).payload.missing,'email');
+ f.container.querySelector('[aria-label="人员筛选"]').click();await settle();select(f.window,f.container,'账号关联状态','unknown');await settle();click(f.container,'应用筛选');await settle();assert.equal(calls.at(-1).payload.giteaSource,'unknown');
+ f.container.querySelector('[aria-label="人员筛选"]').click();await settle();select(f.window,f.container,'资料完整度','email');await settle();click(f.container,'应用筛选');await settle();assert.equal(calls.at(-1).payload.missing,'email');
  f.container.querySelector('[aria-label="编辑人员"]').click();await settle();const name=f.container.querySelector('[aria-label="编辑姓名"]');name.value='草稿';name.dispatchEvent(new f.window.Event('input'));
  const count=calls.length;ctx.host.sessions.selectedKey='agent:main:another';ctx.notify();await settle();assert.equal(calls.length,count);assert.equal(f.container.querySelector('[aria-label="编辑姓名"]').value,'草稿');
  f.window.document.activeElement?.blur();f.container.dispatchEvent(new f.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.ok(f.container.querySelector('.ar-people-page'));
