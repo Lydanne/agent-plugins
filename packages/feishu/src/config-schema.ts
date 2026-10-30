@@ -243,6 +243,7 @@ const FeishuGroupSchema = buildGroupEntrySchema({
 }).omit({ toolsBySender: true });
 
 const FeishuSharedConfigShape = {
+  directorySync: z.object({enabled:z.boolean().default(true),organizationIntervalMinutes:z.number().int().min(15).max(1440).default(60),fullIntervalMinutes:z.number().int().min(60).max(10080).default(360),eventDebounceSeconds:z.number().int().min(1).max(30).default(10)}).strict().optional(),
   webhookHost: z.string().optional(),
   webhookPort: z.number().int().positive().optional(),
   capabilities: z.array(z.string()).optional(),

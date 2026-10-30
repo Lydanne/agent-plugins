@@ -1,31 +1,32 @@
+import {directoryRead} from './organization-refresh.js';
 import {getGraphService,getEntitySyncProvider,type GraphChange} from '../../agent-repo-api/entities.mjs';
 import {getPeopleService} from '../../agent-repo-api/people.mjs';
 import {createFeishuClient} from './client.js';
 import type {ResolvedFeishuAccount} from './types.js';
 /** App/tenant scope is bound by the admitted route; never called with model-supplied credentials. */
-export async function syncFeishuDirectory(input:{agentId:string;account:ResolvedFeishuAccount;openIds:string[];log:(...args:unknown[])=>void}){
+export async function syncFeishuDirectory(input:{agentId:string;account:ResolvedFeishuAccount;openIds:string[];leaseToken?:string;log:(...args:unknown[])=>void}){
  const graph=getGraphService({agentId:input.agentId}),people=getPeopleService(input.agentId);
  if(!graph||!people||!input.account.appId)return {status:'unavailable' as const};
  const {account}=input,scope=JSON.stringify([account.accountId,account.appId]);
- const producer=graph.forSource({kind:'channel',namespace:'feishu',scope,actor:'feishu-directory',types:['organization','department'],relations:['member_of','belongs_to','parent_department']});
- if(getEntitySyncProvider('feishu')?.info({agentId:input.agentId,sessionKey:'agent:'+input.agentId+':entity-enrichment',accountId:account.accountId}).run?.status==='running')return {status:'deferred' as const,reason:'organization_sync_running'};
+ const rawProducer=graph.forSource({kind:'channel',namespace:'feishu',scope,actor:'feishu-directory',types:['organization','department'],relations:['member_of','belongs_to','parent_department']}),producer=input.leaseToken?rawProducer.withSyncLease(input.leaseToken):rawProducer;
+ if(!input.leaseToken&&getEntitySyncProvider('feishu')?.info({agentId:input.agentId,sessionKey:'agent:'+input.agentId+':entity-enrichment',accountId:account.accountId}).run?.status==='running')return {status:'deferred' as const,reason:'organization_sync_running'};
  const client=createFeishuClient(account);let failures=0;
  const errors:Array<{stage:string;code?:number;requiredScopes?:string[]}>=[];
  const issue=(stage:string,code?:number,cause?:unknown)=>{failures++;const response=(cause as {response?:{data?:{code?:number;error?:{permission_violations?:Array<{subject?:string}>}}}}|undefined)?.response?.data;const actualCode=code??response?.code;const requiredScopes=(response?.error?.permission_violations??[]).map(v=>v.subject).filter((v):v is string=>typeof v==='string'&&/^[a-z][a-z0-9_.:]{1,99}$/.test(v)).slice(0,10);if(errors.length<20)errors.push({stage,...(typeof actualCode==='number'?{code:actualCode}:{}),...(requiredScopes.length?{requiredScopes}:{})});};
- const check=()=>{if(getGraphService({agentId:input.agentId})!==graph||getPeopleService(input.agentId)!==people)throw Error('directory_generation_changed');};
+ const deadline=Date.now()+120000;const check=()=>{if(Date.now()>deadline)throw Error('directory_enrichment_deadline');if(getGraphService({agentId:input.agentId})!==graph||getPeopleService(input.agentId)!==people)throw Error('directory_generation_changed');};
  let organization:string|undefined;
- try{const stamp=new Date().toISOString(),result=await client.tenant.tenant.query({}),tenant=result.data?.tenant;check();if(result.code===0&&tenant?.tenant_key&&tenant.name)organization=producer.upsert({typeId:'organization',externalId:'tenant:'+tenant.tenant_key,name:tenant.name,observedAt:stamp}).entity.id;else issue('organization',result.code,{response:{data:result}});}catch(cause){issue('organization',undefined,cause);}
+ try{const stamp=new Date().toISOString(),result=await directoryRead(account,()=>client.tenant.tenant.query({})),tenant=result.data?.tenant;check();if(result.code===0&&tenant?.tenant_key&&tenant.name)organization=producer.upsert({typeId:'organization',externalId:'tenant:'+tenant.tenant_key,name:tenant.name,observedAt:stamp}).entity.id;else issue('organization',result.code,{response:{data:result}});}catch(cause){issue('organization',undefined,cause);}
  let stage='contact';
  // No global directory scan. Enrich only admitted people and their department ancestry.
  for(const openId of [...new Set(input.openIds)].slice(0,21))try{
   const stamp=new Date().toISOString(),proof={kind:'event' as const,id:'contact-observation:'+openId+':'+stamp},changes:GraphChange[]=[];
-  stage='contact';const response=await client.contact.user.get({path:{user_id:openId},params:{user_id_type:'open_id',department_id_type:'open_department_id'}});
+  stage='contact';const response=await directoryRead(account,()=>client.contact.user.get({path:{user_id:openId},params:{user_id_type:'open_id',department_id_type:'open_department_id'}}));
   check();if(response.code!==0||response.data?.user?.open_id!==openId)throw Object.assign(Error('contact_unavailable'),{apiCode:response.code,response:{data:response}});
   const user=response.data.user,person=people.lookup({accountId:account.accountId,appId:account.appId!,openId});if(!person)continue;
   const departmentNodes=new Map<string,string>(),parents=new Map<string,string>(),knownParents=new Set<string>(),seen=new Set<string>();
   async function department(id:string,depth=0):Promise<string|undefined>{
    if(id==='0')return undefined;if(departmentNodes.has(id))return departmentNodes.get(id);if(seen.has(id)||depth>=20)throw Error('department_hierarchy_incomplete');seen.add(id);
-   stage='department';const result=await client.contact.department.get({path:{department_id:id},params:{department_id_type:'open_department_id'}}),data=result.data?.department;
+   stage='department';const result=await directoryRead(account,()=>client.contact.department.get({path:{department_id:id},params:{department_id_type:'open_department_id'}})),data=result.data?.department;
    check();if(result.code!==0||!data?.name||data.open_department_id!==id)throw Object.assign(Error('department_unavailable'),{apiCode:result.code,response:{data:result}});
    const node=producer.upsert({typeId:'department',externalId:id,name:data.name,observedAt:stamp}).entity.id;departmentNodes.set(id,node);
    if(typeof data.parent_department_id==='string'&&data.parent_department_id)knownParents.add(node);
@@ -54,6 +55,7 @@ export async function syncFeishuDirectory(input:{agentId:string;account:Resolved
 const pending=new Map<string,Promise<unknown>>();
 /** Coalesced background enrichment keeps admitted message delivery responsive. */
 export function scheduleFeishuDirectorySync(input:Parameters<typeof syncFeishuDirectory>[0]){
+ const sync=getEntitySyncProvider('feishu');if(sync?.enqueue){sync.enqueue({accountId:input.account.accountId,appId:input.account.appId,eventId:'person:'+JSON.stringify(input.openIds)+':'+Math.floor(Date.now()/10000),kind:'person',externalIds:input.openIds});return;}
  const key=JSON.stringify([input.agentId,input.account.accountId,input.account.appId,...input.openIds.slice().sort()]);
  if(pending.has(key))return;if(pending.size>=4){input.log('feishu: entity directory background capacity reached; enrichment deferred until a later observation');return;}
  const run=syncFeishuDirectory(input).catch(()=>input.log('feishu: entity directory sync failed')).finally(()=>pending.delete(key));pending.set(key,run);

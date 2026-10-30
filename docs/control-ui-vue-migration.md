@@ -8,7 +8,7 @@ This tracks the complete accepted migration, not a reduced completion target. Wo
 - Overview, independent source errors, resource counts, maintenance warnings and Worker summary.
 - Agent-wide Worker task table, filters, pagination, timing, notification warnings and exact task links.
 - Worker sidebar and full task page: model-scoped session list, four detail views, source reader, tool/timeline rendering and exact-scope single/batch deletion. Existing 21 panel behaviors and actual public registration/RPC routing now run under Vitest, plus focused component tests.
-- Entities and personnel, including organization/group sync and account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries. Existing 14 behavior cases run in Vitest; five Chromium cases cover four widths and standalone writes.
+- Entities and personnel, including organization/group sync and account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries. Existing 15 behavior cases run in Vitest; six Chromium cases cover four widths, standalone writes, automatic directory status, late Agent responses and cleanup.
 - Audit filters, paging, actor provenance, before/after differences and unknown outcomes.
 - Recycle dialog, stable request IDs, revision checks, retention confirmation, last-page correction and readonly behavior.
 

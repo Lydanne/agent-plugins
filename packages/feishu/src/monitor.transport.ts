@@ -1,3 +1,4 @@
+import {getEntitySyncProvider} from '../../agent-repo-api/entities.mjs';
 // Feishu plugin module implements monitor.transport behavior.
 import crypto from "node:crypto";
 import * as http from "node:http";
@@ -300,7 +301,7 @@ export async function monitorWebSocket({
       wsClient = await createFeishuWSClient(account, {
         onError: handleWsError,
         onReady: publishWsConnected,
-        onReconnected: publishWsConnected,
+        onReconnected: ()=>{publishWsConnected();try{getEntitySyncProvider('feishu')?.reconnect?.(accountId);}catch{error('feishu: organization reconciliation could not be queued');}},
         onReconnecting: publishWsReconnecting,
       });
       setSocketTerminator?.(() => wsClient?.close({ force: true }));

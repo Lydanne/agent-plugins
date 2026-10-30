@@ -16,7 +16,15 @@ export interface RelationRecord {id:string;typeId:string;fromId:string;toId:stri
 export type GraphChange={action:'upsert';record:GraphObservation;evidence:ChangeEvidence}|{action:'connect';record:RelationObservation;evidence:ChangeEvidence}|{action:'end'|'delete';id:string;revision:string;observedAt:string;evidence:ChangeEvidence};
 export interface GraphBatch {requestId:string;changes:GraphChange[]}
 export interface GraphBatchResult {results:unknown[]}
+export interface SyncCheckpoint {lastOrganizationSuccessAt?:number;lastFullSuccessAt?:number;lastAttemptAt?:number;nextOrganizationAt?:number;nextFullAt?:number;lastEventAt?:number;lastError?:string|null;missingDepartmentIds?:string[]}
+export interface SyncJob {requestId:string;kind:'full'|'organization'|'department'|'department-delete'|'person';externalIds:string[];notBefore:number;reason:'event'|'manual'|'schedule'|'reconnect'|'enrichment';status:'pending'|'running'|'completed';attempts:number}
+export interface SyncWork {lease:{token:string;owner:string;until:number}|null;checkpoint:SyncCheckpoint;pending:number;nextDue:number|null;latestEventAt:number|null}
 export interface SourceCapability {
+ syncWork():SyncWork;
+ enqueueSync(input:Omit<SyncJob,'status'|'attempts'|'externalIds'>&{externalIds?:string[]}):SyncJob;
+ claimSync(input:{owner:string;leaseMs:number}):{token:string;tasks:SyncJob[]}|null;
+ finishSync(input:{token:string;requestIds:string[];retryAt?:number;checkpoint?:SyncCheckpoint}):unknown;
+ withSyncLease(token:string):SourceCapability;
  syncStatus(input?:{requestId?:string}):DirectorySyncRun|null;
  recordSync(input:DirectorySyncRun):DirectorySyncRun;
  upsert(input:GraphObservation):{entity:GraphEntity;created:boolean;unchanged:boolean};
@@ -43,6 +51,6 @@ export interface RelationCondition {field:string;op:'present'|'equals'|'in';valu
 export interface DirectorySyncError {stage:string;reason?:string;code?:number;requiredScopes?:string[]}
 export interface DirectorySyncRun {requestId:string;status:'running'|'completed'|'partial'|'failed'|'unknown';startedAt:string;finishedAt?:string;departments:number;storedDepartments:number;organizationId:string|null;relations:number;coverage:'none'|'partial'|'full';errors:DirectorySyncError[]}
 export interface EntitySyncContext {agentId:string;sessionKey:string;accountId?:string}
-export interface EntitySyncProvider {info(input:EntitySyncContext):{available:boolean;accounts:Array<{accountId:string;appId?:string}>;run:DirectorySyncRun|null;reason?:string};start(input:EntitySyncContext,requestId:string):DirectorySyncRun;stop():Promise<void>}
+export interface EntitySyncProvider {info(input:EntitySyncContext):{available:boolean;accounts:Array<{accountId:string;appId?:string}>;run:DirectorySyncRun|null;reason?:string;automatic?:{enabled:boolean;pending:number;lastFullSuccessAt?:number;lastOrganizationSuccessAt?:number;nextFullAt?:number;nextOrganizationAt?:number;lastError?:string|null;lastEventAt:number|null;eventSubscription:'unverified'|'observed'}};reconnect?(accountId:string):void;enqueue?(input:{accountId:string;appId?:string;tenantKey?:string;eventId:string;kind:SyncJob['kind'];externalIds?:string[]}):void;start(input:EntitySyncContext,requestId:string):DirectorySyncRun;stop():Promise<void>}
 export function getEntitySyncProvider(id:string):EntitySyncProvider|undefined;
 export function registerEntitySyncProvider(id:string,service:EntitySyncProvider,owner:object|symbol):()=>void;

@@ -21,7 +21,7 @@ const entityTypes=[{id:'person',label:'人员资源',count:1,fields:{}},{id:'ser
 let directoryRun=null,peopleRun=null;
 async function resultFor(p){
  const v=p.payload??{};
- if(p.actionId==='projects-directorySyncInfo')return {available:true,accounts:[{accountId:'fixture-account'},{accountId:'second-account'}],run:directoryRun};
+ if(p.actionId==='projects-directorySyncInfo')return {available:true,accounts:[{accountId:'fixture-account'},{accountId:'second-account'}],run:directoryRun,automatic:{enabled:true,pending:2,eventSubscription:'unverified',lastEventAt:null,missingDepartmentIds:['dept-missing'],lastError:'department_visibility_changed'}};
  if(p.actionId==='projects-directorySync'){if(directoryFailure)throw Error('组织同步结果未知，请核查原请求');directoryRun={status:'partial',departments:27,storedDepartments:27,organizationId:null,coverage:'partial',errors:[{stage:'organization',requiredScopes:['tenant:tenant:readonly']}]};return directoryRun;}
  if(p.actionId==='projects-entityTypes')return {types:entityTypes,sources:[{namespace:'cmdb'}],total:2};
  if(p.actionId==='projects-entities')return {entities:v.typeId==='person'?[]:[{...entity,name:p.agentId==='other'?'其他 Agent 服务':entity.name}],total:1,nextOffset:null};

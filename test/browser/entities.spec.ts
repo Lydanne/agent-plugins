@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 for(const width of [320,400,720,1280])test(`entity and personnel views retain source, drafts and portal at ${width}px`,async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width,height:900});await page.goto('/?section=entities');await expect(page.locator('html')).toHaveAttribute('data-ready','true');
- await expect(page.getByRole('heading',{name:'测试工单服务'})).toBeVisible();await page.getByText('来源与同步信息',{exact:true}).click();await expect(page.getByText('service-source-1',{exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'测试工单服务'})).toBeVisible();await expect(page.getByText(/自动同步已启用 · 待处理 2/)).toBeVisible();await expect(page.getByText('1 个部门本次未发现，已保留历史关系待核验')).toBeVisible();await page.getByText('来源与同步信息',{exact:true}).click();await expect(page.getByText('service-source-1',{exact:true})).toBeVisible();
  await page.getByText('查看关联关系',{exact:true}).click();await expect(page.getByText('→ maintains · 测试关联资产')).toBeVisible();await expect(page.getByText('关联较多，仅展示前 100 条')).toBeVisible();
  await page.getByRole('button',{name:'修改日志',exact:true}).click();const dialog=page.getByRole('dialog',{name:'实体修改审计'});await expect(dialog).toBeVisible();const box=await dialog.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width);
  await page.evaluate(()=>(window as any).fixture.setTheme('dark'));await expect(dialog).toHaveCSS('background-color','rgb(36, 38, 37)');await page.keyboard.press('Escape');await expect(dialog).toBeHidden();await expect(page.getByRole('button',{name:'修改日志',exact:true})).toBeFocused();
@@ -18,4 +18,12 @@ test('organization sync retries the original request and standalone personnel co
  const calls=await page.evaluate(()=>(window as any).fixture.calls.filter((p:any)=>p.actionId==='projects-directorySync'));expect(calls).toHaveLength(2);expect(calls[0].payload.requestId).toBe(calls[1].payload.requestId);expect(calls[0].payload.accountId).toBe('fixture-account');
  await page.goto('/?surface=people');await expect(page.locator('html')).toHaveAttribute('data-ready','true');await page.getByText('更多操作',{exact:true}).click();await page.getByRole('button',{name:'删除人员',exact:true}).click();expect(await page.evaluate(()=>(window as any).fixture.calls.filter((p:any)=>p.actionId==='projects-deletePerson').length)).toBe(0);await page.getByRole('button',{name:'确认删除本地资料'}).click();await expect(page.getByRole('heading',{name:'还没有人员资料'})).toBeVisible();
  const removed=await page.evaluate(()=>(window as any).fixture.calls.find((p:any)=>p.actionId==='projects-deletePerson'));expect(removed.payload).toEqual({id:'person-1',revision:'person-r1',confirmed:true});
+});
+test('entity Agent changes and permission updates discard late reads and close mutation context',async({page})=>{
+ await page.goto('/?section=entities');await expect(page.getByRole('heading',{name:'测试工单服务'})).toBeVisible();
+ await page.evaluate(()=>(window as any).fixture.delayReads(true));await page.getByRole('button',{name:'刷新资料'}).click();await page.getByRole('combobox',{name:'AgentRepo 所属 Agent'}).selectOption('other');await page.evaluate(()=>(window as any).fixture.releaseReads());
+ await expect(page.getByRole('heading',{name:'其他 Agent 服务'})).toBeVisible();await expect(page.getByRole('heading',{name:'测试工单服务'})).toHaveCount(0);
+ await page.getByRole('button',{name:'修改日志',exact:true}).click();await expect(page.getByRole('dialog')).toBeVisible();await page.evaluate(()=>(window as any).fixture.setConnection({canWrite:false}));await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('button',{name:'同步飞书组织与全部部门'})).toBeDisabled();
+ await page.evaluate(()=>(window as any).fixture.setPresented(false));await expect(page.getByRole('heading',{name:'其他 Agent 服务'})).toHaveCount(0);await page.evaluate(()=>(window as any).fixture.setPresented(true));await expect(page.getByRole('heading',{name:'其他 Agent 服务'})).toBeVisible();
+ await page.evaluate(()=>(window as any).fixture.dispose());await expect(page.locator('[data-ocp-overlay]')).toHaveCount(0);expect(await page.evaluate(()=>(window as any).fixture.subscriberCount())).toBe(0);
 });
