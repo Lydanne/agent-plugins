@@ -17,7 +17,7 @@ function fixture(t){
 test('native no-op scheduler stores no task content; binding and duplicate creation survive restart',async t=>{const f=fixture(t);const first=await f.manager.manage(f.input,{});assert.equal(f.jobs[0].payload.kind,'script');assert.equal(f.jobs[0].delivery.mode,'none');assert.deepEqual(f.jobs[0].payload.toolsAllow,[]);assert.ok(!JSON.stringify(f.jobs).includes('check target'));f.reopen();assert.equal((await f.manager.manage(f.input,{})).id,first.id);assert.equal(f.jobs.length,1);await assert.rejects(f.manager.manage({...f.input,task:'different'},{}),/different input/);});
 test('duplicate callbacks and recovery dispatch only once, retaining requester and project',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await Promise.all([f.manager.fire(f.event()),f.manager.fire(f.event())]);assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].source.senderId,'u');assert.equal(f.delivered[0].projectId,'xgj');f.jobs[0].state={lastRunStatus:'ok',lastRunAtMs:2000};f.reopen();await f.manager.recover();assert.equal(f.delivered.length,1);});
 test('no other requester, account, group or reset session can list or cancel a task',async t=>{const f=fixture(t);const r=await f.manager.manage(f.input,{});for(const key of ['senderId','accountId','chatId','sessionId','agentId']){assert.deepEqual(await f.manager.manage({action:'list'},{[key]:'other'}),{tasks:[],total:0,nextOffset:null});await assert.rejects(f.manager.manage({action:'remove',id:r.id},{[key]:'other'}),/not found/);}});
-test('pause and remove prevent late native ticks',async t=>{const f=fixture(t);const r=await f.manager.manage(f.input,{});await f.manager.manage({action:'pause',id:r.id},{});await f.manager.fire(f.event());assert.equal(f.delivered.length,0);await f.manager.manage({action:'remove',id:r.id},{});assert.equal(f.jobs.length,0);});
+test('pause and remove prevent late native ticks',async t=>{const f=fixture(t);const r=await f.manager.manage(f.input,{});await f.manager.manage({action:'pause',id:r.id},{});await f.manager.fire(f.event());assert.equal(f.delivered.length,0);await f.manager.manage({action:'remove',id:r.id},{});assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].enabled,false);});
 test('revoked sources, altered jobs and foreign-agent events do not dispatch',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await f.manager.fire({...f.event(),agentId:'other'});f.jobs[0].payload.script='malicious';await f.manager.fire(f.event());f.jobs[0].payload.script='return {};';f.revoke();await f.manager.fire(f.event());assert.equal(f.delivered.length,0);});
 test('unknown admission is never replayed and blocks subsequent occurrences',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});f.bridge.deliver=async()=>{throw Error('lost response');};await assert.rejects(f.manager.fire(f.event()),/lost response/);f.reopen();await f.manager.fire(f.event());await f.manager.fire(f.event(3000));const {tasks}=await f.manager.manage({action:'list'},{});assert.equal(tasks[0].lastRun.status,'unknown');assert.equal(tasks[0].runs.length,2);});
 test('unfinished worker prevents another occurrence',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await f.manager.fire(f.event());f.busy();await f.manager.fire(f.event(3000));assert.equal(f.delivered.length,1);});
@@ -48,7 +48,7 @@ test('management inspection combines native timing and scoped admission receipts
  f.bridge.deliver=async()=>({accepted:true,jobIds:[],deliveryReceipts:[{messageId:'receipt',chatId:'group'}]});await f.manager.fire(f.event(2500));assert.equal((await f.manager.inspect('main'))[0].lastRun.status,'delivered');
  f.cron.list=async()=>{throw Error('offline');};const offline=(await f.manager.inspect('main'))[0];assert.equal(offline.nativeAvailable,false);assert.equal(offline.records.length,2);assert.equal(offline.nextPlanned.state,'unavailable');
 });
-async function operation(f,id,action,fields={}){const task=(await f.manager.catalog('main')).tasks.find(t=>t.id===id);return {action,id,expectedRevision:task.revision,requestId:crypto.randomUUID(),confirmed:true,...fields};}
+async function operation(f,id,action,fields={}){const task=(await f.manager.catalog('main',{includeRemoved:true})).tasks.find(t=>t.id===id);return {action,id,expectedRevision:task.revision,requestId:crypto.randomUUID(),confirmed:true,...fields};}
 test('panel creates a paused plan from a saved source, retaining task, requester and constraints',async t=>{
  const f=fixture(t),original=await f.manager.manage(f.input,{});const {id,...params}=await operation(f,original.id,'create',{sourceId:original.id,name:'Second',expr:'0 10 * * *'});
  const result=await f.manager.administer('main',params);assert.equal(result.status,'succeeded');assert.equal(f.jobs.length,2);assert.equal(f.jobs[1].enabled,false);
@@ -60,7 +60,7 @@ test('panel edits native plan, resumes and removes while retaining audit and run
  await f.manager.administer('main',await operation(f,r.id,'pause'));assert.equal(f.jobs[0].enabled,false);
  await f.manager.administer('main',await operation(f,r.id,'update',{name:'New name',expr:'0 8 * * *',timeZone:'Asia/Shanghai'}));assert.equal(f.jobs[0].schedule.expr,'0 8 * * *');assert.equal(f.jobs[0].name,'Ada: New name');assert.equal(f.jobs[0].enabled,false);
  await f.manager.administer('main',await operation(f,r.id,'resume'));assert.equal(f.jobs[0].enabled,true);
- await f.manager.administer('main',await operation(f,r.id,'remove'));assert.equal(f.jobs.length,0);const c=await f.manager.catalog('main');assert.equal(c.tasks[0].runs.length,1);assert.equal(c.operations.length,4);assert.equal(c.tasks[0].status,'removed');
+ await f.manager.administer('main',await operation(f,r.id,'remove'));assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].enabled,false);assert.equal((await f.manager.catalog('main')).tasks.length,0);const c=await f.manager.catalog('main',{includeRemoved:true});assert.equal(c.tasks[0].runs.length,1);assert.equal(c.operations.length,4);assert.equal(c.tasks[0].status,'removed');
 });
 test('panel manual execution uses native queue once and leaves the schedule unchanged',async t=>{
  const f=fixture(t),r=await f.manager.manage(f.input,{});let calls=0;f.cron.enqueueRun=async(id,mode)=>{calls++;assert.equal(id,r.jobId);assert.equal(mode,'force');return {ok:true,enqueued:true,runId:'manual'};};
@@ -72,7 +72,7 @@ test('panel rejects forged bindings, foreign agents, stale versions and revoked 
  const f=fixture(t),r=await f.manager.manage(f.input,{}),p=await operation(f,r.id,'pause');
  await assert.rejects(f.manager.administer('other',p),/不属于/);await assert.rejects(f.manager.administer('main',{...p,chatId:'other'}),/参数/);await assert.rejects(f.manager.administer('main',{...p,task:'changed'}),/参数/);await assert.rejects(f.manager.administer('main',{...p,confirmed:false}),/确认/);
  await f.manager.administer('main',p);await assert.rejects(f.manager.administer('main',{...p,requestId:'stale'}),/已改变/);
- f.revoke();await assert.rejects(f.manager.administer('main',await operation(f,r.id,'resume')),/已失效/);await f.manager.administer('main',await operation(f,r.id,'remove'));assert.equal(f.jobs.length,0);
+ f.revoke();await assert.rejects(f.manager.administer('main',await operation(f,r.id,'resume')),/已失效/);await f.manager.administer('main',await operation(f,r.id,'remove'));assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].enabled,false);
 });
 test('uncertain writes remain durable and never replay after restart',async t=>{
  const f=fixture(t),r=await f.manager.manage(f.input,{}),p=await operation(f,r.id,'update',{name:'New',expr:'0 8 * * *'});let calls=0;f.cron.update=async()=>{calls++;throw Error('private backend detail');};
@@ -163,7 +163,7 @@ test('pause/remove with a stable key but optional revision remains idempotent',a
  for(const action of ['pause','remove']){
   const p={action,id:r.id,requestId:'stable-'+action};const first=await f.manager.manage(p,{});f.reopen();assert.deepEqual(await f.manager.manage(p,{}),first);
  }
- assert.equal(f.jobs.length,0);assert.equal((await f.manager.manage({action:'history',id:r.id},{})).operations.length,2);
+ assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].enabled,false);assert.equal((await f.manager.manage({action:'history',id:r.id},{})).operations.length,2);
 });
 test('a pending routing mutation cannot admit a new tick before native acknowledgment',async t=>{
  const f=fixture(t),r=await f.manager.manage(f.input,{}),update=f.cron.update;let release;

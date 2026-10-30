@@ -1,3 +1,4 @@
+import {mountRecycleBin} from './recycle-page.mjs';
 import {mountAudit,mountAuditPage} from './audit-page.mjs';
 import {mountWorkspacePool} from './workspace-pool-page.mjs';
 import {mountScheduleManager} from './schedule-manager.mjs';
@@ -82,7 +83,7 @@ export function mountProjects(container,initial){
   section.append(element('p','定义扫描仅供查看；实际注册、继承与调用以对应执行器的配置及权限为准。','ar-muted'));return section;
  }
  function syncBadge(status){return element('span',syncLabels[status]??'未知','ar-sync-badge '+status);}
- function scheduledTasks(){return list?.scheduledTasks??[];}
+ function scheduledTasks(){return (list?.scheduledTasks??[]).filter(t=>!['removed','purged'].includes(t.status));}
  function selectedTask(){return scheduledTasks().find(task=>task.taskId===syncTaskId);}
  function selectedRun(){return selectedTask()?.records.find(record=>record.runId===syncRunId);}
  function taskState(task){if(task.type==='repository-sync'&&task.status){if(!task.nativeAvailable)return '调度状态不可读取';return ({enabled:task.enabled?'已启用':'原生计划已暂停',paused:'已暂停',removed:'已删除',creating:'创建中',needs_review:'待核验'})[task.status]??'待核验';}if(task.type==='scheduled-request'){if(!task.nativeAvailable)return '调度状态不可读取';if(task.nativeMissing&&task.status!=='removed')return '原生计划缺失';if(task.status==='enabled'&&!task.enabled)return '原生计划已暂停';return ({enabled:'已启用',paused:'已暂停',removed:'已移除',completed:'已结束',blocked:'来源失效',needs_review:'待检查',creating:'创建中'})[task.status]??'待检查';}return task.enabled?'已启用':task.schedule?'已暂停':'未配置';}
@@ -346,6 +347,7 @@ function mountOverview(container,context,agentId,choose){
  refresh();return {dispose(){disposed=true;generation++;root.remove();}};
 }
 export function mountAgentRepo(container,initial){
+ let recycleView=null;
  let context=initial,disposed=false,child=null,agentId='',section='overview',read,write,presented,routeSection=initial.props.section;
  const root=element('section',undefined,'ar-management');root.setAttribute('aria-label','AgentRepo 管理中心');container.append(root);
  const selected=()=>currentUiTarget({...context,props:{agentId:context.props.agentId}}).agentId;
@@ -361,7 +363,7 @@ export function mountAgentRepo(container,initial){
  }
  function choose(id){if(section===id)return;section=id;renderBody();}
  function render(){
-  child?.dispose();child=null;root.replaceChildren();root.dataset.section=section;
+  recycleView?.dispose();recycleView=null;child?.dispose();child=null;root.replaceChildren();root.dataset.section=section;
   const header=element('header',undefined,'ar-management-header'),heading=element('div');heading.append(element('h1','AgentRepo'));
   const picker=element('select');picker.setAttribute('aria-label','AgentRepo 所属 Agent');const agents=context.host.agents.rows??[];
   for(const agent of agents){const option=element('option',safe(agent.name??agent.id));option.value=agent.id;picker.append(option);}
@@ -372,7 +374,7 @@ export function mountAgentRepo(container,initial){
   if(!agentId){root.append(element('p','请先选择一个 Agent。'));return;}
   const nav=element('nav',undefined,'ar-management-nav');nav.setAttribute('aria-label','AgentRepo 功能模块');
   for(const item of managementModules){const tab=button(item.label,()=>choose(item.id));tab.dataset.section=item.id;tab.setAttribute('aria-controls',regionId);tab.setAttribute('aria-current',section===item.id?'page':'false');nav.append(tab);}root.append(nav);
-  const body=element('div',undefined,'ar-management-body');body.id=regionId;body.setAttribute('role','region');root.append(body);renderBody();
+  const body=element('div',undefined,'ar-management-body');body.id=regionId;body.setAttribute('role','region');root.append(body);renderBody();recycleView=mountRecycleBin(root,context,agentId,{onRestored:()=>renderBody()});
  }
  function update(next){
   if(disposed)return;context=next;const id=selected(),newRead=context.host.connection.canRead,newWrite=context.host.connection.canWrite,newPresented=context.presented;
@@ -382,7 +384,7 @@ export function mountAgentRepo(container,initial){
  if(context.props.section==='people')section='entities';
  if(managementModules.some(item=>item.id===context.props.section))section=context.props.section;
  const stop=context.host.subscribe(()=>update(context));update(initial);
- return {update,dispose(){disposed=true;child?.dispose();stop();root.remove();}};
+ return {update,dispose(){disposed=true;recycleView?.dispose();child?.dispose();stop();root.remove();}};
 }
 export {mountPeoplePage};
 export default {id:'agent-repo',activate(host){

@@ -1,3 +1,4 @@
+import {recycleCatalog,restoreRecycled,configureRecycle} from './recycle-bin.mjs';
 import {entityAuditQuery,rootAudit,auditBegin,auditFinish,auditQuery,panelAuditActor} from './audit.mjs';
 import {workspaceCatalog,saveWorkspaceConfig,WorkspaceManagementError} from './workspace-management.mjs';
 import {scheduledRequestBridge} from './scheduled-requests.mjs';
@@ -74,6 +75,9 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
  async function context(ctx){const agentId=trustedAgentId(ctx),binding=bindingFor(config,{agentId});if(!binding)throw Error('当前 Agent 未绑定 Agent Repo');return {agentId,binding};}
  const inspector={
   ...diagnostics,
+  async recycleBin(ctx){const {agentId,binding}=await context(ctx);return recycleCatalog(binding.repo,agentId,ctx.payload??{});},
+  async recycleRestore(ctx){const {agentId,binding}=await context(ctx);return restoreRecycled(binding.repo,agentId,ctx.payload??{},ctx);},
+  async recycleConfigure(ctx){const {agentId,binding}=await context(ctx);return configureRecycle(binding.repo,agentId,ctx.payload??{},ctx);},
   async audit(ctx){
    const {agentId,binding}=await context(ctx),p=ctx.payload??{};
    // Validate even when all providers are unavailable. Each provider is independently Agent-scoped.
@@ -138,7 +142,7 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    await checkRegistration(binding,before);
    const systemTasks=repositorySyncTasks(binding,agentId,history,projects,scannedAt),nativeSync=await repositoryScheduleBridge.inspect?.(agentId);
    if(nativeSync)for(const task of systemTasks)Object.assign(task,nativeSync);
-   return {scheduledRequestsAvailable:typeof scheduledRequestBridge.inspect==='function',scheduledTasks:[...systemTasks,...(await scheduledRequestBridge.inspect?.(agentId)??[])],syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
+   return {scheduledRequestsAvailable:typeof scheduledRequestBridge.inspect==='function',scheduledTasks:[...systemTasks.filter(t=>!['removed','purged'].includes(t.status)),...(await scheduledRequestBridge.inspect?.(agentId)??[])],syncHistory:{...history,enabled:binding.sync?.enabled===true,schedule:binding.sync?.submoduleSchedule??null},agentId,root:before.root,registryRevision:before.registryRevision,scannedAt,registrationCommitted:!!before.registryRevision,agentSkills,agentSubagents,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.repository}))};
   },
   async repositoryLogs(ctx){
    const {agentId,binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('日志不接受其他范围参数');
@@ -162,8 +166,8 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    const params=ctx.payload??{};
    if(params.id===repositorySyncTaskId(agentId)){if(!repositoryScheduleBridge.administer)throw Error('仓库同步调度服务不可用');return repositoryScheduleBridge.administer(agentId,params,{actor:panelAuditActor(ctx),executor:'control-ui'});}
    if(!scheduledRequestBridge.administer)throw Error('定时任务服务不可用');
-   if(['create','update','resume','run'].includes(params.action)){
-    const catalog=await scheduledRequestBridge.catalog(agentId),task=catalog.tasks.find(t=>t.id===(params.action==='create'?params.sourceId:params.id));
+   if(['create','update','resume','run','restore'].includes(params.action)){
+    const catalog=await scheduledRequestBridge.catalog(agentId,{includeRemoved:params.action==='restore'}),task=catalog.tasks.find(t=>t.id===(params.action==='create'?params.sourceId:params.id));
     const projects=await readProjects(binding.repo);if(!task||!Object.hasOwn(projects,task.projectId))throw Error('请选择当前 Agent 已登记项目的群请求');
    }
    return scheduledRequestBridge.administer(agentId,params,{actor:panelAuditActor(ctx),executor:'control-ui'});
@@ -235,7 +239,7 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDia
  const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);if(!register){api.logger?.warn?.('Agent Repo panel unavailable: host lacks public session actions');return;}
  const transfers=new Map(),owner=ctx=>JSON.stringify([trustedAgentId(ctx),ctx.sessionKey??null,ctx.client?.connId??null]);
  const part=(id,value,index)=>({encoding:'json-chunks',transferId:id,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
- for(const action of ['list','detail','chunk','workspacePool','workspacePoolSave','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity','relations','graph','entityHistory','maintenance','maintenanceRun','scheduleCatalog','scheduleManage','audit',...Object.keys(inspector).filter(key=>key.startsWith('diagnostic'))])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['workspacePoolSave','scheduleManage','clearRepositoryLogs','syncPeople','updatePerson','deletePerson','maintenanceRun','diagnosticStart','diagnosticRenew','diagnosticClearHistory'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
+ for(const action of ['list','detail','chunk','workspacePool','workspacePoolSave','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity','relations','graph','entityHistory','maintenance','maintenanceRun','scheduleCatalog','scheduleManage','audit','recycleBin','recycleRestore','recycleConfigure',...Object.keys(inspector).filter(key=>key.startsWith('diagnostic'))])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['recycleRestore','recycleConfigure','workspacePoolSave','scheduleManage','clearRepositoryLogs','syncPeople','updatePerson','deletePerson','maintenanceRun','diagnosticStart','diagnosticRenew','diagnosticClearHistory'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
   try{
    const scope=owner(ctx);for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);
    if(action==='chunk'){const {transferId,index}=ctx.payload??{},value=transfers.get(transferId);if(!value||value.owner!==scope||!Number.isInteger(index)||index<0||index>=Math.ceil(value.text.length/inspectionChunkSize))throw Error('Invalid transfer');if(value.diagnosticLeaseId&&!isDiagnosticTransferActive(ctx,value.diagnosticLeaseId)){transfers.delete(transferId);throw Error('Diagnostic capture stopped');}return {ok:true,result:part(transferId,value,index)};}
@@ -245,6 +249,6 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDia
    const id=randomUUID(),value={owner:scope,text,expiresAt:now()+120000,...(action==='diagnosticRead'?{diagnosticLeaseId:result.leaseId}:{})};
    if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,value);}
    return {ok:true,result:part(id,value,0)};
-  }catch(error){if(action==='audit')return {ok:false,code:'AUDIT_UNAVAILABLE',error:'审计读取失败，请核对筛选条件、权限和审计来源状态。'};if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
+  }catch(error){if(action.startsWith('recycle'))return {ok:false,code:'RECYCLE_UNAVAILABLE',error:'回收站操作未完成，请刷新核对权限、来源、版本及运行状态；结果不明时不要重复提交。'};if(action==='audit')return {ok:false,code:'AUDIT_UNAVAILABLE',error:'审计读取失败，请核对筛选条件、权限和审计来源状态。'};if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
  }});
 }

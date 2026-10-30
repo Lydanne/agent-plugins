@@ -74,6 +74,6 @@ export async function queryPeopleWithFallback(root,params,context){
  const observations=remote.people;
  if(!Array.isArray(observations)||!observations.length||observations.length>10||observations.some(p=>!p.accountId||!p.appId||!/^ou_[A-Za-z0-9]+$/.test(p.openId)||params.accountId&&p.accountId!==params.accountId||params.appId&&p.appId!==params.appId||params.openId&&p.openId!==params.openId||(context.deliveryContext?.accountId??context.agentAccountId)&&p.accountId!==(context.deliveryContext?.accountId??context.agentAccountId)))throw Error('飞书人员身份范围不匹配');
  const store=createPeopleStore(root);
- for(const observation of observations)store.observe(observation);
- return {...queryPeople(root,params),lookup:{source:'feishu',status:'saved',saved:observations.length,truncated:remote.truncated??false}};
+ let saved=0,hidden=0;for(const observation of observations){if(store.observe(observation).deletedAt)hidden++;else saved++;}
+ return {...queryPeople(root,params),lookup:{source:'feishu',status:'saved',saved,...(hidden?{hidden}:{}),truncated:remote.truncated??false}};
 }

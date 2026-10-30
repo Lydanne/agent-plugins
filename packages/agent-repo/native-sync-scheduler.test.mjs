@@ -14,7 +14,7 @@ async function fixture(t,{time='2026-10-13T00:00:00Z',sync=async()=>({ok:true}),
  t.after(async()=>{await service.stop();rmSync(stateDir,{recursive:true,force:true});});
  return {jobs,calls,queued,cron,config,advance:ms=>now+=ms,get service(){return service;},event:()=>({action:'finished',status:'ok',agentId:'main',jobId:jobs[0].id,runAtMs:now}),async restart(){await service.stop();service=createDailySyncService(config,async(...args)=>{calls.push(args);return sync(...args);},{warn:()=>{}},options);await service.start({stateDir,getCron:()=>cron});}};
 }
-async function operation(action,fields={}){const t=(await bridge.catalog('main'))[0];return {id:t.id,action,expectedRevision:t.revision,confirmed:true,requestId:crypto.randomUUID(),...fields};}
+async function operation(action,fields={}){const t=(await bridge.catalog('main',{includeRemoved:true}))[0];return {id:t.id,action,expectedRevision:t.revision,confirmed:true,requestId:crypto.randomUUID(),...fields};}
 test('native scheduler owns clock and catch-up; no duplicate run after restart or failure',async t=>{
  const f=await fixture(t,{sync:async()=>{throw Error('failure');}});assert.equal(f.jobs.length,1);assert.deepEqual(f.jobs[0].schedule,{kind:'cron',expr:'0 8 * * *',tz:'Asia/Shanghai',staggerMs:0});assert.equal(f.jobs[0].payload.kind,'script');assert.equal(f.queued.length,1);assert.equal(f.calls.length,0);
  await Promise.all([f.service.onCronChanged(f.event()),f.service.onCronChanged(f.event())]);assert.equal(f.calls.length,1);await f.restart();assert.equal(f.jobs.length,1);assert.equal(f.queued.length,1);assert.equal(f.calls.length,1);
@@ -27,7 +27,7 @@ test('panel edits, pauses, enables, deletes and restores native system plan with
  const f=await fixture(t,{time:'2026-10-12T23:00:00Z'});await bridge.administer('main',await operation('update',{time:'09:00',timeZone:'Asia/Shanghai'}));assert.equal(f.jobs[0].schedule.expr,'0 9 * * *');
  await bridge.administer('main',await operation('pause'));assert.equal(f.jobs[0].enabled,false);await f.restart();assert.equal(f.jobs[0].enabled,false);assert.equal((await bridge.catalog('main'))[0].schedule.time,'09:00');
  await bridge.administer('main',await operation('resume'));const p=await operation('run');await bridge.administer('main',p);await bridge.administer('main',p);assert.equal(f.queued.length,1);await f.service.onCronChanged(f.event());assert.equal(f.calls.length,1);
- await bridge.administer('main',await operation('remove'));assert.equal(f.jobs.length,0);await f.restart();assert.equal(f.jobs.length,0);await bridge.administer('main',await operation('resume'));assert.equal(f.jobs.length,1);await assert.rejects(bridge.administer('main',await operation('run')),/今日已有/);
+ await bridge.administer('main',await operation('remove'));assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].enabled,false);assert.deepEqual(await bridge.catalog('main'),[]);await f.restart();assert.equal(f.jobs[0].enabled,false);await bridge.administer('main',await operation('restore'));assert.equal(f.jobs[0].enabled,false);await bridge.administer('main',await operation('resume'));assert.equal(f.jobs.length,1);await assert.rejects(bridge.administer('main',await operation('run')),/今日已有/);
 });
 test('scope, stale revision, configuration gate and uncertain native results fail closed',async t=>{
  const f=await fixture(t,{time:'2026-10-12T23:00:00Z'}),p=await operation('pause');await assert.rejects(bridge.administer('other',p),/参数/);await assert.rejects(bridge.administer('main',{...p,confirmed:false}),/参数/);await bridge.administer('main',p);await assert.rejects(bridge.administer('main',{...p,requestId:'stale'}),/已改变/);
@@ -47,7 +47,7 @@ test('tampered native Agent never gets removed via old system binding',async t=>
  const f=await fixture(t,{time:'2026-10-12T23:00:00Z'});f.jobs[0].agentId='other';await assert.rejects(bridge.administer('main',await operation('remove')),/未确认/);assert.equal(f.jobs.length,1);
 });
 test('pending native queue can be revoked by removal without leaving an unresumable reservation',async t=>{
- const f=await fixture(t);assert.equal(f.queued.length,1);await bridge.administer('main',await operation('remove'));await bridge.administer('main',await operation('resume'));assert.equal((await bridge.catalog('main'))[0].busy,false);await bridge.administer('main',await operation('run'));assert.equal(f.queued.length,2);
+ const f=await fixture(t);assert.equal(f.queued.length,1);await bridge.administer('main',await operation('remove'));await bridge.administer('main',await operation('restore'));assert.equal(f.jobs[0].enabled,false);await bridge.administer('main',await operation('resume'));assert.equal((await bridge.catalog('main'))[0].busy,false);await bridge.administer('main',await operation('run'));assert.equal(f.queued.length,2);
 });
 
 test('system schedule audit retains operator identity, configuration diffs and uncertain results across restart',async t=>{

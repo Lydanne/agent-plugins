@@ -1,3 +1,4 @@
+import {recycleTable,recyclePut} from './recycle-store.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,lstatSync,realpathSync,chmodSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
@@ -35,6 +36,7 @@ export function graphDatabase(root){
  CREATE TABLE IF NOT EXISTS graph_operations(id TEXT PRIMARY KEY,request TEXT NOT NULL,result TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS graph_snapshots(id TEXT PRIMARY KEY,source_id TEXT NOT NULL,watermark TEXT NOT NULL,value TEXT NOT NULL);
  `);
+ recycleTable(db);
  if(!db.prepare("SELECT 1 FROM graph_meta WHERE key='migration-v2'").get()){
   db.exec('BEGIN IMMEDIATE');try{
    if(db.prepare("SELECT 1 FROM graph_meta WHERE key='migration-v2'").get()){db.exec('COMMIT');return db;}
@@ -51,6 +53,7 @@ export function graphDatabase(root){
    db.prepare('INSERT INTO graph_meta VALUES(?,?)').run('migration-v2',now());db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e;}
  }
+ if(!db.prepare("SELECT 1 FROM graph_meta WHERE key='recycle-v1'").get()){db.exec('BEGIN IMMEDIATE');try{for(const row of db.prepare("SELECT value FROM graph_nodes WHERE status='deleted'").all()){const node=JSON.parse(row.value);if(!node.legacyPersonId&&!db.prepare('SELECT 1 FROM recycle_items WHERE id=?').get(node.id))recyclePut(db,{id:node.id,kind:'entity',name:node.name,revision:node.revision});}db.prepare('INSERT OR IGNORE INTO graph_meta VALUES(?,?)').run('recycle-v1',now());db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}}
  return db;
  }catch(e){db.close();throw e;}
 }
@@ -61,7 +64,7 @@ export function personView(record){
 }
 export function savePerson(db,record,recordAudit=true){
  const p=personView(record),id='person:'+p.id,source={kind:'channel',namespace:'feishu',scope:JSON.stringify([p.accountId,p.appId]),externalId:JSON.stringify([p.accountId,p.appId,p.openId])},sourceId=sourceRecord(db,source),before=nodeById(db,id);
- const node={id,typeId:'person',name:p.name||'姓名未知',summary:p.departments.map(d=>d.name||d.id).join('、'),attributes:{email:p.email,department:p.departments.map(d=>d.name||d.id).join('、'),giteaUsername:p.giteaUsername,giteaSource:p.giteaSource},sourceId,source,status:'active',observedAt:p.observedAt,updatedAt:p.updatedAt,revision:p.revision,legacyPersonId:p.id};
+ const node={id,typeId:'person',name:p.name||'姓名未知',summary:p.departments.map(d=>d.name||d.id).join('、'),attributes:{email:p.email,department:p.departments.map(d=>d.name||d.id).join('、'),giteaUsername:p.giteaUsername,giteaSource:p.giteaSource},sourceId,source,status:before?.status==='deleted'?'deleted':'active',observedAt:p.observedAt,updatedAt:p.updatedAt,revision:p.revision,legacyPersonId:p.id};
  putNode(db,node);db.prepare('INSERT OR REPLACE INTO graph_people VALUES(?,?,?)').run(p.id,id,JSON.stringify(record));
  if(!recordAudit){
   for(const department of record.directory.departments??[]){
