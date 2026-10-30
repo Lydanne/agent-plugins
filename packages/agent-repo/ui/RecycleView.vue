@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,computed,watch} from 'vue';
-import {Button,Dialog,HelpTip,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,Dialog,HelpTip,Input,NativeSelect,useHostContext} from '@openclaw-plugins/control-ui-kit';
 import {useManagementRequest} from './management-request';
 import {recycleLabels,type RecyclePage,type RecycleItem,type Confirmation} from './recycle-model';
 const props=defineProps<{agentId:string;onRestored?:()=>void|Promise<void>}>();
@@ -39,7 +39,7 @@ function go(next:number){offset.value=next;void refresh();}
 </script>
 <template>
  <Button class="ar-recycle-fab" aria-label="打开回收站" aria-haspopup="dialog" variant="outline" @click="launch">回收站</Button>
- <Dialog :open="open" title="回收站" description="已删除内容、恢复与自动永久删除期限" @update:open="value=>{if(!value)close()}">
+ <Dialog size="wide" :open="open" title="回收站" description="已删除内容、恢复与自动永久删除期限" @update:open="value=>{if(!value)close()}">
   <div class="ar-recycle-dialog" :aria-busy="busy">
    <p v-if="error" role="alert" class="ar-error">{{error}}</p>
    <template v-if="confirmation">
@@ -48,7 +48,7 @@ function go(next:number){offset.value=next;void refresh();}
     <Button :disabled="busy||!writable" @click="execute">{{busy?'提交中…':'确认执行'}}</Button><Button variant="outline" :disabled="busy" @click="confirmation=null;error=''">取消</Button>
    </template>
    <template v-else>
-    <form class="ar-recycle-filters" @submit.prevent="filter"><select v-model="feature" aria-label="回收站功能"><option value="">全部功能</option><option value="schedules">定时任务</option><option value="entities">实体与人员</option><option value="logs">日志</option></select><input v-model="query" type="search" placeholder="搜索名称或 ID" aria-label="搜索回收站"><Button type="submit" :disabled="busy">筛选</Button><Button variant="outline" :disabled="busy" @click="refresh">刷新回收站</Button></form>
+    <form class="ar-recycle-filters" @submit.prevent="filter"><NativeSelect v-model="feature" aria-label="回收站功能"><option value="">全部功能</option><option value="schedules">定时任务</option><option value="entities">实体与人员</option><option value="logs">日志</option></NativeSelect><Input v-model="query" type="search" placeholder="搜索名称或 ID" aria-label="搜索回收站"/><Button type="submit" :disabled="busy">筛选</Button><Button variant="outline" :disabled="busy" @click="refresh">刷新回收站</Button></form>
     <p v-if="!data">{{busy?'正在读取…':'暂未取得回收站'}}</p>
     <template v-else>
      <div class="ar-recycle-settings-row"><span class="ar-meta">删除后保留 {{data.settings.retentionDays}} 天</span><Button variant="ghost" aria-haspopup="dialog" @click="days=data.settings.retentionDays;policyOpen=true">保留期限设置</Button><HelpTip title="回收站说明"><p>后台每小时检查到期内容；运行中或结果待核验的任务会延后清理。恢复计划后保持暂停。</p></HelpTip></div>
@@ -60,7 +60,7 @@ function go(next:number){offset.value=next;void refresh();}
    </template>
   </div>
  </Dialog>
- <Dialog v-if="data" :session-scoped="false" v-model:open="policyOpen" title="回收站保留设置" description="修改自动永久删除期限" content-class="ocp:max-w-lg">     <form class="ar-recycle-policy" @submit.prevent="retention"><label>自动永久删除期限（天）<input v-model.number="days" type="number" min="1" max="3650" step="1" required aria-label="回收站保留天数" :disabled="busy||!writable"></label><Button type="submit" :disabled="busy||!writable">保存保留期限</Button></form>
+ <Dialog size="confirm" v-if="data" :session-scoped="false" v-model:open="policyOpen" title="回收站保留设置" description="修改自动永久删除期限">     <form class="ar-recycle-policy" @submit.prevent="retention"><label>自动永久删除期限（天）<Input :model-value="days" @update:model-value="days=Number($event)" type="number" min="1" max="3650" step="1" required aria-label="回收站保留天数" :disabled="busy||!writable"/></label><Button type="submit" :disabled="busy||!writable">保存保留期限</Button></form>
      <p class="ar-muted">默认保留 30 天。删除时间起计算保留期限；后台每小时检查，运行中或结果待核验的任务延后清理。</p>
      <p class="ar-muted">{{data.cleanup?`最近清理：${new Date(data.cleanup.at).toLocaleString()} · ${data.cleanup.status==='succeeded'?'完成':'部分来源待核验'}`:'尚未取得后台清理记录；自动清理需原生调度服务可用。'}}</p>
 </Dialog>
