@@ -116,7 +116,7 @@ test('partial name, timezone and cron edits preserve other fields and paused sta
 test('delivery routes are bounded to original group and known thread; old creates retain source mode',async t=>{
  const f=fixture(t),r=await f.manager.manage(f.input,{});assert.equal(r.deliveryMode,'source');assert.equal(r.delivery.canUseThread,false);
  await assert.rejects(toolEdit(f,r,{deliveryMode:'thread'}),/投递位置/);await assert.rejects(toolEdit(f,r,{deliveryMode:'other-group'}),/投递位置/);
- for(const fields of [{chatId:'other'},{rootId:'forged'},{replyInThread:true},{task:'new scope'},{constraints:'expand scope'},{projectId:'other'}])await assert.rejects(toolEdit(f,r,fields),/parameters/);
+ for(const fields of [{chatId:'other'},{rootId:'forged'},{replyInThread:true},{constraints:'expand scope'},{projectId:'other'}])await assert.rejects(toolEdit(f,r,fields),/parameters/);
  assert.equal((await f.manager.manage({action:'get',id:r.id},{})).revision,r.revision);
  f.source.rootId='known';const second=await f.manager.manage({...f.input,requestId:'threaded',deliveryMode:'thread'},{});assert.equal(second.delivery.target,'thread');
  await toolEdit(f,second,{deliveryMode:'source'});assert.equal((await f.manager.manage({action:'get',id:second.id},{})).deliveryMode,'source');
@@ -274,4 +274,50 @@ test('concurrent Agents using the same request ID keep independent native ACK bi
  const p=(plan)=>({id:plan.id,action:'run',requestId:'shared-request',expectedRevision:plan.revision,confirmed:true}),runningA=f.manager.administer('main',p(a)),runningB=f.manager.administer('other',p(b));await new Promise(resolve=>setImmediate(resolve));ackB({ok:true,enqueued:true,runId:'agent-B'});await runningB;
  const firingA=f.manager.fire({action:'finished',status:'ok',agentId:'main',jobId:a.jobId,runId:'agent-A',runAtMs:2000});await new Promise(resolve=>setImmediate(resolve));assert.equal(f.delivered.length,0);ackA({ok:true,enqueued:true,runId:'agent-A'});await runningA;await firingA;assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].trigger,'manual');assert.equal(f.delivered[0].source.agentId,'main');assert.equal((await f.manager.catalog('main')).tasks[0].manualPending,false);
  await f.manager.fire({action:'finished',status:'ok',agentId:'other',jobId:b.jobId,runId:'agent-B',runAtMs:2000});assert.equal(f.delivered.length,2);assert.equal(f.delivered[1].source.agentId,'other');assert.equal((await f.manager.catalog('other')).tasks[0].manualPending,false);
+});
+
+test('task text update retains plan, permissions, provenance and schedule, audits the diff and survives restart',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{}),originalJob=structuredClone(f.jobs[0]);
+ const p={action:'update',id:r.id,requestId:'edit-task',expectedRevision:r.revision,task:'Report Runtime errors and work errors in separate sections'};
+ const changed=await f.manager.manage(p,{});
+ assert.equal(changed.task,p.task);assert.equal(changed.id,r.id);assert.equal(changed.jobId,r.jobId);assert.equal(changed.status,'enabled');assert.notEqual(changed.revision,r.revision);
+ assert.equal(changed.constraints,r.constraints);assert.equal(changed.projectId,r.projectId);assert.deepEqual(changed.schedule,r.schedule);assert.deepEqual(f.jobs[0],originalJob);
+ const audit=await f.manager.manage({action:'audit',id:r.id},{}),edit=audit.records.find(a=>a.requestId===p.requestId);
+ assert.deepEqual(edit.changes.find(c=>c.field==='task'),{field:'task',before:r.task,after:p.task});assert.equal(edit.actor.id,f.source.senderId);assert.equal(edit.requested.task,p.task);
+ f.reopen();assert.equal((await f.manager.manage(p,{})).operation.status,'succeeded');
+ await assert.rejects(f.manager.manage({...p,task:'different'},{}),/用于其他操作/);
+ await assert.rejects(f.manager.manage({...p,requestId:'stale'},{}),/已改变/);
+ // Retrying the original create keeps its original idempotency input and never restores old text.
+ assert.equal((await f.manager.manage(f.input,{})).task,p.task);assert.equal(f.jobs.length,1);
+ await f.manager.fire(f.event());assert.equal(f.delivered[0].task,p.task);assert.equal(f.delivered[0].constraints,r.constraints);assert.deepEqual(f.delivered[0].source,f.source);
+});
+test('task editing validates content, preserves paused state and forbids permission or source changes',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});
+ for(const task of ['', '   ',null,1,'x'.repeat(4001)])await assert.rejects(toolEdit(f,r,{task}),/正文/);
+ assert.equal((await f.manager.manage({action:'get',id:r.id},{})).revision,r.revision);
+ for(const key of ['senderId','accountId','chatId','sessionId','agentId'])await assert.rejects(f.manager.manage({action:'update',id:r.id,requestId:'foreign',expectedRevision:r.revision,task:'new'}, {[key]:'other'}),/not found/);
+ await assert.rejects(toolEdit(f,r,{task:'new',constraints:'write'}),/parameters/);
+ await assert.rejects(toolEdit(f,r,{task:'new',projectId:'other'}),/parameters/);
+ await toolEdit(f,r,{},'pause');const paused=await toolEdit(f,r,{task:'x'.repeat(4000)});assert.equal(paused.status,'paused');assert.equal(f.jobs[0].enabled,false);
+ const p=await operation(f,r.id,'update',{task:'Panel revision'});assert.equal((await f.manager.administer('main',p)).status,'succeeded');assert.equal((await f.manager.manage({action:'get',id:r.id},{})).task,p.task);
+ const {id,...create}=await operation(f,r.id,'create',{sourceId:r.id,name:'Copy',expr:'0 7 * * *',task:'new'});
+ await assert.rejects(f.manager.administer('main',create),/继承来源/);assert.equal(f.jobs.length,1);
+ f.revoke();await assert.rejects(toolEdit(f,r,{task:'revoked'}),/失效/);
+});
+test('accepted execution retains old task snapshot and active work blocks task edits until settled',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});await f.manager.fire(f.event());
+ f.busy();await assert.rejects(toolEdit(f,r,{task:'next task'}),/运行中/);
+ assert.equal((await f.manager.manage({action:'get',id:r.id},{})).task,r.task);
+ f.bridge.jobsActive=()=>false;await toolEdit(f,r,{task:'next task'});
+ assert.equal(f.delivered[0].task,r.task);await f.manager.fire(f.event(3000));assert.equal(f.delivered[1].task,'next task');
+});
+test('task edit fences concurrent dispatch and unknown native mutation cannot be blindly replayed',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});const update=f.cron.update;let release;
+ const gate=new Promise(resolve=>release=resolve);f.cron.update=async(...args)=>{await gate;return update(...args);};
+ const edit=toolEdit(f,r,{task:'future'});await new Promise(resolve=>setImmediate(resolve));await f.manager.fire(f.event());assert.equal(f.delivered.length,0);release();await edit;
+ await f.manager.fire(f.event(3000));assert.equal(f.delivered[0].task,'future');
+ const p={action:'update',id:r.id,requestId:'unknown-task',expectedRevision:(await f.manager.manage({action:'get',id:r.id},{})).revision,task:'uncertain'};let calls=0;
+ f.cron.update=async()=>{calls++;throw Error('lost acknowledgement');};await assert.rejects(f.manager.manage(p,{}),/未确认/);
+ f.reopen();const retry=await f.manager.manage(p,{});assert.equal(retry.operation.status,'unknown');assert.equal(retry.status,'needs_review');assert.equal(calls,1);
+ await f.manager.fire(f.event(4000));assert.equal(f.delivered.length,1);
 });
