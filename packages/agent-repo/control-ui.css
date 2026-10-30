@@ -583,3 +583,4 @@
 @media(max-width:560px){.ar-console-toolbar>[data-slot=native-select-wrapper]{flex:1;min-width:0;max-width:100%;width:calc(50% - 3px)}.ar-task-dialog .ar-sync-record{grid-template-columns:minmax(0,1fr) 48px 48px 10px;gap:6px}.ar-task-dialog .ar-sync-dialog-header,.ar-task-dialog .ar-sync-dialog-body{padding:14px}.ar-task-dialog .ar-sync-metadata{grid-template-columns:1fr}}
 
 [data-ocp-ui] .ar-console-find [data-slot="checkbox"] { min-height: 0; width: 16px; height: 16px; padding: 0; }
+.ar-schedule-form>.ar-schedule-body{grid-column:1/-1}.ar-schedule-body textarea{box-sizing:border-box;width:100%;min-width:0;resize:vertical;padding:10px;font:inherit;line-height:1.6;background:var(--bg);color:inherit;border:1px solid #8884;border-radius:6px}

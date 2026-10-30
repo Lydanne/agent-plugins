@@ -438,7 +438,7 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 | `list` | 可选 `projectId/status/query/limit/offset`；返回 `tasks/total/nextOffset`，limit 默认 50、最大 100。 |
 | `get` | `id`；返回名称、业务范围、时间、状态、`revision`、`busy/sourceValid`、`deliveryMode/delivery` 和最近接纳状态。 |
 | `history` | `id/limit/offset`；返回分页触发记录及 Main/Worker/消息回执；接纳、完成、送达分别判断。 |
-| `update` | `id/requestId/expectedRevision`，以及至少一个 `name/at/expr/timeZone/deliveryMode`；只改提供的字段，保留原 ID、原生计划、其他字段及启停状态。已结束的一次性任务修改后保持暂停，须明确恢复。 |
+| `update` | `id/requestId/expectedRevision`，以及至少一个 `name/task/at/expr/timeZone/deliveryMode`；只改提供的字段，保留原 ID、原生计划、其他字段及启停状态。已结束的一次性任务修改后保持暂停，须明确恢复。 |
 | `pause/remove` | `id`，推荐同时传稳定 `requestId` 和 `expectedRevision`；兼容旧调用。删除保留历史，不能当作取消已运行任务。 |
 | `resume` | `id/requestId/expectedRevision`；恢复原有计划，过期一次性时间须先修改。 |
 | `run` | `id/requestId/expectedRevision`；仅在用户明确要求立即执行时使用原生队列，不改变下一次周期时间，不将入队当作业务完成。 |
@@ -451,7 +451,7 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 {"action":"update","id":"<实际计划ID>","requestId":"<本次稳定请求ID>","expectedRevision":"<get返回的revision>","deliveryMode":"group"}
 ```
 
-成功返回完整计划及 `operation.status`。`update/resume/run` 必须传版本及稳定请求 ID，旧版本冲突要求重新读取，不自动覆盖；重复相同请求 ID 返回原操作回执。返回 `pending/unknown/needs_review` 或写入异常时先 get/history 核验，不能换 requestId 重建或盲目重放。`task/constraints/projectId`、原请求人、账号、群和授权来源不能通过 update 改写；任务范围改变仍需原群真人重新授权。读取与管理均不跨请求人、账号、会话代际，不因同名计划猜测对象。
+成功返回完整计划及 `operation.status`。`update/resume/run` 必须传版本及稳定请求 ID，旧版本冲突要求重新读取，不自动覆盖；重复相同请求 ID 返回原操作回执。返回 `pending/unknown/needs_review` 或写入异常时先 get/history 核验，不能换 requestId 重建或盲目重放。`task` 支持在原约束内根据当前真人的明确请求更新，非空且最多 4000 字符；保留原 ID、原生任务及启停状态，仅影响后续触发，审计记录正文前后值。`constraints/projectId`、原请求人、账号、群和授权来源不能通过 update 改写，正文变更不扩大业务权限；超出原约束的任务须另行授权。读取与管理均不跨请求人、账号、会话代际，不因同名计划猜测对象。
 
 ### 联动定时任务目录
 
@@ -461,10 +461,10 @@ CLI 详情分概览、更新设置、维护记录和诊断。自动更新默认�
 
 ### 控制面板管理定时任务
 
-在 **AgentRepo → 定时任务 → 管理定时任务** 中，`operator.read` 可查看当前 Agent 的任务内容、来源、状态和最近管理记录；`operator.write` / `operator.admin` 才可提交操作。服务端再次校验 Agent 绑定、项目登记、来源有效性、任务版本及确认字段，浏览器不能提交任意群、请求人、会话、任务正文或权限范围。
+在 **AgentRepo → 定时任务 → 管理定时任务** 中，`operator.read` 可查看当前 Agent 的任务内容、来源、状态和最近管理记录；`operator.write` / `operator.admin` 才可提交操作。服务端再次校验 Agent 绑定、项目登记、来源有效性、任务版本及确认字段，面板可编辑并确认任务正文前后值；浏览器不能提交任意群、请求人、会话或权限范围。基于已有群请求新建仍继承其正文。
 
 - **基于群请求新建**：选择已有 `agent_schedule` 保存的可信群请求，继承任务、约束、原请求人、账号、群和线程。可填写名称、五字段 cron 与 IANA 时区，或含时区的一次性未来时间。新计划默认暂停，确认后再启用。不从任意历史聊天推导授权，也不支持管理员凭群 ID 创建新授权。
-- **修改与暂停/启用**：修改名称、执行时间和投递位置，保留来源与任务内容；任务内容变化仍由真人在原群重新授权。原生计划与本地记录一起更新。一次性过期任务须先改为未来时间再启用。
+- **修改与暂停/启用**：修改名称、任务正文、执行时间和投递位置，保留来源及原授权约束；正文修改先展示前后值并确认，运行中或结果待核验时拒绝修改。原生计划与本地记录一起更新。一次性过期任务须先改为未来时间再启用。
 - **立即执行**：仅对已启用、来源有效、无正在运行或待核验记录的任务开放。通过服务公开的 `getCron().enqueueRun(id, 'force')` 入队，不能直接调用 Main、Worker 或桥接 `deliver`。旧宿主缺少该接口时禁用此操作，不能用本地计时器或 shell 替代。手动执行不更改下一次计划时间。
 - **删除**：移入回收站，暂停原生计划和本地后续接纳；保留期内可恢复为暂停，审计独立保留。暂停/删除不等于已取消在途业务或撤销已送达消息。
 

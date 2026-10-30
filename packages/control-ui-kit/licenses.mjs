@@ -1,5 +1,6 @@
 import {readFile,readdir} from 'node:fs/promises';
 import path from 'node:path';
+import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 // Use Rollup's actual module graph, rather than a hand-maintained dependency list.
 export async function bundledLicenses(outputs){
@@ -16,7 +17,7 @@ export async function bundledLicenses(outputs){
   const found=await owner(path.dirname(clean));if(found)packages.set(found.manifest.name+'@'+found.manifest.version,found);
  }
  // Generated utilities/theme CSS also incorporates Tailwind source, outside Rollup's JS graph.
- const cssOwner=await owner(path.dirname(fileURLToPath(import.meta.resolve('tailwindcss'))));
+ const cssOwner=await owner(path.dirname(createRequire(import.meta.url).resolve('tailwindcss')));
  if(!cssOwner)throw Error('Missing Tailwind CSS package');
  packages.set(cssOwner.manifest.name+'@'+cssOwner.manifest.version,cssOwner);
  const kit=path.dirname(fileURLToPath(import.meta.url));

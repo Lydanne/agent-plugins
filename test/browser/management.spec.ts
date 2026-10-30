@@ -57,3 +57,7 @@ test('a native host modal stays interactive above a plugin modal',async({page})=
  await page.evaluate(()=>{(document.getElementById('native-host') as HTMLDialogElement).showModal();});await page.keyboard.press('Escape');await expect(host).toBeHidden();await expect(plugin).toBeVisible();
  await plugin.getByRole('button',{name:'关闭',exact:true}).click();await expect(plugin).toBeHidden();await expect.poll(()=>page.evaluate(()=>document.body.style.pointerEvents)).toBe('');await expect(page.getByRole('button',{name:'打开回收站'})).toBeFocused();
 });
+
+test('plugin utility initialization leaves host Tailwind variables and native controls intact',async({page})=>{
+ await ready(page);const state=await page.evaluate(()=>{const parent=document.createElement('section');parent.style.setProperty('--tw-shadow','host-shadow');parent.style.setProperty('--tw-translate-x','123px');const button=document.createElement('button');button.textContent='Host control';parent.append(button);document.body.append(parent);const css=getComputedStyle(button);const result={shadow:css.getPropertyValue('--tw-shadow').trim(),translate:css.getPropertyValue('--tw-translate-x').trim(),display:css.display};parent.remove();return result;});expect(state.shadow).toBe('host-shadow');expect(state.translate).toBe('123px');expect(state.display).toBe('inline-block');
+});

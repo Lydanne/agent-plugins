@@ -112,3 +112,23 @@ test('a new confirmation or failure cannot retain a previous successful operatio
  const tasks=[structuredClone(task)],f=await fixture({after:onTestFinished},{tasks,mutate:async p=>{if(p.action==='pause'){tasks[0].status='paused';tasks[0].revision='next';return {id:'one',status:'succeeded'};}throw Error('运行状态变化，本次未入队');}});
  click(f.container,'暂停');await settle();click(f.container,'确认执行');await settle();assert.match(f.container.textContent,/操作已完成/);click(f.container,'启用');await settle();assert.ok(!f.container.textContent.includes('操作已完成'));click(f.container,'确认执行');await settle();assert.match(f.container.textContent,/本次未入队/);assert.ok(!f.container.textContent.includes('操作已完成'));
 });
+
+test('task editor previews old and new text, keeps cancelled drafts and submits only an explicit text change',async ()=>{
+ const f=await fixture({after:onTestFinished});const text='Runtime errors\nWork errors';
+ const input=f.container.querySelector('[aria-label="任务正文"]');assert.equal(input.value,task.task);assert.equal(input.maxLength,4000);
+ input.value=text;input.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));await settle();
+ assert.match(f.container.textContent,/任务正文修改前/);assert.ok(f.container.textContent.includes(task.task));assert.ok(f.container.textContent.includes(text));assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
+ click(f.container,'取消');await settle();assert.equal(f.container.querySelector('[aria-label="任务正文"]').value,text);
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));await settle();click(f.container,'确认执行');await settle();
+ const p=f.calls.find(c=>c.action==='scheduleManage').payload;assert.equal(p.task,text);assert.equal(p.id,task.id);assert.equal(p.expectedRevision,task.revision);assert.ok(!('constraints' in p));assert.ok(!('projectId' in p));
+});
+test('unchanged text is omitted and new plans inherit the source text',async ()=>{
+ const f=await fixture({after:onTestFinished});
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{cancelable:true}));await settle();click(f.container,'确认执行');await settle();assert.ok(!('task' in f.calls.find(c=>c.action==='scheduleManage').payload));
+ click(f.container,'基于群请求新建');await settle();assert.equal(f.container.querySelector('[aria-label="任务正文"]'),null);
+});
+for(const options of [{write:false},{tasks:[{...task,busy:true}]},{tasks:[{...task,sourceValid:false}]}])test('task editor cannot submit without permission or settled valid source',async ()=>{
+ const f=await fixture({after:onTestFinished},options);assert.equal(f.container.querySelector('[aria-label="任务正文"]').disabled,true);
+ assert.equal([...f.container.querySelectorAll('button')].find(b=>b.textContent==='保存设置').disabled,true);assert.equal(f.calls.filter(c=>c.action==='scheduleManage').length,0);
+});

@@ -68,7 +68,7 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 
 新版 `list/get/history/update/pause/resume/remove/run` 限当前真人请求人与群会话。先 list 筛选 `projectId/status/query`、按 `nextOffset` 翻页并核对计划；get 返回 `revision`、时间、投递位置与 `busy/sourceValid`，history 分页查看真实接纳/投递回执。工具未提供对应动作时如实说明，不伪造调用。
 
-修改名称、Cron、一次性时间、时区和投递位置使用原 `id` 的 update，只提交需改字段；恢复用 resume。update/resume/run 必须使用 list/get 的 `revision` 作为 expectedRevision，传稳定 requestId，重复提交同一输入不重复执行。只改投递位置时不要连带改时间、业务正文或重新创建。`deliveryMode=group` 在原群主会话发新消息，`thread` 仅回原请求的已知话题，`source` 保持原位置；不能传任意群、账号、话题 ID、请求人或改变业务权限。Main 在原授权会话执行，结果（含 Worker 后续交付）遵循该次执行的投递快照；在途/结果待核验时先核验，不抢改或重跑。旧版本、权限失败和未知写入不能称已成功；失败时保留计划及 requestId，先 get/history 核对。
+修改名称、任务正文 task、Cron、一次性时间、时区和投递位置使用原 `id` 的 update，只提交需改字段；恢复用 resume。update/resume/run 必须使用 list/get 的 `revision` 作为 expectedRevision，传稳定 requestId，重复提交同一输入不重复执行。任务正文修改须来自当前真人的明确请求，非空且不超过 4000 字符，受原 constraints 约束；constraints/projectId 和授权来源不可修改。只影响后续触发，保留 ID、启停状态和修改审计。只改投递位置时不要连带改时间、业务正文或重新创建。`deliveryMode=group` 在原群主会话发新消息，`thread` 仅回原请求的已知话题，`source` 保持原位置；不能传任意群、账号、话题 ID、请求人或改变业务权限。Main 在原授权会话执行，结果（含 Worker 后续交付）遵循该次执行的投递快照；在途/结果待核验时先核验，不抢改或重跑。旧版本、权限失败和未知写入不能称已成功；失败时保留计划及 requestId，先 get/history 核对。
 
 用户明确要求“立即执行”才用 run，通过原生队列单次提交，不改变下次时间。暂停/删除计划不等于已停止 Worker。原生 tick 成功、Main 入场或 Worker 提交均不代表业务完成。群消息整理和每日清单由 Main 直接核对本群历史与已有进展；新增业务执行仍沿用 Worker 异步协议，不在 Main 等待。无该工具时不能宣称可创建；生产启用和部署另需授权。
 

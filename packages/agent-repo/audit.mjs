@@ -6,7 +6,7 @@ import {withRepositoryDatabase} from './database.mjs';
 export function auditTable(db){db.exec(`CREATE TABLE IF NOT EXISTS audit_events(id TEXT PRIMARY KEY,agent TEXT NOT NULL,feature TEXT NOT NULL,target TEXT NOT NULL,at INTEGER NOT NULL,body TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS audit_time ON audit_events(agent,at DESC,id DESC);
  CREATE INDEX IF NOT EXISTS audit_scope ON audit_events(agent,feature,target,at);`);}
-export function scheduleSnapshot(r){return r?{name:r.name??'每日仓库同步',schedule:r.schedule,status:r.status,deliveryMode:r.deliveryMode??'source',jobId:r.jobId??null,revision:r.managementRevision??r.version??0}:null;}
+export function scheduleSnapshot(r){return r?{name:r.name??'每日仓库同步',...(typeof r.task==='string'?{task:r.task}:{}),schedule:r.schedule,status:r.status,deliveryMode:r.deliveryMode??'source',jobId:r.jobId??null,revision:r.managementRevision??r.version??0}:null;}
 export function humanAuditActor(source){return {kind:'human',id:source.senderId??null,name:source.people?.requester?.name??null,accountId:source.accountId,chatId:source.chatId,messageIds:source.requestMessageIds??source.sourceMessageIds??[],sessionKey:source.sessionKey};}
 export function panelAuditActor(ctx){return {kind:'operator',id:ctx.client?.connId??null,name:null,identityNote:'宿主仅提供控制面板连接身份，未提供实名',sessionKey:ctx.sessionKey??null};}
 export function auditBegin(db,{agentId,feature,targetId,targetName,action,actor={kind:'system',id:null},executor,requestId,before=null,requested=null,at=Date.now(),id=randomUUID()}){
