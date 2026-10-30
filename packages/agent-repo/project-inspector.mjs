@@ -1,3 +1,4 @@
+import {entityAuditQuery,rootAudit,auditBegin,auditFinish,auditQuery,panelAuditActor} from './audit.mjs';
 import {workspaceCatalog,saveWorkspaceConfig,WorkspaceManagementError} from './workspace-management.mjs';
 import {scheduledRequestBridge} from './scheduled-requests.mjs';
 import {createSkillMaintenance} from './skill-maintenance.mjs';
@@ -71,8 +72,21 @@ async function scopes(root,project){
 export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),diagnostics={}){
  const maintenance=createSkillMaintenance(getHostConfig);
  async function context(ctx){const agentId=trustedAgentId(ctx),binding=bindingFor(config,{agentId});if(!binding)throw Error('当前 Agent 未绑定 Agent Repo');return {agentId,binding};}
- return {
+ const inspector={
   ...diagnostics,
+  async audit(ctx){
+   const {agentId,binding}=await context(ctx),p=ctx.payload??{};
+   // Validate even when all providers are unavailable. Each provider is independently Agent-scoped.
+   const {limit=50,offset=0}=p;if(offset>10000)throw Error('请缩小审计筛选范围');
+   rootAudit(binding.repo,db=>auditQuery(db,agentId,p));
+   const providers=[params=>rootAudit(binding.repo,db=>auditQuery(db,agentId,params)),params=>entityAuditQuery(binding.repo,agentId,params)];
+   const unavailable=[];
+   for(const [name,bridge] of (!p.feature||p.feature==='schedules'?[['群计划',scheduledRequestBridge],['系统计划',repositoryScheduleBridge]]:[]))if(bridge.audit)providers.push(params=>bridge.audit(agentId,params));else unavailable.push(name);
+   const records=[];let total=0;
+   for(const read of providers){let cursor=0;do{const page=await read({...p,limit:100,offset:cursor});if(!cursor)total+=page.total;records.push(...page.records);cursor=page.nextOffset;}while(cursor!==null&&cursor<offset+limit);}
+   records.sort((a,b)=>b.at-a.at||b.id.localeCompare(a.id));
+   return {agentId,records:records.slice(offset,offset+limit),total,nextOffset:offset+limit<total?offset+limit:null,unavailable,notice:'审计自启用后记录；旧操作未保存的修改人和前后值无法追溯。成功仅表示管理操作完成，非业务执行完成。'};
+  },
   async workspacePool(ctx){const {binding}=await context(ctx);const p=ctx.payload??{};if(Object.keys(p).some(k=>k!=='projectId')||typeof p.projectId!=='string')throw Error('Invalid project');return workspaceCatalog(binding.repo,p.projectId);},
   async workspacePoolSave(ctx){const {binding}=await context(ctx);if(!ctx.client?.scopes?.some(s=>['operator.write','operator.admin'].includes(s)))throw new WorkspaceManagementError('工作区管理需要写入权限');return saveWorkspaceConfig(binding.repo,ctx.payload??{});},
   async maintenance(ctx){await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('Invalid maintenance parameters');const catalog=await maintenanceCatalog(ctx);let main;try{main=await maintenance.snapshot(ctx);}catch{main={apiVersion:1,id:'agent-repo.main-skill',label:'Main 协作技能',scope:'当前 Agent',state:'unavailable',skills:[],actions:[],observedAt:new Date().toISOString()};}return {...catalog,providers:[main,...catalog.providers]};},
@@ -146,13 +160,13 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    const {agentId,binding}=await context(ctx);
    if(!ctx.client?.scopes?.some(scope=>['operator.write','operator.admin'].includes(scope)))throw Error('定时任务管理需要写入权限');
    const params=ctx.payload??{};
-   if(params.id===repositorySyncTaskId(agentId)){if(!repositoryScheduleBridge.administer)throw Error('仓库同步调度服务不可用');return repositoryScheduleBridge.administer(agentId,params);}
+   if(params.id===repositorySyncTaskId(agentId)){if(!repositoryScheduleBridge.administer)throw Error('仓库同步调度服务不可用');return repositoryScheduleBridge.administer(agentId,params,{actor:panelAuditActor(ctx),executor:'control-ui'});}
    if(!scheduledRequestBridge.administer)throw Error('定时任务服务不可用');
    if(['create','update','resume','run'].includes(params.action)){
     const catalog=await scheduledRequestBridge.catalog(agentId),task=catalog.tasks.find(t=>t.id===(params.action==='create'?params.sourceId:params.id));
     const projects=await readProjects(binding.repo);if(!task||!Object.hasOwn(projects,task.projectId))throw Error('请选择当前 Agent 已登记项目的群请求');
    }
-   return scheduledRequestBridge.administer(agentId,params);
+   return scheduledRequestBridge.administer(agentId,params,{actor:panelAuditActor(ctx),executor:'control-ui'});
   },
   async taskRecord(ctx){
    const {agentId,binding}=await context(ctx),params=ctx.payload??{},taskId=repositorySyncTaskId(agentId);
@@ -192,12 +206,36 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    return {agentId,projectId:project.projectId,name:project.name,root:before.root,repository,cwd:projectRoot,scopeDirectory:before.root+'/'+repository,registryRevision:before.registryRevision,registrationCommitted:!!before.registryRevision,scannedAt:now(),inspection,scopes:availableScopes,sources,subagentSources,candidateSubagentCount,effectiveSkillCount:effective.size,rules:Object.values(rules)};
   },
  };
+ // Persist intent before invoking a mutation. An interrupted pending record is never silently declared successful.
+ const mutations={workspacePoolSave:'workspace',maintenanceRun:'skills',syncPeople:'entities',updatePerson:'entities',deletePerson:'entities',clearRepositoryLogs:'logs',diagnosticClearHistory:'logs'};
+ for(const [action,feature] of Object.entries(mutations))if(inspector[action]){
+  const run=inspector[action];inspector[action]=async ctx=>{
+   const {agentId,binding}=await context(ctx),p=ctx.payload??{};
+   if(!ctx.client?.scopes?.some(s=>['operator.write','operator.admin'].includes(s)))return run(ctx);
+   const targetId=String(['updatePerson','deletePerson'].includes(action)?'person:'+p.id:p.id??p.projectId??p.providerId??p.sourceId??feature);
+   const snapshot=async()=>{
+    if(action==='maintenanceRun'){const catalog=p.providerId==='agent-repo.main-skill'?{providers:[await maintenance.snapshot(ctx)]}:await maintenanceCatalog(ctx);const provider=catalog.providers.find(r=>r.id===p.providerId);return provider?.policy?Object.fromEntries(['autoUpdate','version','updateCheckIntervalHours'].filter(k=>provider.policy[k]!==undefined).map(k=>[k,provider.policy[k]])):null;}
+    if(action==='workspacePoolSave')return (await workspaceCatalog(binding.repo,p.projectId)).config;
+    if(['updatePerson','deletePerson'].includes(action)){const person=createPeopleStore(binding.repo).all().find(r=>r.id===p.id);return person?Object.fromEntries(['name','email','departments','giteaUsername','revision'].map(k=>[k,person[k]])):null;}
+    return null;
+   };
+   const requested=action==='workspacePoolSave'?{enabled:p.enabled,maxSize:p.maxSize}:action==='updatePerson'?Object.fromEntries(['name','email','departments','giteaUsername'].filter(k=>p.patch?.[k]!==undefined).map(k=>[k,p.patch[k]])):null;
+   const before=await snapshot(),id=rootAudit(binding.repo,db=>auditBegin(db,{agentId,feature,targetId,action,actor:panelAuditActor(ctx),executor:'control-ui',requestId:typeof p.requestId==='string'?p.requestId:undefined,before,requested:action==='maintenanceRun'?{action:p.action,...Object.fromEntries(['autoUpdate','version','updateCheckIntervalHours'].filter(k=>p.settings?.[k]!==undefined).map(k=>[k,p.settings[k]]))}:action==='syncPeople'?{accountId:p.accountId??null}:requested}));
+   try{const result=await run(ctx);
+    // Capture the mutation's returned revision, never a later concurrent writer's state.
+    const after=action==='workspacePoolSave'?result.config:action==='updatePerson'?Object.fromEntries(['name','email','departments','giteaUsername','revision'].map(k=>[k,result[k]])):action==='deletePerson'?null:before;
+    const status=['maintenanceRun','syncPeople'].includes(action)?(['unknown','failed'].includes(result?.status)?result.status:result?.status==='succeeded'?'succeeded':'accepted'):'succeeded';
+    rootAudit(binding.repo,db=>auditFinish(db,id,status,after));return result;
+   }catch(error){rootAudit(binding.repo,db=>auditFinish(db,id,'unknown',before));throw error;}
+  };
+ }
+ return inspector;
 }
 export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDiagnosticTransferActive=()=>false}={}){
  const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);if(!register){api.logger?.warn?.('Agent Repo panel unavailable: host lacks public session actions');return;}
  const transfers=new Map(),owner=ctx=>JSON.stringify([trustedAgentId(ctx),ctx.sessionKey??null,ctx.client?.connId??null]);
  const part=(id,value,index)=>({encoding:'json-chunks',transferId:id,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
- for(const action of ['list','detail','chunk','workspacePool','workspacePoolSave','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity','relations','graph','entityHistory','maintenance','maintenanceRun','scheduleCatalog','scheduleManage',...Object.keys(inspector).filter(key=>key.startsWith('diagnostic'))])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['workspacePoolSave','scheduleManage','clearRepositoryLogs','syncPeople','updatePerson','deletePerson','maintenanceRun','diagnosticStart','diagnosticRenew','diagnosticClearHistory'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
+ for(const action of ['list','detail','chunk','workspacePool','workspacePoolSave','syncRecord','taskRecord','repositoryLogs','clearRepositoryLogs','people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','entityTypes','entities','entity','relations','graph','entityHistory','maintenance','maintenanceRun','scheduleCatalog','scheduleManage','audit',...Object.keys(inspector).filter(key=>key.startsWith('diagnostic'))])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['workspacePoolSave','scheduleManage','clearRepositoryLogs','syncPeople','updatePerson','deletePerson','maintenanceRun','diagnosticStart','diagnosticRenew','diagnosticClearHistory'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
   try{
    const scope=owner(ctx);for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);
    if(action==='chunk'){const {transferId,index}=ctx.payload??{},value=transfers.get(transferId);if(!value||value.owner!==scope||!Number.isInteger(index)||index<0||index>=Math.ceil(value.text.length/inspectionChunkSize))throw Error('Invalid transfer');if(value.diagnosticLeaseId&&!isDiagnosticTransferActive(ctx,value.diagnosticLeaseId)){transfers.delete(transferId);throw Error('Diagnostic capture stopped');}return {ok:true,result:part(transferId,value,index)};}
@@ -207,6 +245,6 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDia
    const id=randomUUID(),value={owner:scope,text,expiresAt:now()+120000,...(action==='diagnosticRead'?{diagnosticLeaseId:result.leaseId}:{})};
    if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,value);}
    return {ok:true,result:part(id,value,0)};
-  }catch(error){if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
+  }catch(error){if(action==='audit')return {ok:false,code:'AUDIT_UNAVAILABLE',error:'审计读取失败，请核对筛选条件、权限和审计来源状态。'};if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
  }});
 }

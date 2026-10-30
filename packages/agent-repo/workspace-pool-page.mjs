@@ -1,10 +1,12 @@
+import {mountAudit} from './audit-page.mjs';
 const labels={idle:'空闲',preparing:'初始化中',ready:'待执行',running:'执行中',held:'等待补充',checking:'检查释放条件',blocked:'异常保留'};
 const el=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
 export function mountWorkspacePool(container,{projectId,invoke,canWrite,safe=String}){
  const launcher=el('span');launcher.className='ar-workspace-pool';container.append(launcher);
  const trigger=el('button','工作区配置');trigger.type='button';trigger.setAttribute('aria-haspopup','dialog');launcher.append(trigger);
+ let auditView=null;
  let disposed=false,version=0,data=null,busy=false,message='',dialog=null,root=null;
- function close(restore=true){
+ function close(restore=true){auditView?.dispose();auditView=null;
   const previous=dialog;dialog=null;root=null;version++;busy=false;
   if(previous){if(previous.open)previous.close();previous.remove();}
   if(restore&&!disposed)trigger.focus({preventScroll:true});
@@ -13,14 +15,14 @@ export function mountWorkspacePool(container,{projectId,invoke,canWrite,safe=Str
   if(disposed||dialog)return;
   dialog=el('dialog');dialog.className='ar-sync-dialog ar-workspace-dialog';dialog.setAttribute('aria-label','代码工作区池');
   const header=el('div');header.className='ar-sync-dialog-header';header.append(el('h2','代码工作区池'));
-  const dismiss=el('button','关闭');dismiss.type='button';dismiss.onclick=()=>close();header.append(dismiss);
+  const dismiss=el('button','关闭');dismiss.type='button';dismiss.onclick=()=>close();header.append(dismiss);const audit=el('button','修改日志');audit.type='button';audit.onclick=()=>{auditView?.dispose();root.replaceChildren();auditView=mountAudit(root,{invoke,safe,feature:'workspace',targetId:projectId,onClose:load});};header.append(audit);
   root=el('div');root.className='ar-sync-dialog-body ar-workspace-content';dialog.append(header,root);launcher.append(dialog);
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   const current=dialog;dialog.addEventListener('close',()=>{if(dialog===current)close();});
   dialog.addEventListener('click',event=>{if(event.target!==dialog)return;const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)close();});
   data=null;message='';dialog.showModal();dismiss.focus();load();
  };
- async function load(){const token=++version;busy=true;render();try{const next=await invoke('workspacePool',{projectId});if(disposed||token!==version)return;if(!next?.config||!Array.isArray(next.slots))throw Error('当前宿主暂不支持工作区管理');data=next;message='';}catch(e){if(disposed||token!==version)return;message=e.message;}busy=false;render();}
+ async function load(){auditView?.dispose();auditView=null;const token=++version;busy=true;render();try{const next=await invoke('workspacePool',{projectId});if(disposed||token!==version)return;if(!next?.config||!Array.isArray(next.slots))throw Error('当前宿主暂不支持工作区管理');data=next;message='';}catch(e){if(disposed||token!==version)return;message=e.message;}busy=false;render();}
  function render(){
   if(disposed||!root)return;root.replaceChildren(el('p','projects 用于常规只读任务；workspace 用于已授权的代码修改与 PR。池满时原任务等待释放。'));
   const refresh=el('button','刷新工作区');refresh.type='button';refresh.disabled=busy;refresh.onclick=load;root.append(refresh);

@@ -45,7 +45,7 @@ test('dirty inspection shows committed metadata without loading changes or follo
 });
 test('native actions require read scope and chunk ownership includes Agent and conversation',async()=>{
  let clock=0;const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>({text:'x'.repeat(80000)}),detail:async()=>{throw Error('secret-path');}},{now:()=>clock});
- assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun'].includes(a.id)).map(a=>a.requiredScopes),Array(17).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
+ assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun'].includes(a.id)).map(a=>a.requiredScopes),Array(18).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
  const actual=await readInspectionResponse((action,payload)=>actions.find(a=>a.id==='projects-'+action).handler({...ctx,payload}),'list',{});assert.equal(actual.text.length,80000);
  const first=await actions[0].handler(ctx),transferId=first.result.transferId;
  for(const extra of [{agentId:'other',sessionKey:'agent:other:test'},{sessionKey:'agent:main:other'},{payload:{transferId,index:-1}},{payload:{transferId,index:3}}])assert.equal((await actions[2].handler({...ctx,payload:{transferId,index:1},...extra})).ok,false);
@@ -140,4 +140,21 @@ test('workspace management scopes reads and writes, detects stale config and pre
  await writeFile(join(f.root,'workspace/state.json'),'{corrupt');await assert.rejects(f.inspector.workspacePool(ctx),/状态不可读取/);
  const saved=await readFile(join(f.root,'projects.json'),'utf8');await assert.rejects(f.inspector.workspacePoolSave({...write,payload:{...payload,revision:(await import('node:crypto')).createHash('sha256').update(saved).digest('hex'),maxSize:4}}),/状态不可读取/);assert.equal(await readFile(join(f.root,'projects.json'),'utf8'),saved);
 
+});
+
+test('global audit merges all providers deterministically with filters, pagination and trusted Agent scope',async t=>{
+ const {rootAudit,auditBegin}=await import('./audit.mjs'),{scheduledRequestBridge}=await import('./scheduled-requests.mjs'),{repositoryScheduleBridge}=await import('./scheduled-tasks.mjs');
+ const f=await fixture(t),saved=scheduledRequestBridge.audit,system=repositoryScheduleBridge.audit;t.after(()=>{if(saved)scheduledRequestBridge.audit=saved;else delete scheduledRequestBridge.audit;if(system)repositoryScheduleBridge.audit=system;else delete repositoryScheduleBridge.audit;});delete repositoryScheduleBridge.audit;
+ for(let i=0;i<120;i++)rootAudit(f.root,db=>auditBegin(db,{agentId:'main',feature:'schedules',targetId:'one',action:'update',at:i*2}));rootAudit(f.root,db=>auditBegin(db,{agentId:'other',feature:'schedules',targetId:'private',action:'update',at:10000}));
+ scheduledRequestBridge.audit=(agent,p)=>{assert.equal(agent,'main');assert.equal(p.targetId,'one');const all=Array.from({length:120},(_,i)=>({id:'bridge:'+i,at:i*2+1,targetId:'one'})).reverse();return {total:120,records:all.slice(p.offset,p.offset+p.limit),nextOffset:p.offset+p.limit<120?p.offset+p.limit:null};};
+ const result=await f.inspector.audit({...f.ctx,payload:{targetId:'one',limit:25,offset:100}});assert.equal(result.total,240);assert.equal(result.records[0].at,139);assert.equal(result.records.at(-1).at,115);assert.equal(result.nextOffset,125);assert.ok(!JSON.stringify(result).includes('private'));assert.ok(result.unavailable.includes('系统计划'));
+ await assert.rejects(f.inspector.audit({...f.ctx,payload:{agentId:'other'}}),/参数/);const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.deepEqual(actions.find(a=>a.id==='projects-audit').requiredScopes,['operator.read']);
+});
+
+test('panel workspace edits preserve real before-after values, connection identity and unreadable payload fields',async t=>{
+ const f=await fixture(t),before=await f.inspector.workspacePool({...f.ctx,payload:{projectId:'a'}});
+ const ctx={...f.ctx,client:{connId:'operator-connection',scopes:['operator.write'],token:'SECRET'},payload:{projectId:'a',revision:before.revision,enabled:true,maxSize:5}};
+ await f.inspector.workspacePoolSave(ctx);
+ const result=await f.inspector.audit({...f.ctx,payload:{feature:'workspace',targetId:'a'}});assert.equal(result.total,1);const e=result.records[0];assert.equal(e.actor.id,'operator-connection');assert.equal(e.actor.name,null);assert.equal(e.before.enabled,false);assert.equal(e.after.maxSize,5);assert.ok(!JSON.stringify(result).includes('SECRET'));
+ await assert.rejects(f.inspector.workspacePoolSave({...ctx,client:{scopes:['operator.read']}}));assert.equal((await f.inspector.audit({...f.ctx,payload:{feature:'workspace'}})).total,1);
 });

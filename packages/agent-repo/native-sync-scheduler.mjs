@@ -1,3 +1,4 @@
+import {importLegacyOperations,auditTable,auditBegin,auditFinish,auditQuery,scheduleSnapshot} from './audit.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
@@ -45,21 +46,21 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
   if(!active)return;
   for(const [id,binding] of Object.entries(config.agents)){
    if(!active)break;if(!binding.sync?.submoduleSchedule||locks.has(id))continue;
-   locks.add(id);try{
+   locks.add(id);let setupAudit;try{
     let r=get(id),jobs=await cron().list({includeDisabled:true});
     if(!r){
      const candidates=jobs.filter(j=>j.agentId===id&&j.description===description(id));
      if(candidates.length>1)throw Error('重复原生计划');
-     r={agentId:id,schedule:binding.sync.submoduleSchedule,status:'creating',version:0};save(r);
+     r={agentId:id,schedule:binding.sync.submoduleSchedule,status:'creating',version:0};setupAudit=auditBegin(db,{agentId:id,feature:'schedules',targetId:repositorySyncTaskId(id),targetName:'每日仓库同步',action:'create',actor:{kind:'system',id:'deployment-config'},executor:'native-sync-reconcile',requested:{schedule:r.schedule},at:clock()});save(r);
      const job=candidates[0]??await cron().add({name:'每日仓库同步 · '+id,description:description(id),agentId:id,enabled:false,schedule:nativeSchedule(r.schedule),sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});
-     if(!job?.id||!matches(job,r))throw Error('原生任务来源不一致');r.jobId=job.id;r.status=enabled(id)?'enabled':'paused';save(r);await cron().update(r.jobId,{enabled:enabled(id)});
+     if(!job?.id||!matches(job,r))throw Error('原生任务来源不一致');r.jobId=job.id;r.status=enabled(id)?'enabled':'paused';save(r);await cron().update(r.jobId,{enabled:enabled(id)});auditFinish(db,setupAudit,'succeeded',scheduleSnapshot(r),{at:clock()});
     }
     if(!enabled(id)){if(r.jobId){const job=jobs.find(j=>j.id===r.jobId);if(job&&matches(job,r)&&job.enabled)await cron().update(r.jobId,{enabled:false});}continue;}
     if(r.status!=='enabled'||r.running||r.queuedDate)continue;
     const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);if(!matches(job,r)||!job.enabled||JSON.stringify(job.schedule)!==JSON.stringify(nativeSchedule(r.schedule)))continue;
     if(job.state?.lastRunStatus==='ok')await fire({action:'finished',status:'ok',agentId:id,jobId:r.jobId,runAtMs:job.state.lastRunAtMs});
     r=get(id);const date=scheduleDate(new Date(clock()),r.schedule);if(date&&!r.running&&!r.queuedDate&&!await tried(r,date))await enqueue(r,date);
-   }catch{const r=get(id);if(r){r.status='needs_review';save(r);}logger?.warn?.('agent-repo: native daily schedule needs inspection');}finally{locks.delete(id);}
+   }catch{const r=get(id);if(r){r.status='needs_review';save(r);}if(setupAudit)auditFinish(db,setupAudit,'unknown',scheduleSnapshot(r),{at:clock()});logger?.warn?.('agent-repo: native daily schedule needs inspection');}finally{locks.delete(id);}
   }
  }
  function reconcile(){if(!reconciling)reconciling=reconcileOnce().finally(()=>{reconciling=undefined;});return reconciling;}
@@ -72,7 +73,7 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
   let canEnqueue=false;try{canEnqueue=typeof context?.getCron?.()?.enqueueRun==='function';}catch{}
   return [{nativeWarning:!native.nativeAvailable?'原生调度不可读取':r.status!=='removed'&&!native.nativeConsistent?'原生计划缺失或与保存设置不一致，请核验':'',id:repositorySyncTaskId(id),kind:'repository-sync',name:'每日仓库同步',revision:revision(r),schedule:{...nativeSchedule(r.schedule),time:r.schedule.time},status:r.status,busy:!!(r.running||r.queuedDate),sourceValid:enabled(id),canRun:canEnqueue&&native.nativeConsistent&&native.enabled&&!alreadyAttempted,alreadyAttempted,projectId:'全部登记项目',task:'安全同步当前 Agent 仓库和全部已登记项目的 wiki、直接业务子仓库。',constraints:'每天至多尝试一次，失败或中断不自动重试；保留脏工作树、分叉、未推送提交及错误远端，禁止强推、重置、自动 stash。',operations:db.prepare('SELECT body FROM operations WHERE agent=? ORDER BY rowid DESC LIMIT 30').all(id).map(o=>JSON.parse(o.body))}];
  }
- async function administer(id,p){
+ async function administer(id,p,provenance={}){
   if(!p||Object.keys(p).some(k=>!['action','id','requestId','expectedRevision','confirmed','name','time','timeZone'].includes(k))||p.id!==repositorySyncTaskId(id)||p.confirmed!==true||typeof p.requestId!=='string'||!p.requestId||p.requestId.length>150||!['update','pause','resume','remove','run'].includes(p.action))throw Error('同步计划管理参数无效');
   const r=owned(id),key=id+':'+p.requestId,prior=db.prepare('SELECT body FROM operations WHERE key=?').get(key),input=JSON.stringify(p);
   if(prior){const o=JSON.parse(prior.body);if(o.input!==input)throw Error('requestId 已用于其他操作');return o.result??{status:o.status};}
@@ -86,8 +87,9 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
   if(p.action==='run'&&(r.status!=='enabled'||await tried(r,date)))throw Error('今日已有尝试记录，或计划未启用；不重复同步');
   if(locks.has(id)||(get(id).queuedDate||get(id).running)&&!['pause','remove'].includes(p.action)||revision(get(id))!==revision(r))throw Error('计划或运行状态已改变，请刷新');
   if(p.action==='run'&&get(id).attemptedDate===date)throw Error('今日已有尝试记录');
-  locks.add(id);const op={requestId:p.requestId,action:p.action,input,status:'pending',createdAt:clock()};const record=()=>db.prepare('INSERT OR REPLACE INTO operations VALUES (?,?,?)').run(key,id,JSON.stringify(op));record();
-  try{
+  const auditId=auditBegin(db,{agentId:id,feature:'schedules',targetId:p.id,targetName:'每日仓库同步',action:p.action,...provenance,requestId:p.requestId,before:scheduleSnapshot(r),requested:p.action==='update'?{time:p.time,timeZone:p.timeZone}:null,at:clock()});
+  locks.add(id);const op={requestId:p.requestId,action:p.action,input,status:'pending',createdAt:clock()};const record=()=>db.prepare('INSERT OR REPLACE INTO operations VALUES (?,?,?)').run(key,id,JSON.stringify(op));
+  try{record();
    const nativeJobs=await cron().list({includeDisabled:true});let job=nativeJobs.find(j=>j.id===r.jobId);
    if(!r.jobId){const candidates=nativeJobs.filter(j=>j.agentId===id&&j.description===description(id));if(candidates.length>1)throw Error('原生计划重复，需核验');job=candidates[0];if(job){r.jobId=job.id;save(r);}}
    if(!job&&r.status==='removed'&&p.action==='resume'){r.status='creating';save(r);job=await cron().add({name:'每日仓库同步 · '+id,description:description(id),agentId:id,enabled:false,schedule:nativeSchedule(r.schedule),sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});if(!job?.id)throw Error('原生任务未确认创建');r.jobId=job.id;r.status='paused';save(r);}
@@ -99,13 +101,13 @@ export function createDailySyncService(config,synchronize,logger,{clock=Date.now
     if(p.action==='remove'){if(job)await cron().remove(r.jobId);const removed=get(id);delete removed.queuedDate;save(removed);}
     else await cron().update(r.jobId,{enabled:enable,...(p.action==='update'?{schedule:nativeSchedule(schedule)}:{})});
    }
-   op.status='succeeded';op.result={id:p.id,status:'succeeded',...(result?{enqueued:result.enqueued===true,skipped:result.skipped===true,runId:result.runId}:{})};record();return op.result;
-  }catch{const latest=get(id);if(!['pause','remove'].includes(p.action)){latest.status='needs_review';save(latest);}op.status='unknown';record();throw Error('原生操作结果未确认，请核验计划和今日记录，不能重复提交');}
+   auditFinish(db,auditId,'succeeded',scheduleSnapshot(get(id)),{at:clock()});op.status='succeeded';op.result={id:p.id,status:'succeeded',...(result?{enqueued:result.enqueued===true,skipped:result.skipped===true,runId:result.runId}:{})};record();return op.result;
+  }catch{const latest=get(id);if(!['pause','remove'].includes(p.action)){latest.status='needs_review';save(latest);}auditFinish(db,auditId,'unknown',scheduleSnapshot(get(id)),{at:clock()});op.status='unknown';record();throw Error('原生操作结果未确认，请核验计划和今日记录，不能重复提交');}
   finally{locks.delete(id);}
  }
- const bridge={inspect,catalog,administer:(id,p)=>track(administer(id,p))};
+ const bridge={inspect,catalog,audit:(id,p)=>auditQuery(db,id,p),administer:(id,p,provenance)=>track(administer(id,p,provenance))};
  return {id:'agent-repo-daily-submodule-sync',onCronChanged:event=>track(fire(event)),onCronReconciled:()=>track(reconcile()),
-  async start(ctx){if(active)return;context=ctx;if(!ctx?.stateDir||!ctx.getCron){logger?.warn?.('agent-repo: native scheduler required; daily sync inactive');return;}const dir=join(ctx.stateDir,'agent-repo-repository-schedules');mkdirSync(dir,{recursive:true,mode:0o700});const file=join(dir,'schedules.sqlite');db=new DatabaseSync(file);chmodSync(file,0o600);db.exec('CREATE TABLE IF NOT EXISTS schedules(agent TEXT PRIMARY KEY,body TEXT);CREATE TABLE IF NOT EXISTS operations(key TEXT PRIMARY KEY,agent TEXT,body TEXT)');for(const row of db.prepare('SELECT body FROM schedules').all()){const previous=JSON.parse(row.body);if(previous.running){previous.running=false;previous.lastResult='interrupted';save(previous);}}active=true;Object.assign(repositoryScheduleBridge,bridge);await track(reconcile());},
+  async start(ctx){if(active)return;context=ctx;if(!ctx?.stateDir||!ctx.getCron){logger?.warn?.('agent-repo: native scheduler required; daily sync inactive');return;}const dir=join(ctx.stateDir,'agent-repo-repository-schedules');mkdirSync(dir,{recursive:true,mode:0o700});const file=join(dir,'schedules.sqlite');db=new DatabaseSync(file);chmodSync(file,0o600);db.exec('CREATE TABLE IF NOT EXISTS schedules(agent TEXT PRIMARY KEY,body TEXT);CREATE TABLE IF NOT EXISTS operations(key TEXT PRIMARY KEY,agent TEXT,body TEXT)');auditTable(db);importLegacyOperations(db,db.prepare("SELECT * FROM operations o WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.agent=o.agent AND json_extract(a.body,'$.requestId')=json_extract(o.body,'$.requestId'))").all().map(o=>{const r=JSON.parse(o.body);return {agentId:o.agent,requestId:r.requestId,action:r.action,targetId:repositorySyncTaskId(o.agent),status:r.status,at:r.createdAt};}));for(const row of db.prepare('SELECT body FROM schedules').all()){const previous=JSON.parse(row.body);if(previous.running){previous.running=false;previous.lastResult='interrupted';save(previous);}}active=true;Object.assign(repositoryScheduleBridge,bridge);await track(reconcile());},
   async stop(){active=false;for(const [key,value] of Object.entries(bridge))if(repositoryScheduleBridge[key]===value)delete repositoryScheduleBridge[key];await Promise.allSettled([...work]);db?.close();db=undefined;context=undefined;}
  };
 }

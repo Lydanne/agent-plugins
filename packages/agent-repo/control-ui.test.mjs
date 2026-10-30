@@ -202,7 +202,7 @@ test('repository logs remain open across panel refresh and show readable records
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),late=deferred();let pending=true;
  const ctx=uiContext(async(_method,p)=>({ok:true,result:p.actionId==='projects-list'?catalog('main'):p.actionId==='projects-diagnosticSources'?logSources:pending?await late.promise:{agentId:'main',rows:[]}}));
  const view=f.track(f.ui.mountProjects(f.container,ctx));await settle();
- const actions=f.container.querySelector('.ar-panel-actions');assert.deepEqual([...actions.querySelectorAll('button')].map(b=>b.textContent),['刷新扫描','日志','人员资料']);
+ const actions=f.container.querySelector('.ar-panel-actions');assert.deepEqual([...actions.querySelectorAll('button')].map(b=>b.textContent),['刷新扫描','查看审计','日志','人员资料']);
  click(f.container,'日志');view.update({...ctx});await settle();assert(f.container.querySelector('dialog').open);
  late.resolve({agentId:'main',rows:[{eventId:'one',sourceId:'test.history',time:'2026-10-14T08:00:00Z',message:'local code changes · using local files'}]});await settle();
  const dialog=f.container.querySelector('dialog');assert.equal(dialog.querySelectorAll('.ar-log-record').length,1);assert.match(dialog.textContent,/local code changes/);assert.match(dialog.textContent,/using local files/);assert.equal(dialog.querySelector('.ar-log-raw').open,false);

@@ -12,7 +12,7 @@ function fixture(t){
  let manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000});t.after(()=>{manager.close();rmSync(stateDir,{recursive:true,force:true});});
  const input={action:'create',name:'Daily',requestId:'request',projectId:'xgj',task:'check target',constraints:'read-only target',expr:'0 9 * * *'};
  const event=(slot=2000)=>({action:'finished',status:'ok',jobId:jobs[0].id,agentId:'main',runAtMs:slot});
- return {input,cron,jobs,source,bridge,delivered,event,get manager(){return manager;},reopen:()=>{manager.close();manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000});},revoke:()=>current=false,busy:()=>active=true};
+ return {stateDir,input,cron,jobs,source,bridge,delivered,event,get manager(){return manager;},reopen:()=>{manager.close();manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000});},revoke:()=>current=false,busy:()=>active=true};
 }
 test('native no-op scheduler stores no task content; binding and duplicate creation survive restart',async t=>{const f=fixture(t);const first=await f.manager.manage(f.input,{});assert.equal(f.jobs[0].payload.kind,'script');assert.equal(f.jobs[0].delivery.mode,'none');assert.deepEqual(f.jobs[0].payload.toolsAllow,[]);assert.ok(!JSON.stringify(f.jobs).includes('check target'));f.reopen();assert.equal((await f.manager.manage(f.input,{})).id,first.id);assert.equal(f.jobs.length,1);await assert.rejects(f.manager.manage({...f.input,task:'different'},{}),/different input/);});
 test('duplicate callbacks and recovery dispatch only once, retaining requester and project',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await Promise.all([f.manager.fire(f.event()),f.manager.fire(f.event())]);assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].source.senderId,'u');assert.equal(f.delivered[0].projectId,'xgj');f.jobs[0].state={lastRunStatus:'ok',lastRunAtMs:2000};f.reopen();await f.manager.recover();assert.equal(f.delivered.length,1);});
@@ -180,4 +180,36 @@ test('routing update during a tick lookup skips the stale snapshot without creat
  await toolEdit(f,r,{deliveryMode:'group'});release();await firing;
  assert.equal(f.delivered.length,0);assert.equal((await f.manager.manage({action:'get',id:r.id},{})).runs.length,0);
  await f.manager.fire(f.event(3000));assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].deliveryMode,'group');
+});
+
+test('schedule audit attributes each change to its current human message, retains diffs, and deduplicates across restart',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});
+ const p={action:'update',id:r.id,requestId:'route-change',expectedRevision:r.revision,deliveryMode:'group'};
+ const changed=await f.manager.manage(p,{requestMessageIds:['change-message'],people:{requester:{name:'真人甲'}}});
+ let history=await f.manager.manage({action:'audit',id:r.id},{});assert.equal(history.total,2);
+ const event=history.records.find(r=>r.action==='update');assert.equal(event.actor.id,'u');assert.equal(event.actor.name,'真人甲');assert.deepEqual(event.actor.messageIds,['change-message']);assert.equal(event.executor,'agent_schedule');
+ assert.deepEqual(event.changes.find(c=>c.field==='deliveryMode'),{field:'deliveryMode',before:'source',after:'group'});assert.equal(event.status,'succeeded');assert.equal(changed.jobId,r.jobId);
+ await f.manager.manage(p,{});f.reopen();await f.manager.manage(p,{});history=await f.manager.manage({action:'audit',id:r.id},{});assert.equal(history.total,2);
+ for(const ctx of [{senderId:'foreign'},{agentId:'foreign'},{chatId:'foreign'},{sessionId:'reset'}])await assert.rejects(f.manager.manage({action:'audit',id:r.id},ctx),/not found/);
+ await assert.rejects(f.manager.manage({action:'update',...p,actor:{id:'spoof'}},{}),/Unsupported/);
+});
+test('unknown native writes preserve intent and saved-state changes without asserting success or replaying',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{});f.cron.update=async()=>{throw Error('SECRET_NATIVE_ERROR');};
+ await assert.rejects(f.manager.manage({action:'update',id:r.id,requestId:'lost-update',expectedRevision:r.revision,deliveryMode:'group'},{}),/未确认/);
+ f.reopen();const result=f.manager.audit('main',{targetId:r.id,status:'unknown'});assert.equal(result.total,1);assert.equal(result.records[0].requested.deliveryMode,'group');assert.equal(result.records[0].after.status,'needs_review');assert.ok(!JSON.stringify(result).includes('SECRET_NATIVE_ERROR'));
+ assert.equal(f.manager.audit('foreign',{}).total,0);
+});
+test('operator attribution is separate from original plan requester and cannot be supplied through payload',async t=>{
+ const f=fixture(t),r=await f.manager.manage(f.input,{}),p={action:'pause',id:r.id,requestId:'operator-pause',expectedRevision:r.revision,confirmed:true};
+ await f.manager.administer('main',p,{actor:{kind:'operator',id:'trusted-connection'},executor:'control-ui'});
+ const event=f.manager.audit('main',{action:'pause'}).records[0];assert.equal(event.actor.id,'trusted-connection');assert.equal(event.executor,'control-ui');assert.notEqual(event.actor.id,'u');
+ await assert.rejects(f.manager.administer('main',{...p,actor:{id:'spoof'}}),/参数/);
+ await f.manager.administer('main',p);assert.equal(f.manager.audit('main',{action:'pause'}).total,1);
+});
+
+test('an unavailable audit writer blocks schedule mutation before any native change',async t=>{
+ const {DatabaseSync}=await import('node:sqlite');const f=fixture(t),r=await f.manager.manage(f.input,{}),db=new DatabaseSync(join(f.stateDir,'scheduled-requests.sqlite'));
+ db.exec("CREATE TRIGGER audit_write_failure BEFORE INSERT ON audit_events BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");db.close();
+ await assert.rejects(f.manager.manage({action:'update',id:r.id,requestId:'blocked-audit',expectedRevision:r.revision,deliveryMode:'group'},{}),/audit unavailable/);
+ const saved=await f.manager.manage({action:'get',id:r.id},{});assert.equal(saved.revision,r.revision);assert.equal(saved.deliveryMode,'source');assert.equal(f.jobs[0].enabled,true);
 });

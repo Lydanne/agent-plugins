@@ -77,3 +77,7 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 ## 实体图 v2
 
 实体和关系均必须有来源。`relation_types` 查询类型规则，`relations` 按 fromId/toId/typeId/sourceId/status 分页，`graph` 用 id/depth/limit/direction/typeIds 有限遍历，`entity_history` 按 id 分页查看历史；这些是当前 Agent 的只读动作，不接受项目选择。历史或 ended 关系不代表当前有效关联。飞书组织、部门和人员统一存储，人员专用覆盖字段通过原接口维护。关系不能凭相似名称、推测或查询缺失随意建立/解除；来源与权限、端点、数量和成环条件由服务校验，完整快照失败不得清理。读工具不提供来源写能力或删除授权。
+
+### 修改审计
+
+宿主实际提供 `agent_schedule action=audit` 时，用原计划 `id` 查询本次来源可见的修改记录，支持 `limit/offset` 分页。区分原计划创建人与本次指派修改人，依据工具保存的 actor、messageIds、字段前后值和状态说明变化；历史未记录或仅有面板连接身份时如实说明，不推测姓名。pending/unknown 不表示成功，accepted 仅表示异步受理。全局审计仅供管理中心按其读取权限访问，不因此跨群转发计划或指派消息。

@@ -1,3 +1,4 @@
+import {mountAudit} from './audit-page.mjs';
 const el=(tag,text,className)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n;};
 const labels={create:'新建任务',update:'保存设置',pause:'暂停',resume:'启用',remove:'删除',run:'立即执行'};
 const dailyTime=s=>{const m=/^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(s?.expr??'');return m&&+m[1]<60&&+m[2]<24?`${m[2].padStart(2,'0')}:${m[1].padStart(2,'0')}`:null;};
@@ -6,12 +7,13 @@ const deliveryLabels={source:'原请求位置',group:'群主会话',thread:'原�
 const status={enabled:'已启用',paused:'已暂停',removed:'已删除',completed:'已结束',blocked:'来源失效',needs_review:'待核验',creating:'创建中'};
 export function mountScheduleManager(container,{invoke,canWrite,safe,onClose,onChanged,initialTaskId=null,initialAction=null,groupName=()=>'群名称未获取'}){
  let disposed=false,epoch=0,data=null,selected=initialTaskId,creating=false,loading=false,busy=false,error='',notice='',confirmation=null,query='';
+ let auditView=null;
  const drafts=new Map();let draftKey='';
  const remember=()=>{const form=dialog.querySelector('form');if(form&&draftKey)drafts.set(draftKey,Object.fromEntries([...form.querySelectorAll('input,select')].map(n=>[n.getAttribute('aria-label'),n.value])));};
  const dialog=el('dialog',undefined,'ar-sync-dialog ar-schedule-manager');dialog.setAttribute('aria-label','管理定时任务');container.append(dialog);
  const button=(text,fn)=>{const n=el('button',text);n.type='button';n.onclick=fn;return n;};
  const close=()=>{dispose();onClose?.();};dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
- function dispose(){disposed=true;epoch++;if(dialog.open)dialog.close();dialog.remove();}
+ function dispose(){auditView?.dispose();auditView=null;disposed=true;epoch++;if(dialog.open)dialog.close();dialog.remove();}
  async function refresh(){const token=++epoch;loading=true;render();try{const next=await invoke('scheduleCatalog',{});if(disposed||token!==epoch)return;data=next;if(initialAction){const action=initialAction;initialAction=null;const task=data.tasks?.find(t=>t.id===selected);if(task&&['pause','resume','remove'].includes(action)&&!actionDisabled(task,action))confirm(action,task);else error='任务状态或权限已变化，请核对当前计划后再操作。';}}catch(e){if(disposed||token!==epoch)return;error=safe(e.message);}loading=false;render();}
  function confirm(action,task,fields={}){remember();confirmation={action,...(action==='create'?{sourceId:task.id}:{id:task.id}),expectedRevision:task.revision,requestId:crypto.randomUUID(),confirmed:true,...fields};error='';render();}
  async function execute(){if(busy||!canWrite()||!confirmation)return;const input=confirmation,token=epoch;busy=true;render();try{const r=await invoke('scheduleManage',input);if(disposed||token!==epoch)return;confirmation=null;notice=r.status==='succeeded'?(input.action==='run'?(r.skipped?'今日同步已由其他触发接纳，未重复入队。':'已提交 OpenClaw 原生队列；请在执行记录核验实际结果。'):input.action==='create'?'已创建，默认暂停。确认计划后启用。':'操作已完成。'):'操作结果待核验，请查看操作记录，不要重复提交。';if(r.status==='succeeded')drafts.delete(draftKey);selected=r.id??selected;creating=false;await onChanged?.();}catch(e){if(disposed||token!==epoch)return;error=safe(e.message);confirmation=null;}finally{if(!disposed&&token===epoch){busy=false;await refresh();}}}
@@ -46,7 +48,7 @@ export function mountScheduleManager(container,{invoke,canWrite,safe,onClose,onC
   const save=el('button','保存设置');save.type='submit';save.className='ar-schedule-primary';save.disabled=busy||!canWrite()||!task.sourceValid||task.busy||!['enabled','paused'].includes(task.status);footer(form,save);
   form.onsubmit=e=>{e.preventDefault();confirm('update',task,{time:time.value,timeZone:zone.value.trim()});};body.append(form);
  }
- function render(){
+ function render(){auditView?.dispose();auditView=null;
   if(disposed)return;remember();dialog.replaceChildren();const header=el('header',undefined,'ar-sync-dialog-header');const heading=el('div');heading.append(el('h2','管理定时任务'),el('p','统一管理群任务与仓库同步 · OpenClaw 原生调度','ar-muted'));header.append(heading,button('关闭',close));dialog.append(header);const body=el('div',undefined,'ar-sync-dialog-body');dialog.append(body);
   if(error){const alert=el('p',error,'ar-error');alert.setAttribute('role','alert');body.append(alert);}if(notice){const message=el('p',notice,'ar-notice');message.setAttribute('role','status');body.append(message);}
   if(loading)body.append(el('p','正在读取…'));if(!data||!data.available){if(!loading){body.append(el('p','暂时无法读取定时任务，请刷新重试。'),button('重新读取',()=>{error='';refresh();}));}return;}
@@ -60,7 +62,7 @@ export function mountScheduleManager(container,{invoke,canWrite,safe,onClose,onC
   const task=data.tasks.find(t=>t.id===selected);
   if(task&&!creating){content.append(el('h3',safe(task.name)));if(task.nativeWarning)content.append(el('p',safe(task.nativeWarning),'ar-warning'));if(task.busy)content.append(el('p','已有运行中、排队或结果待核验的记录，不能重复执行或编辑。','ar-warning'));if(!task.sourceValid)content.append(el('p',task.kind==='repository-sync'?'部署配置未授权仓库同步。只能暂停或删除。':'原群请求已失效。只能暂停或删除。','ar-warning'));const actions=el('div',undefined,'ar-schedule-actions');for(const action of ['run',task.status==='enabled'?'pause':'resume','remove']){const b=button(labels[action],()=>confirm(action,task));if(action==='remove')b.className='ar-schedule-danger';b.disabled=actionDisabled(task,action);if(b.disabled)b.title=!canWrite()?'当前连接没有写入权限':task.alreadyAttempted&&action==='run'?'今日已经尝试同步，请查看执行记录':task.busy?'已有操作处理中或待核验':!task.sourceValid?'来源无效，无法执行或启用':action==='run'&&task.status!=='enabled'?'请先启用计划':action==='run'?'当前原生调度暂不支持手动执行':'当前状态不允许此操作';actions.append(b);}content.append(el('p',safe(scheduleText(task.schedule)),'ar-schedule-preview'),actions);}
   if(creating)content.append(el('h3','基于已有群请求创建计划'));if(creating||task)editor(content,task);else content.append(el('p','选择一个计划查看设置，或基于已有群请求创建。','ar-muted'));
-  const audit=el('section',undefined,'ar-schedule-audit');audit.append(el('h3','最近管理操作'),el('p','记录面板管理请求；提交成功不等于任务执行完成。','ar-muted'));const operations=(data.operations??[]).filter(o=>o.result?.id===task?.id||!o.result?.id);if(!operations.length)audit.append(el('p','当前任务暂无管理操作记录。','ar-muted'));for(const o of operations)audit.append(el('p',safe((!o.result?.id?'未关联任务 · ':'')+new Date(o.createdAt).toLocaleString()+' · '+(labels[o.action]??o.action)+' · '+({succeeded:'成功',unknown:'结果待核验',pending:'处理中或中断待核验'}[o.status]??o.status))));content.append(audit);
+  const audit=el('section',undefined,'ar-schedule-audit');audit.append(el('h3','最近管理操作'),el('p','记录面板管理请求；提交成功不等于任务执行完成。','ar-muted'));const operations=(data.operations??[]).filter(o=>task&&o.result?.id===task.id);if(!operations.length)audit.append(el('p','当前任务暂无管理操作记录。','ar-muted'));for(const o of operations)audit.append(el('p',safe((!o.result?.id?'未关联任务 · ':'')+new Date(o.createdAt).toLocaleString()+' · '+(labels[o.action]??o.action)+' · '+({succeeded:'成功',unknown:'结果待核验',pending:'处理中或中断待核验'}[o.status]??o.status))));content.append(audit);if(task&&!creating){const history=el('details'),body=el('div');history.append(el('summary','查看完整修改日志'),body);let mounted=false;history.ontoggle=()=>{if(history.open&&!mounted){mounted=true;auditView=mountAudit(body,{invoke,safe,feature:'schedules',targetId:task.id});}};content.append(history);}
  }
  render();dialog.showModal();refresh();return {dispose};
 }

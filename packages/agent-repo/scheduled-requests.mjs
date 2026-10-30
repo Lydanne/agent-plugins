@@ -1,3 +1,4 @@
+import {importLegacyOperations,auditTable,auditBegin,auditFinish,auditQuery,scheduleSnapshot,humanAuditActor} from './audit.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
@@ -18,6 +19,8 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
  CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY, body TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS runs(job TEXT, slot INTEGER, status TEXT, detail TEXT, PRIMARY KEY(job,slot));
  CREATE TABLE IF NOT EXISTS operations(agent TEXT, id TEXT, input TEXT, status TEXT, result TEXT, created INTEGER, PRIMARY KEY(agent,id));`);
+ auditTable(db);
+ importLegacyOperations(db,db.prepare("SELECT * FROM operations o WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.agent=o.agent AND json_extract(a.body,'$.requestId')=o.id)").all().map(o=>{const p=JSON.parse(o.input),result=JSON.parse(o.result||'{}');return {agentId:o.agent,requestId:o.id,action:p.action,targetId:result.id??p.id??p.sourceId??'unassociated',status:o.status,at:o.created};}));
  const all=()=>db.prepare('SELECT body FROM requests').all().map(r=>JSON.parse(r.body));
  const save=r=>db.prepare('INSERT OR REPLACE INTO requests VALUES (?,?)').run(r.id,JSON.stringify(r));
  const owned=(r,p)=>['agentId','accountId','chatId','sessionKey','senderId','sessionId'].every(k=>r.source[k]===p[k]);
@@ -26,7 +29,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
  const delivery=r=>({mode:r.deliveryMode??'source',target:(r.deliveryMode==='group'||r.deliveryMode!=='thread'&&!r.source.replyInThread)?'group':'thread',canUseThread:!!r.source.rootId,...(r.source.rootId?{threadId:r.source.rootId}:{})});
  const validateDelivery=(mode,source)=>{if(!deliveryModes.includes(mode)||mode==='thread'&&!source.rootId)throw Error('投递位置无效；只能选择原位置、当前群主会话或原请求所在话题');return mode;};
  const publicRecord=r=>({id:r.id,revision:revision(r),delivery:delivery(r),deliveryMode:r.deliveryMode??'source',busy:busy(r),sourceValid:!!bridge.current?.(r.source),jobId:r.jobId,name:r.name,task:r.task,constraints:r.constraints,projectId:r.projectId,schedule:r.schedule,status:r.status,reason:r.reason,lastRun:r.lastRun,runs:db.prepare('SELECT slot,status FROM runs WHERE job=? ORDER BY slot DESC LIMIT 10').all(r.jobId??'')});
- async function createRequest(params,source,paused=false){
+ async function createRequest(params,source,paused=false,recordAudit=true){
    const previous=all().find(r=>owned(r,source)&&r.requestId===params.requestId);
    if(!text(params.requestId,160)||!text(params.name,160)||!text(params.task,4000)||!text(params.constraints,4000)||!text(params.projectId,64))throw Error('requestId, name, projectId, task and constraints are required');
    let schedule;
@@ -35,18 +38,19 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
    const input={name:params.name,task:params.task,constraints:params.constraints,projectId:params.projectId,schedule,deliveryMode:validateDelivery(params.deliveryMode??'source',source)};
    if(previous){if(stableInput({...previous.input,deliveryMode:previous.input.deliveryMode??'source'})!==stableInput(input))throw Error('requestId already belongs to different input');return publicRecord(previous);}
    if(!bridge.current?.(source))throw Error('Source authorization is no longer current');
-   const r={id:randomUUID(),source,requestId:params.requestId,input,...input,status:'creating',createdAt:now()};save(r);
+   const r={id:randomUUID(),source,requestId:params.requestId,input,...input,status:'creating',createdAt:now()};
+   const auditId=recordAudit?auditBegin(db,{agentId:source.agentId,feature:'schedules',targetId:r.id,targetName:r.name,action:'create',actor:humanAuditActor(source),executor:'agent_schedule',requestId:params.requestId,requested:{name:r.name,schedule:r.schedule,deliveryMode:r.deliveryMode,projectId:r.projectId},at:now()}):null;save(r);
    try{
     // A fixed, tool-free script is only a clock tick. Business text stays in the private store.
     const job=await cron().add({name:'Ada: '+r.name,description:'agent-repo scheduled request '+r.id,agentId:source.agentId,enabled:false,schedule,sessionTarget:'isolated',wakeMode:'next-heartbeat',deleteAfterRun:false,payload:{kind:'script',script:tickScript,toolsAllow:[],timeoutSeconds:30},delivery:{mode:'none'}});
     if(!job?.id)throw Error('Scheduler did not return a job ID');r.jobId=job.id;r.schedule=job.schedule??schedule;r.status='paused';save(r);
     if(!bridge.current?.(source))throw Error('Source authorization changed during creation');
-    if(!paused){r.status='enabled';save(r);await cron().update(job.id,{enabled:true});}return publicRecord(r);
-   }catch(error){r.status='needs_review';save(r);throw Error('Schedule creation is incomplete; inspect the saved request before retrying',{cause:error});}
+    if(!paused){r.status='enabled';save(r);await cron().update(job.id,{enabled:true});}if(auditId)auditFinish(db,auditId,'succeeded',scheduleSnapshot(r),{at:now()});return publicRecord(r);
+   }catch(error){r.status='needs_review';save(r);if(auditId)auditFinish(db,auditId,'unknown',scheduleSnapshot(r),{at:now()});throw Error('Schedule creation is incomplete; inspect the saved request before retrying',{cause:error});}
  }
  async function manage(params,context){
   const source=snapshot(context);
-  const allowed={create:['requestId','name','task','constraints','projectId','at','expr','timeZone','deliveryMode'],list:['projectId','status','query','limit','offset'],get:['id'],history:['id','limit','offset'],update:['id','requestId','expectedRevision',...editFields],pause:['id','requestId','expectedRevision'],resume:['id','requestId','expectedRevision'],remove:['id','requestId','expectedRevision'],run:['id','requestId','expectedRevision']};
+  const allowed={create:['requestId','name','task','constraints','projectId','at','expr','timeZone','deliveryMode'],list:['projectId','status','query','limit','offset'],get:['id'],audit:['id','limit','offset'],history:['id','limit','offset'],update:['id','requestId','expectedRevision',...editFields],pause:['id','requestId','expectedRevision'],resume:['id','requestId','expectedRevision'],remove:['id','requestId','expectedRevision'],run:['id','requestId','expectedRevision']};
   if(!params||!Object.hasOwn(allowed,params.action)||Object.keys(params).some(k=>k!=='action'&&!allowed[params.action].includes(k)))throw Error('Unsupported schedule action or parameters');
   const page=()=>{const limit=params.limit??50,offset=params.offset??0;if(!Number.isSafeInteger(limit)||limit<1||limit>100||!Number.isSafeInteger(offset)||offset<0)throw Error('limit must be 1–100 and offset non-negative');return {limit,offset};};
   if(params.action==='list'){
@@ -58,6 +62,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   if(params.action==='create')return createRequest(params,source);
   const r=all().find(r=>r.id===params.id&&owned(r,source));if(!r)throw Error('Schedule not found in this requester and conversation');
   if(params.action==='get')return publicRecord(r);
+  if(params.action==='audit'){const {limit,offset}=page();return auditQuery(db,source.agentId,{targetId:r.id,limit,offset});}
   if(params.action==='history'){
    const {limit,offset}=page(),total=db.prepare('SELECT COUNT(*) AS n FROM runs WHERE job=?').get(r.jobId??'').n;
    const records=db.prepare('SELECT slot,status,detail FROM runs WHERE job=? ORDER BY slot DESC LIMIT ? OFFSET ?').all(r.jobId??'',limit,offset).map(row=>({at:row.slot,status:row.status,...(row.detail?{detail:JSON.parse(row.detail)}:{})}));
@@ -67,7 +72,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   if(!['pause','remove'].includes(params.action)&&(!text(params.requestId,160)||!text(params.expectedRevision,100)))throw Error('requestId and expectedRevision from list/get are required');
   const prior=params.requestId?db.prepare('SELECT input FROM operations WHERE agent=? AND id=?').get(source.agentId,params.requestId):undefined;
   const expectedRevision=params.expectedRevision??(prior?JSON.parse(prior.input).expectedRevision:revision(r));
-  const operation=await administer(source.agentId,{...params,expectedRevision,requestId:params.requestId??randomUUID(),confirmed:true});
+  const operation=await administer(source.agentId,{...params,expectedRevision,requestId:params.requestId??randomUUID(),confirmed:true},{actor:humanAuditActor(source),executor:'agent_schedule'});
   return {...publicRecord(getOwned(source.agentId,r.id)),operation};
  }
  async function fire(event,signal){
@@ -103,7 +108,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   let canRun=false;try{canRun=typeof cron().enqueueRun==='function';}catch{}
   return {agentId,available:true,canRun,tasks:all().filter(r=>r.source.agentId===agentId).map(r=>({...publicRecord(r),revision:revision(r),busy:busy(r),sourceValid:!!bridge.current?.(r.source),chatId:r.source.chatId,requester:r.source.people?.requester?.name??r.source.senderId,originId:r.originId??r.id,manualPending:!!r.manualPending})),operations:db.prepare('SELECT id,input,status,result,created FROM operations WHERE agent=? ORDER BY created DESC LIMIT 30').all(agentId).map(o=>({requestId:o.id,action:JSON.parse(o.input).action,status:o.status,createdAt:o.created,result:JSON.parse(o.result||'{}')}))};
  }
- async function administer(agentId,params){
+ async function administer(agentId,params,provenance={}){
   if(!text(agentId,100)||!params||Object.keys(params).some(k=>!['action','id','sourceId','expectedRevision','requestId','confirmed',...editFields].includes(k))||params.confirmed!==true||!text(params.requestId,160))throw Error('管理参数无效，必须确认操作');
   if(!['create','update','pause','resume','remove','run'].includes(params.action))throw Error('不支持的管理操作');
   if(params.action!=='create'&&params.sourceId!==undefined||params.action==='create'&&params.id!==undefined)throw Error('任务来源参数无效');
@@ -128,12 +133,13 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
    if(params.deliveryMode!==undefined)validateDelivery(params.deliveryMode,r.source);
   }
   if(params.action==='resume'&&r.schedule.kind==='at'&&Date.parse(r.schedule.at)<=now())throw Error('一次性时间已过期，请先修改时间');
+  const auditId=auditBegin(db,{agentId,feature:'schedules',targetId:r.id,targetName:r.name,action:params.action,...provenance,requestId:params.requestId,before:params.action==='create'?null:scheduleSnapshot(r),requested:Object.fromEntries(editFields.filter(k=>params[k]!==undefined).map(k=>[k,params[k]])),at:now()});
   locks.add(key);
-  db.prepare('INSERT INTO operations VALUES (?,?,?,?,?,?)').run(agentId,params.requestId,encoded,'pending','{}',now());
   try{
+   db.prepare('INSERT INTO operations VALUES (?,?,?,?,?,?)').run(agentId,params.requestId,encoded,'pending','{}',now());
    let result;
    if(params.action==='create'){
-    result=await createRequest({action:'create',requestId:'panel:'+params.requestId,name:params.name,task:r.task,constraints:r.constraints,projectId:r.projectId,deliveryMode:params.deliveryMode??r.deliveryMode??'source',...(schedule.kind==='at'?{at:schedule.at}:{expr:schedule.expr,timeZone:schedule.tz})},structuredClone(r.source),true);
+    result=await createRequest({action:'create',requestId:'panel:'+params.requestId,name:params.name,task:r.task,constraints:r.constraints,projectId:r.projectId,deliveryMode:params.deliveryMode??r.deliveryMode??'source',...(schedule.kind==='at'?{at:schedule.at}:{expr:schedule.expr,timeZone:schedule.tz})},structuredClone(r.source),true,false);
     const created=getOwned(agentId,result.id);created.originId=r.originId??r.id;created.managementRevision=1;save(created);
    }else if(params.action==='run'){
     const job=(await cron().list({includeDisabled:true})).find(j=>j.id===r.jobId);
@@ -164,9 +170,12 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
     }
    }
    const receipt={id:params.action==='create'?result.id:r.id,action:params.action,...(params.action==='run'?{runId:result.runId,enqueued:true}:{})};
+   auditFinish(db,auditId,'succeeded',scheduleSnapshot(getOwned(agentId,receipt.id)),{at:now(),targetId:receipt.id,targetName:getOwned(agentId,receipt.id).name});
    db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run('succeeded',JSON.stringify(receipt),agentId,params.requestId);return {...receipt,status:'succeeded'};
   }catch(error){
    if(params.action!=='create'&&!['pause','remove'].includes(params.action)){const latest=getOwned(agentId,r.id);latest.status='needs_review';save(latest);}
+   const affected=params.action==='create'?all().find(x=>x.source.agentId===agentId&&x.requestId==='panel:'+params.requestId):getOwned(agentId,r.id);
+   auditFinish(db,auditId,'unknown',scheduleSnapshot(affected),{at:now(),targetId:affected?.id,targetName:affected?.name});
    db.prepare('UPDATE operations SET status=?,result=? WHERE agent=? AND id=?').run('unknown',JSON.stringify({id:r.id,action:params.action,reason:'操作结果未确认，请刷新并核验；不要重复提交。'}),agentId,params.requestId);
    throw Error('操作结果未确认，请刷新并核验；不要重复提交。',{cause:error});
   }finally{locks.delete(key);}
@@ -195,20 +204,20 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   });
  }
  async function recover(signal){for(const job of await cron().list({includeDisabled:true})){if(job.state?.lastRunStatus==='ok'&&Number.isSafeInteger(job.state.lastRunAtMs))await fire({action:'finished',status:'ok',jobId:job.id,agentId:job.agentId,runAtMs:job.state.lastRunAtMs},signal);}}
- return {manage,fire,recover,inspect,catalog,administer,close:()=>db.close()};
+ return {manage,fire,recover,inspect,catalog,administer,audit:(agentId,p)=>auditQuery(db,agentId,p),close:()=>db.close()};
 }
 
 export function registerScheduledRequests(api,config){
  if(!api.registerService||!api.on)return;
- let manager,controller;const pending=new Set();const inspect=agentId=>manager?.inspect(agentId)??Promise.resolve([]);const catalog=agentId=>{if(!manager)throw Error('定时任务服务不可用');return manager.catalog(agentId);};const administer=(agentId,params)=>{if(!manager)throw Error('定时任务服务不可用');const work=manager.administer(agentId,params).finally(()=>pending.delete(work));pending.add(work);return work;};
- api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});Object.assign(scheduledRequestBridge,{inspect,catalog,administer});},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;for(const [key,value] of Object.entries({inspect,catalog,administer}))if(scheduledRequestBridge[key]===value)delete scheduledRequestBridge[key];}});
+ let manager,controller;const pending=new Set();const inspect=agentId=>manager?.inspect(agentId)??Promise.resolve([]);const catalog=agentId=>{if(!manager)throw Error('定时任务服务不可用');return manager.catalog(agentId);};const audit=(agentId,p)=>{if(!manager)throw Error('审计服务不可用');return manager.audit(agentId,p);};const administer=(agentId,params,provenance)=>{if(!manager)throw Error('定时任务服务不可用');const work=manager.administer(agentId,params,provenance).finally(()=>pending.delete(work));pending.add(work);return work;};
+ api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});Object.assign(scheduledRequestBridge,{inspect,catalog,administer,audit});},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;for(const [key,value] of Object.entries({inspect,catalog,administer,audit}))if(scheduledRequestBridge[key]===value)delete scheduledRequestBridge[key];}});
  api.on('cron_reconciled',()=>{if(!manager)return;const work=manager.recover(controller.signal).catch(()=>api.logger.warn('Scheduled request recovery needs inspection')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.on('cron_changed',event=>{if(!manager)return;const work=manager.fire(event,controller.signal).catch(()=>api.logger.warn('Scheduled request failed; inspect its saved status before retrying')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
- api.registerTool(context=>!config.agents[context.agentId]?null:{name:'agent_schedule',label:'Ada scheduled requests',description:'Manage this human requester’s saved schedules in the current Feishu conversation. list/get/history are read-only; update patches name, time/timezone or deliveryMode without replacing the plan. group sends future results to the same group main chat; thread uses only the original thread. get/list return revision: pass it as expectedRevision and a stable requestId for update/resume/run. run requires explicit immediate-execution authorization, uses the native queue, and is not business completion. Unknown results must be inspected, never recreated. No arbitrary recipients or task/permission changes.',parameters:scheduledRequestToolParameters,async execute(_id,params){if(!manager)throw Error('Scheduled request service is unavailable');if(['create','update','resume','run'].includes(params.action)){const {readProjects}=await import('./repositories.mjs');const projects=await readProjects(config.agents[context.agentId].repo);const projectId=params.action==='create'?params.projectId:(await manager.manage({action:'get',id:params.id},context)).projectId;if(!Object.hasOwn(projects,projectId))throw Error('Registered project required');}return {content:[{type:'text',text:JSON.stringify(await manager.manage(params,context))}]};}},{optional:true});
+ api.registerTool(context=>!config.agents[context.agentId]?null:{name:'agent_schedule',label:'Ada scheduled requests',description:'Manage this human requester’s saved schedules in the current Feishu conversation. list/get/history/audit are read-only; audit returns requester, change diffs and operation outcomes; update patches name, time/timezone or deliveryMode without replacing the plan. group sends future results to the same group main chat; thread uses only the original thread. get/list return revision: pass it as expectedRevision and a stable requestId for update/resume/run. run requires explicit immediate-execution authorization, uses the native queue, and is not business completion. Unknown results must be inspected, never recreated. No arbitrary recipients or task/permission changes.',parameters:scheduledRequestToolParameters,async execute(_id,params){if(!manager)throw Error('Scheduled request service is unavailable');if(['create','update','resume','run'].includes(params.action)){const {readProjects}=await import('./repositories.mjs');const projects=await readProjects(config.agents[context.agentId].repo);const projectId=params.action==='create'?params.projectId:(await manager.manage({action:'get',id:params.id},context)).projectId;if(!Object.hasOwn(projects,projectId))throw Error('Registered project required');}return {content:[{type:'text',text:JSON.stringify(await manager.manage(params,context))}]};}},{optional:true});
 }
 
 export const scheduledRequestToolParameters={type:'object',additionalProperties:false,required:['action'],properties:{
- action:{type:'string',enum:['create','list','get','history','update','pause','resume','remove','run']},
+ action:{type:'string',enum:['create','list','get','history','audit','update','pause','resume','remove','run']},
  id:{type:'string',description:'Saved schedule ID returned by create/list/get; not native jobId.'},
  requestId:{type:'string',maxLength:160,description:'Stable idempotency key; reuse identical input after uncertain results.'},
  expectedRevision:{type:'string',description:'Current revision from list/get; required for update/resume/run.'},

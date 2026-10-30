@@ -1,3 +1,4 @@
+import {mountAudit,mountAuditPage} from './audit-page.mjs';
 import {mountWorkspacePool} from './workspace-pool-page.mjs';
 import {mountScheduleManager} from './schedule-manager.mjs';
 import {mountLogConsole} from './log-console.mjs';
@@ -23,11 +24,15 @@ export function mountProjects(container,initial){
  function groupName(task){const key='agent:'+target().agentId+':feishu:group:'+task.chatId;const row=(context.host.sessions.rows??[]).find(row=>row.key===key);return [row?.label,row?.displayName].find(name=>typeof name==='string'&&name.trim()&&!name.includes(task.chatId))?.trim()??'群名称未获取';}
  function closeScheduleManager(){scheduleManager?.dispose();scheduleManager=null;}
  function openScheduleManager(initialTaskId,initialAction=null){closeScheduleManager();scheduleManager=mountScheduleManager(container,{initialTaskId,initialAction,groupName,invoke,canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{scheduleManager=null;},onChanged:()=>refresh()});}
+ let featureAudit=null,featureAuditDialog=null;
+ function closeFeatureAudit(){featureAudit?.dispose();featureAudit=null;featureAuditDialog?.remove();featureAuditDialog=null;}
+ function openFeatureAudit(){closeFeatureAudit();const dialog=element('dialog',undefined,'ar-sync-dialog');container.append(dialog);featureAuditDialog=dialog;featureAudit=mountAudit(dialog,{invoke,safe,feature:context.props.managementSection==='tasks'?'schedules':context.props.managementSection==='logs'?'logs':'skills',onClose:closeFeatureAudit});dialog.addEventListener('cancel',e=>{e.preventDefault();closeFeatureAudit();});dialog.showModal();}
  let workspaceView=null;
  let maintenanceView=null;
  function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
  function openPeople(){closePeople();peopleDialog=mountPeopleDialog(container,{invoke,isGroup:()=>/^agent:[^:]+:feishu:group:oc_/.test(target().sessionKey??''),canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{peopleDialog=null;}});}
+ let taskAudit=null;
  let historyGeneration=0,syncDialog=null,syncTaskId=null,syncRunId=null,syncTab='records',syncRenderedView=null;const syncRecords=new Map(),syncViewScroll=new Map();
  const syncLabels={completed:'成功',failed:'失败',running:'未结束',unavailable:'不可读取',started:'开始',worker_submitted:'已提交 Worker',submitted:'Main 已接纳',dispatching:'交接中',unknown:'结果待核验',blocked:'已阻止',verified_not_executed:'已核对未执行',delivered:'消息已送达'};
  const shortTime=value=>value?new Date(value).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'未记录';
@@ -40,7 +45,7 @@ export function mountProjects(container,initial){
   else {skillArea.append(maintenanceView.element);maintenanceView.setSources(sources,projectId+':'+repository);}
   subagentArea=element('div');subagentArea.append(subagents(projectId?(detail?.subagentSources??[]).filter(source=>source.source!=='agent'):[list.agentSubagents].filter(Boolean)));subagentArea.hidden=maintenanceView.view==='cli';skillArea.append(subagentArea);
  }
- function reset(){workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
+ function reset(){closeFeatureAudit();workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;historyGeneration++;syncRecords.clear();list=null;detail=null;projectId='';repository='';query='';error='';loading=false;}
  async function invoke(action,payload){const current=context,selected=projectInspectionTarget(context);return readInspectionResponse(async(name,data)=>{current.signal.throwIfAborted();if(current!==context)throw Error('Agent 已切换');return current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data});},action,payload);}
  async function refresh({scanList=true}={}){
   if(disposed||!context.presented||context.signal.aborted||!context.host.connection.canRead||!target().agentId)return;
@@ -114,14 +119,14 @@ export function mountProjects(container,initial){
   closeSyncDialog(false);closeLogDialog(false);
   const inline=context.props.managementSection==='logs',current=context,selected=projectInspectionTarget(context);
   const dialog=element(inline?'section':'dialog',undefined,'ar-sync-dialog ar-log-dialog'+(inline?' ar-log-inline':'')),header=element('header',undefined,'ar-sync-dialog-header'+(inline?' ar-section-heading':'')),heading=element('div'),title=element('h2','日志');title.id=panelId+'-log-title';dialog.setAttribute('aria-labelledby',title.id);heading.append(title,element('p','统一查看插件与 Worker 日志；实时调试默认关闭。','ar-log-subtitle'));
-  const close=button('关闭',()=>closeLogDialog());header.append(heading);if(!inline)header.append(close);dialog.append(header);logDialog=dialog;
+  const close=button('关闭',()=>closeLogDialog());header.append(heading,button('查看审计',openFeatureAudit));if(!inline)header.append(close);dialog.append(header);logDialog=dialog;
   dialog.addEventListener('cancel',event=>{event.preventDefault();closeLogDialog();});dialog.addEventListener('close',()=>{if(logDialog===dialog)closeLogDialog();});
   const body=element('div',undefined,'ar-sync-dialog-body');dialog.append(body);container.append(dialog);
   // Capture the original target: cleanup must stop the old Agent's lease after switching.
   const logInvoke=(action,payload)=>readInspectionResponse(async(name,data)=>current.host.request('plugins.sessionAction',{pluginId:'agent-repo',actionId:'projects-'+name,...selected,payload:data}),action,payload).then(result=>{if(['repositoryLogs','clearRepositoryLogs','diagnosticHistory','diagnosticClearHistory'].includes(action)&&result.agentId!==selected.agentId)throw Error('日志来源与当前 Agent 不一致');return result;});
   logConsole=mountLogConsole(body,{invoke:logInvoke,safe,agentId:selected.agentId,signal:current.signal,actionsContainer:inline?header:undefined,canWrite:()=>context.host.connection.canWrite===true});if(!inline){dialog.showModal();close.focus();}
  }
- function closeSyncDialog(restore=true){
+ function closeSyncDialog(restore=true){taskAudit?.dispose();taskAudit=null;
   const taskId=syncTaskId,dialog=syncDialog;syncDialog=null;syncTaskId=null;syncRunId=null;syncTab='records';syncRenderedView=null;syncViewScroll.clear();
   if(dialog){if(dialog.open)dialog.close();dialog.remove();}
   if(restore&&taskId)[...root.querySelectorAll('[data-task-id]')].find(row=>row.dataset.taskId===taskId)?.focus({preventScroll:true});
@@ -157,6 +162,7 @@ export function mountProjects(container,initial){
   for(const [key,value] of [['任务类型',task.type==='scheduled-request'?'群内定时请求':'仓库同步'],['任务来源',task.type==='scheduled-request'?'OpenClaw 原生调度 → Main':'系统任务'],['所属 Agent',target().agentId],['执行范围',task.scope.label],['执行计划',scheduleText(task)],['时区',task.schedule?.timeZone??task.schedule?.tz??'Asia/Shanghai'],['任务状态',taskState(task)]]){data.append(element('dt',key),element('dd',safe(value)));}if(task.type==='scheduled-request')for(const [key,value] of [['投递位置',({source:'原请求位置',group:'群主会话',thread:'原请求话题'})[task.deliveryMode??'source']],['原请求人',task.requester],['来源群',groupName(task)],['群 ID',task.chatId],['OpenClaw 任务 ID',task.jobId],['最近原生调度',task.nativeLastStatus??'尚无记录']])data.append(element('dt',key),element('dd',safe(value)));if(task.type==='repository-sync'&&task.jobId)data.append(element('dt','OpenClaw 任务 ID'),element('dd',safe(task.jobId)));section.append(data,element('p',task.type==='scheduled-request'?'在任务列表点击“管理定时任务”可修改计划；原生调度成功或 Main 接纳不代表业务完成。':task.readOnly?'此处只读展示；系统同步计划由部署配置管理。':'在任务列表点击“管理定时任务”管理原生同步计划；当天已尝试的同步不会重跑。','ar-muted'));return section;
  }
  function renderSyncDialog(){
+  taskAudit?.dispose();taskAudit=null;
   if(!syncDialog||!syncTaskId)return;
   const task=selectedTask();if(!task){closeSyncDialog(false);return;}
   const record=selectedRun();if(syncRunId&&!record)syncRunId=null;
@@ -173,8 +179,8 @@ export function mountProjects(container,initial){
    const overview=element('div',undefined,'ar-sync-overview');overview.append(taskBadge(task),element('span',safe((task.type==='scheduled-request'?'OpenClaw 联动':'系统任务')+' · Agent '+target().agentId),'ar-meta'));body.append(overview);const manage=button('管理此任务',()=>{const id=task.taskId.replace(/^scheduled-request:/,'');closeSyncDialog(false);openScheduleManager(id);});manage.setAttribute('aria-haspopup','dialog');overview.append(manage);
    const meta=element('dl',undefined,'ar-sync-metadata');for(const [key,value] of [['执行计划',scheduleText(task)],['执行范围',task.scope.label],['下次计划',planText(task)]]){const cell=element('div');cell.append(element('dt',key),element('dd',safe(value)));meta.append(cell);}body.append(meta);
    const tabs=element('div',undefined,'ar-task-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','定时任务详情');
-   for(const [id,label] of [['records','执行记录'],['settings','任务设置']]){const tab=button(label,()=>{syncTab=id;renderSyncDialog();syncDialog?.querySelector('#'+panelId+'-'+id)?.focus({preventScroll:true});});tab.id=panelId+'-'+id;tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(syncTab===id));tab.setAttribute('aria-controls',panelId+'-task-content');tab.tabIndex=syncTab===id?0:-1;tab.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();syncTab=event.key==='Home'?'records':event.key==='End'?'settings':syncTab==='records'?'settings':'records';renderSyncDialog();syncDialog?.querySelector('#'+panelId+'-'+syncTab)?.focus();};tabs.append(tab);}body.append(tabs);
-   const content=syncTab==='records'?runRows(task):taskSettings(task);content.id=panelId+'-task-content';content.setAttribute('role','tabpanel');content.setAttribute('aria-labelledby',panelId+'-'+syncTab);body.append(content);
+   for(const [id,label] of [['records','执行记录'],['settings','任务设置'],['audit','修改日志']]){const tab=button(label,()=>{syncTab=id;renderSyncDialog();syncDialog?.querySelector('#'+panelId+'-'+id)?.focus({preventScroll:true});});tab.id=panelId+'-'+id;tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(syncTab===id));tab.setAttribute('aria-controls',panelId+'-task-content');tab.tabIndex=syncTab===id?0:-1;tab.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const ids=['records','settings','audit'];syncTab=event.key==='Home'?'records':event.key==='End'?'audit':ids[(ids.indexOf(syncTab)+(event.key==='ArrowLeft'?2:1))%3];renderSyncDialog();syncDialog?.querySelector('#'+panelId+'-'+syncTab)?.focus();};tabs.append(tab);}body.append(tabs);
+   const content=syncTab==='records'?runRows(task):syncTab==='audit'?element('section'):taskSettings(task);content.id=panelId+'-task-content';content.setAttribute('role','tabpanel');content.setAttribute('aria-labelledby',panelId+'-'+syncTab);body.append(content);if(syncTab==='audit')taskAudit=mountAudit(content,{invoke,safe,feature:'schedules',targetId:task.taskId.replace(/^scheduled-request:/,'')});
   }else{
    renderRunDetails(body,record);
    const back=button('返回执行记录',showTaskRecords);back.className='ar-task-back';body.append(back);
@@ -228,7 +234,7 @@ export function mountProjects(container,initial){
   const tabScroll=root.querySelector('.ar-project-tabs')?.scrollLeft??0;
   const scroll=root.querySelector('.ar-scroll')?.scrollTop??0,expanded=new Set([...root.querySelectorAll('details[open]')].map(node=>node.dataset.skillPath));
   const focusedTab=root.contains(document.activeElement)?document.activeElement?.dataset.tabKey:undefined;
-  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();if(context.props.managementSection==='logs')return;const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan);if(context.props.managementSection){header.classList.add('ar-section-heading');const copy=element('div');copy.append(element('h2',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'日志':'项目与技能'),element('p',context.props.managementSection==='tasks'?'查看仓库同步和 OpenClaw 联动群任务的计划、状态与运行记录。':'查看共享及项目技能，管理关联 CLI 与子代理。','ar-description'));header.append(copy,actions);}else header.append(element('strong','项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
+  maintenanceView?.rememberFocus();skillArea=null;root.replaceChildren();if(context.props.managementSection==='logs')return;const selected=target(),header=element('header',undefined,'ar-panel-header'),actions=element('div',undefined,'ar-panel-actions'),scan=button(loading?'扫描中…':context.props.managementSection==='logs'?'刷新日志':context.props.managementSection==='tasks'?'刷新任务':'刷新扫描',refresh);scan.disabled=loading;actions.append(scan,button('查看审计',openFeatureAudit));if(context.props.managementSection){header.classList.add('ar-section-heading');const copy=element('div');copy.append(element('h2',context.props.managementSection==='tasks'?'定时任务':context.props.managementSection==='logs'?'日志':'项目与技能'),element('p',context.props.managementSection==='tasks'?'查看仓库同步和 OpenClaw 联动群任务的计划、状态与运行记录。':'查看共享及项目技能，管理关联 CLI 与子代理。','ar-description'));header.append(copy,actions);}else header.append(element('strong','项目、技能与子代理'),actions);if(!context.props.managementSection&&context.host.connection.canRead&&selected.agentId){const logs=button('日志',openLogDialog);logs.dataset.repositoryLogs='';logs.setAttribute('aria-haspopup','dialog');actions.append(logs);const people=button('人员资料',openPeople);people.setAttribute('aria-haspopup','dialog');actions.append(people);}root.append(header);
   if(!context.host.connection.canRead){root.append(element('p','需要 operator.read 权限才能查看。'));return;}
   if(!selected.agentId){root.append(element('p','请先选择一个 Agent。'));return;}
   if(!context.props.managementSection)root.append(element('p',safe('当前 Agent · '+selected.agentId),'ar-meta'));
@@ -265,7 +271,7 @@ export function mountProjects(container,initial){
  }
  const stopNavigation=subscribeWorkerNavigation(()=>{if(!disposed)render();}),stopHost=context.host.subscribe(()=>{if(disposed)return;const next=target(),read=context.host.connection.canRead,write=context.host.connection.canWrite,changed=next.agentId!==observedTarget.agentId||next.sessionKey!==observedTarget.sessionKey||read!==observedRead||write!==observedWrite;observedTarget=next;observedRead=read;observedWrite=write;if(changed){reset();render();refresh();}});
  render();refresh();
- return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
+ return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeFeatureAudit();closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeFeatureAudit();workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
 }
 const managementModules=[
  {id:'overview',label:'概览'},
@@ -273,6 +279,7 @@ const managementModules=[
  {id:'worker',label:'Worker 任务',description:'跨会话查看此 Agent 的任务状态、来源和执行详情。'},
  {id:'entities',label:'实体资料库',description:'统一检索人员、组织、服务与资产，查看 AI 和程序同步的来源。'},
  {id:'tasks',label:'定时任务',description:'管理 OpenClaw 联动群任务，查看仓库同步计划和运行记录。'},
+ {id:'audit',label:'审计',description:'全局及按功能查看修改人、指派依据、字段变化和操作结果。'},
  {id:'logs',label:'日志',description:'统一查看插件与 Worker 日志，按需开启实时调试。'},
 ];
 function mountOverview(container,context,agentId,choose){
@@ -350,7 +357,7 @@ export function mountAgentRepo(container,initial){
   body.replaceChildren();root.dataset.section=section;body.setAttribute('aria-label',managementModules.find(item=>item.id===section).label+'内容');
   for(const tab of root.querySelectorAll('.ar-management-nav button'))tab.setAttribute('aria-current',tab.dataset.section===section?'page':'false');
   if(section==='overview')child=mountOverview(body,context,agentId,choose);
-  else child=section==='worker'?mountWorkerPage(body,context,agentId):section==='entities'?mountEntitiesPage(body,childContext()):mountProjects(body,childContext());
+  else child=section==='audit'?mountAuditPage(body,context,agentId):section==='worker'?mountWorkerPage(body,context,agentId):section==='entities'?mountEntitiesPage(body,childContext()):mountProjects(body,childContext());
  }
  function choose(id){if(section===id)return;section=id;renderBody();}
  function render(){

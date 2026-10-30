@@ -12,7 +12,7 @@ test('AgentRepo is a global management center and personnel is only one of its m
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();ctx.host.sessions.selectedKey='';
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  assert.match(f.container.textContent,/AgentRepo/);assert.match(f.container.textContent,/管理概览/);assert.equal(calls.length,6);
- const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体资料库','定时任务','日志']);
+ const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体资料库','定时任务','审计','日志']);
  click(f.container,'打开实体资料库');await settle();assert.ok(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'));assert.equal(f.container.querySelector('[aria-label="人员库所属 Agent"]'),null);assert.match(f.container.textContent,/实体资料库/);
  assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-entities');
  click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
@@ -60,7 +60,7 @@ test('module switches retain the management shell, navigation focus and consiste
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost();
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  const header=f.container.querySelector('.ar-management-header'),nav=f.container.querySelector('.ar-management-nav'),region=f.container.querySelector('.ar-management-body');
- for(const [label,title] of [['项目与技能','项目与技能'],['Worker 任务','Worker 任务'],['实体资料库','实体资料库'],['定时任务','定时任务'],['日志','日志'],['概览','管理概览']]){
+ for(const [label,title] of [['项目与技能','项目与技能'],['Worker 任务','Worker 任务'],['实体资料库','实体资料库'],['定时任务','定时任务'],['审计','审计'],['日志','日志'],['概览','管理概览']]){
   const control=[...nav.querySelectorAll('button')].find(button=>button.textContent===label);control.focus();control.click();await settle();
   assert.equal(f.container.querySelector('.ar-management-header'),header);assert.equal(f.container.querySelector('.ar-management-nav'),nav);assert.equal(f.container.querySelector('.ar-management-body'),region);
   assert.equal(f.window.document.activeElement,control);assert.equal(control.getAttribute('aria-current'),'page');assert.equal(control.getAttribute('aria-controls'),region.id);
@@ -105,4 +105,14 @@ test('task cards expose confirmed stop, start and delete actions for the selecte
  assert.equal(f.container.querySelectorAll('dialog').length,1);assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'Paused');
  click(f.container,'关闭');ctx.host.connection.canWrite=false;ctx.notify();await settle();
  for(const label of ['停止Active','开始Paused','删除Paused'])assert.equal(f.container.querySelector(`[aria-label="${label}"]`).disabled,true);
+});
+
+test('global and per-plan audit share a filtered read-only view and discard stale Agent responses',async t=>{
+ const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),{ctx,calls}=fixtureHost(),pending=deferred();let hold=false;
+ const plan={taskId:'scheduled-request:plan',name:'日报',type:'scheduled-request',status:'enabled',enabled:true,nativeAvailable:true,scope:{label:'群'},records:[],schedule:{kind:'cron',expr:'0 7 * * *',tz:'Asia/Shanghai'}};
+ ctx.host.request=async(method,p)=>{calls.push(p);if(p.actionId==='projects-audit'){if(hold&&p.agentId==='main')return pending.promise;return {ok:true,result:{agentId:p.agentId,total:1,nextOffset:null,records:[{id:'audit-1',at:1000,targetId:'plan',targetName:'日报',action:'update',status:'succeeded',actor:{kind:'human',id:'ou_123',name:'张三',messageIds:['om_change']},executor:'agent_schedule',changes:[{field:'deliveryMode',before:'source',after:'group'}]}]}};}return {ok:true,result:p.actionId==='projects-list'?{...catalog,scheduledTasks:[plan]}:p.actionId==='projects-maintenance'?{providers:[]}:p.actionId==='inspect-agentTasks'?worker:{records:[]}};};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'审计');await settle();assert.equal(calls.at(-1).actionId,'projects-audit');assert.deepEqual(calls.at(-1).payload,{limit:25,offset:0});assert.match(f.container.textContent,/张三/);assert.match(f.container.textContent,/om_change/);assert.match(f.container.textContent,/群主会话/);
+ click(f.container,'定时任务');await settle();f.container.querySelector('[aria-label="查看日报"]').click();click(f.container,'修改日志');await settle();assert.deepEqual(calls.at(-1).payload,{feature:'schedules',targetId:'plan',limit:25,offset:0});assert.equal(f.container.querySelector('[aria-label="对象 ID"]').disabled,true);assert.equal(f.container.querySelector('[aria-label="功能"]').disabled,true);assert.equal(calls.some(c=>c.actionId==='projects-scheduleManage'),false);
+ click(f.container,'关闭');hold=true;click(f.container,'审计');await settle();select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();pending.resolve({ok:true,result:{records:[{targetName:'STALE_SECRET'}],total:1,nextOffset:null}});await settle();assert.ok(!f.container.textContent.includes('STALE_SECRET'));assert.equal(calls.at(-1).agentId,'other');
+ ctx.host.connection.canRead=false;ctx.notify();assert.equal(f.container.querySelector('.ar-audit'),null);
 });

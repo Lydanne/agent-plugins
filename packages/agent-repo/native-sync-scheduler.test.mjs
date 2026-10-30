@@ -49,3 +49,10 @@ test('tampered native Agent never gets removed via old system binding',async t=>
 test('pending native queue can be revoked by removal without leaving an unresumable reservation',async t=>{
  const f=await fixture(t);assert.equal(f.queued.length,1);await bridge.administer('main',await operation('remove'));await bridge.administer('main',await operation('resume'));assert.equal((await bridge.catalog('main'))[0].busy,false);await bridge.administer('main',await operation('run'));assert.equal(f.queued.length,2);
 });
+
+test('system schedule audit retains operator identity, configuration diffs and uncertain results across restart',async t=>{
+ const f=await fixture(t,{time:'2026-10-12T23:00:00Z'}),p=await operation('update',{time:'09:00',timeZone:'Asia/Shanghai'});
+ await bridge.administer('main',p,{actor:{kind:'operator',id:'connection'},executor:'control-ui'});await bridge.administer('main',p);await f.restart();
+ const event=bridge.audit('main',{targetId:'repo-sync:main',action:'update'});assert.equal(event.total,1);assert.equal(event.records[0].actor.id,'connection');assert.equal(event.records[0].before.schedule.time,'08:00');assert.equal(event.records[0].after.schedule.time,'09:00');assert.equal(bridge.audit('other',{}).total,0);
+ f.cron.update=async()=>{throw Error('PRIVATE');};await assert.rejects(bridge.administer('main',await operation('pause')),/未确认/);assert.equal(bridge.audit('main',{status:'unknown'}).total,1);assert.ok(!JSON.stringify(bridge.audit('main',{})).includes('PRIVATE'));
+});
