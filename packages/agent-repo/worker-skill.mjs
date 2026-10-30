@@ -125,7 +125,7 @@ export function createWorkerSkillPublisher(getConfig,request,{logger,skillsHome=
     await record('fallback',cached.revision);return cached;
    }
    const result=await publishWorkerSkill(skillsHome,agentId,renderWorkerSkill(agentId,plugins,catalog));await record('published',result.revision);
-   const raw=getConfig().plugins?.entries?.['agent-worker']?.config?.codexHome;
+   const raw=getConfig().plugins?.entries?.['agent-worker']?.config?.codexHome??'~/.codex';
    if(typeof raw==='string'){const legacyHome=raw.startsWith('~/')?join(homedir(),raw.slice(2)):raw;const legacy=join(legacyHome,'skills',workerSkillName(agentId));if(isAbsolute(legacyHome)&&legacy!==join(skillsHome,'skills',workerSkillName(agentId))){try{const owner=JSON.parse(await readFile(join(legacy,'.agent-repo.json'),'utf8'));if(owner.owner==='agent-repo'&&owner.agentId===agentId&&(await lstat(legacy)).isDirectory()&&await realpath(legacy)===join(await realpath(join(legacy,'..')),workerSkillName(agentId))&&hash(await readFile(join(legacy,'SKILL.md'),'utf8'))===owner.revision){await rename(join(legacy,'SKILL.md'),join(legacy,'SKILL.md.migrated'));await atomic(join(legacy,'.agent-repo.json'),JSON.stringify({...owner,migratedTo:result.path}));}}catch{}}}
    return result;
   })().catch(async error=>{await record('failed');throw error;}).finally(()=>pending.delete(key));
