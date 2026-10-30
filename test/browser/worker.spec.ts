@@ -45,3 +45,12 @@ test('independent plugin bundles and multiple Worker views keep DOM IDs and loca
  await page.locator('#worker-two').getByRole('searchbox',{name:'搜索会话或标签'}).fill('第二视图的独立搜索');await page.locator('#worker-two').getByRole('searchbox',{name:'搜索会话或标签'}).press('Enter');await expect(page.locator('#worker-two .cq-row')).toHaveCount(0);await expect(page.locator('#worker-one .cq-row')).toHaveCount(3);await expect(page.locator('.ar-audit')).toBeVisible();
  await page.evaluate(()=>{(window as any).fixture.dispose();});await expect(page.locator('[data-ocp-overlay]')).toHaveCount(0);expect(await page.evaluate(()=>(window as any).fixture.subscriberCount())).toBe(0);expect(errors).toEqual([]);
 });
+
+for(const width of [320,400,720])test(`long running session content never overlaps statistics at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await page.goto('/?surface=worker&onlyWorker&longWorkerRows');
+ const row=page.locator('.cq-row').filter({has:page.locator('.cq-state.running')});await expect(row.locator('.cq-row-progress')).toBeVisible();
+ const button=await row.locator('.cq-row-open').boundingBox(),progress=await row.locator('.cq-row-progress').boundingBox(),meta=await row.locator('.cq-row-meta').boundingBox(),next=await page.locator('.cq-row').nth(1).boundingBox();
+ expect(button!.height).toBeGreaterThan(50);expect(button!.y+button!.height).toBeGreaterThanOrEqual(progress!.y+progress!.height-1);expect(meta!.y).toBeGreaterThanOrEqual(progress!.y+progress!.height);expect(next!.y).toBeGreaterThanOrEqual(meta!.y+meta!.height);
+ expect(await row.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+ await page.screenshot({path:`.tmp/worker-long-content-${width}.png`});
+});
