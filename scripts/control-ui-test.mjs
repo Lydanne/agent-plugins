@@ -1,15 +1,29 @@
 import assert from 'node:assert/strict';
-import {build} from 'esbuild';
+import {build} from 'vite';
+import vue from '@vitejs/plugin-vue';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import os from 'node:os';
+import {pathToFileURL} from 'node:url';
+import path from 'node:path';
 import {Window} from 'happy-dom';
 
 // Exercise the shipped browser entry without production config, Gateway or sessions.
 export async function browserFixture(t,entry){
- const window=new Window({url:'https://fixture.invalid/'}),previous=globalThis.document,views=[];
- globalThis.document=window.document;
- t.after(async()=>{for(const view of views)view.dispose();globalThis.document=previous;await window.happyDOM.close();});
- const bundle=await build({entryPoints:[entry],bundle:true,write:false,format:'esm',platform:'browser',loader:{'.css':'empty'}});
- const ui=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'));
- const container=window.document.createElement('main');window.document.body.append(container);
+ const window=new Window({url:'https://fixture.invalid/'}),views=[],previous=new Map();
+ const directory=await mkdtemp(path.join(os.tmpdir(),'control-ui-fixture-'));
+ const errors=[];window.addEventListener('error',event=>errors.push(event.error));
+ const previousError=console.error;console.error=(...args)=>errors.push(args.map(String).join(' '));
+ for(const name of ['window','Document','HTMLDocument','DocumentFragment','document','navigator','Element','Node','HTMLElement','SVGElement','NodeFilter','HTMLInputElement','HTMLSelectElement','HTMLTextAreaElement','HTMLButtonElement','HTMLFormElement','FocusEvent','KeyboardEvent','PointerEvent','ShadowRoot','DOMRect','MutationObserver','ResizeObserver','CustomEvent','Event','getComputedStyle','requestAnimationFrame','cancelAnimationFrame']){
+  previous.set(name,Object.getOwnPropertyDescriptor(globalThis,name));
+  const value=window[name];Object.defineProperty(globalThis,name,{configurable:true,writable:true,value:['getComputedStyle','requestAnimationFrame','cancelAnimationFrame'].includes(name)?value?.bind(window):value});
+ }
+ t.after(async()=>{for(const view of views)view.dispose();for(const [name,descriptor] of previous){if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];}await window.happyDOM.close();await rm(directory,{recursive:true,force:true});console.error=previousError;assert.deepEqual(errors,[],'Browser fixture raised an exception');});
+ const bundle=await build({root:path.dirname(entry),configFile:false,logLevel:'silent',plugins:[vue()],build:{write:false,minify:false,lib:{entry,formats:['es']},rollupOptions:{output:{inlineDynamicImports:true}}}});
+ const code=(Array.isArray(bundle)?bundle[0]:bundle).output.find(file=>file.type==='chunk').code;
+ const compiled=path.join(directory,'fixture.mjs');await writeFile(compiled,code);
+ const ui=await import(pathToFileURL(compiled).href);
+ // Each fixture owns a document: include body portals in user-visible assertions.
+ const container=window.document.body;
  return {window,container,ui,track:view=>(views.push(view),view)};
 }
 export async function settle(){for(let turn=0;turn<8;turn++)await new Promise(resolve=>setImmediate(resolve));}

@@ -11,6 +11,7 @@ it('builds a standalone Vue entry and scopes Tailwind theme without global reset
   const manifest=await buildControlUi({root,entry:'entry.ts'});
   const js=await readFile(path.join(root,manifest.entry),'utf8');
   const css=await readFile(path.join(root,manifest.styles[0]),'utf8');
+  expect(js).not.toContain('process.env.NODE_ENV');
   expect(js).not.toMatch(/from\s*["'](?:vue|reka-ui|@openclaw-plugins)/);
   expect(css).not.toMatch(/:root|:host/);
   expect(css).toContain('[data-ocp-ui]');expect(css).toContain('ocp\\:');

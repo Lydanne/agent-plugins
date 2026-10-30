@@ -28,7 +28,7 @@ test('management center retains its module across Agent switches and discards hi
  select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();assert.equal(calls.at(-1).agentId,'other');assert.equal(calls.at(-1).sessionKey,'agent:other:agent-repo-entities');
  click(f.container,'概览');pending.resolve({ok:true,result:{people:[],total:99,nextOffset:null}});await settle();assert.match(f.container.textContent,/管理概览/);assert.ok(!f.container.textContent.includes('99 位同事'));
  view.update({...ctx,props:{section:'logs'}});await settle();assert.equal(f.container.querySelector('[aria-label="AgentRepo 功能模块"] [aria-current=page]').textContent,'日志');
- ctx.host.connection.canRead=false;ctx.notify();assert.ok(!f.container.querySelector('.ar-log-inline'));assert.match(f.container.textContent,/operator.read/);
+ ctx.host.connection.canRead=false;ctx.notify();await settle();assert.ok(!f.container.querySelector('.ar-log-inline'));assert.match(f.container.textContent,/operator.read/);
 });
 
 test('overview shows real scoped counts, partial failures and safe read-only refresh',async t=>{
@@ -53,7 +53,7 @@ test('overview never publishes stale Agent results after switching Agent or losi
  assert.deepEqual([...f.container.querySelectorAll('.ar-metric strong')].map(node=>node.textContent),['—','—','—','—']);
  select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();assert.equal(f.container.querySelectorAll('.ar-metric strong')[1].textContent,'3');
  pending.resolve({ok:true,result:{total:999,stats:{}}});await settle();assert.ok(!f.container.textContent.includes('999'));
- ctx.host.connection.canRead=false;ctx.notify();assert.equal(f.container.querySelector('.ar-overview'),null);assert.match(f.container.textContent,/operator.read/);
+ ctx.host.connection.canRead=false;ctx.notify();await settle();assert.equal(f.container.querySelector('.ar-overview'),null);assert.match(f.container.textContent,/operator.read/);
 });
 
 test('module switches retain the management shell, navigation focus and consistent section headings',async t=>{
@@ -82,7 +82,7 @@ test('task cards open the selected schedule and retain history navigation',async
  f.container.querySelector('[aria-label="编辑群整理"]').click();await settle();
  assert.equal(f.container.querySelector('[aria-label="任务名称"]').value,'群整理');assert.match(f.container.querySelector('details').textContent,/群 ID：test-group/);
  assert.equal(calls.some(c=>c.actionId==='projects-scheduleManage'),false);
- click(f.container,'关闭');ctx.host.sessions.rows=[{key:'agent:other:feishu:group:test-group',label:'错误群名'}];click(f.container,'刷新任务');await settle();
+ click(f.container,'关闭');ctx.host.sessions.rows=[{key:'agent:other:feishu:group:test-group',label:'错误群名'}];ctx.notify();await settle();click(f.container,'刷新任务');await settle();
  assert.match(f.container.querySelector('.ar-task-card').textContent,/群名称未获取/);assert.ok(!f.container.querySelector('.ar-task-card').textContent.includes('错误群名'));
 });
 
@@ -114,5 +114,5 @@ test('global and per-plan audit share a filtered read-only view and discard stal
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'审计');await settle();assert.equal(calls.at(-1).actionId,'projects-audit');assert.deepEqual(calls.at(-1).payload,{limit:25,offset:0});assert.match(f.container.textContent,/张三/);assert.match(f.container.textContent,/om_change/);assert.match(f.container.textContent,/群主会话/);
  click(f.container,'定时任务');await settle();f.container.querySelector('[aria-label="查看日报"]').click();click(f.container,'修改日志');await settle();assert.deepEqual(calls.at(-1).payload,{feature:'schedules',targetId:'plan',limit:25,offset:0});assert.equal(f.container.querySelector('[aria-label="对象 ID"]').disabled,true);assert.equal(f.container.querySelector('[aria-label="功能"]').disabled,true);assert.equal(calls.some(c=>c.actionId==='projects-scheduleManage'),false);
  click(f.container,'关闭');hold=true;click(f.container,'审计');await settle();select(f.window,f.container,'AgentRepo 所属 Agent','other');await settle();pending.resolve({ok:true,result:{records:[{targetName:'STALE_SECRET'}],total:1,nextOffset:null}});await settle();assert.ok(!f.container.textContent.includes('STALE_SECRET'));assert.equal(calls.at(-1).agentId,'other');
- ctx.host.connection.canRead=false;ctx.notify();assert.equal(f.container.querySelector('.ar-audit'),null);
+ ctx.host.connection.canRead=false;ctx.notify();await settle();assert.equal(f.container.querySelector('.ar-audit'),null);
 });

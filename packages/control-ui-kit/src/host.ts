@@ -4,6 +4,9 @@ const contextKey:InjectionKey<ShallowRef<ControlUiViewContext>>=Symbol('control-
 const overlayKey:InjectionKey<HTMLElement>=Symbol('control-ui-overlay');
 export function useHostContext(){const context=inject(contextKey);if(!context)throw Error('Missing Control UI host');return context;}
 export function useOverlayTarget(){const target=inject(overlayKey);if(!target)throw Error('Missing Control UI overlay');return target;}
+function snapshotWithMethods<T extends object>(value:T):T{
+ return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,typeof item==='function'?item.bind(value):item])) as T;
+}
 export function mountVueView(component:Component):ControlUiView{
  return (container,initial)=>{
   let current=initial,disposed=false;
@@ -11,7 +14,7 @@ export function mountVueView(component:Component):ControlUiView{
   const root=document.createElement('div'),overlay=document.createElement('div');
   root.dataset.ocpUi='';overlay.dataset.ocpUi='';overlay.dataset.ocpOverlay='';
   container.append(root);document.body.append(overlay);
-  const snapshot=()=>({...current,host:{...current.host,connection:{...current.host.connection},agents:{...current.host.agents},sessions:{...current.host.sessions}},props:{...current.props}});
+  const snapshot=()=>({...current,host:{...snapshotWithMethods(current.host),connection:{...current.host.connection},agents:snapshotWithMethods(current.host.agents),sessions:snapshotWithMethods(current.host.sessions)},props:{...current.props}});
   const context=shallowRef(snapshot());
   const syncTheme=()=>{
    const style=document.defaultView!.getComputedStyle(root);

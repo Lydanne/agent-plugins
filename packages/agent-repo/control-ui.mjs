@@ -1,10 +1,12 @@
-import {mountRecycleBin} from './recycle-page.mjs';
-import {mountAudit,mountAuditPage} from './audit-page.mjs';
+import {defineComponent,h} from 'vue';
+import {mountVueView} from '@openclaw-plugins/control-ui-kit';
+import ManagementView from './ui/ManagementView.vue';
+import '@openclaw-plugins/control-ui-kit/theme.css';
+import {mountAudit} from './audit-page.mjs';
 import {mountWorkspacePool} from './workspace-pool-page.mjs';
 import {mountScheduleManager} from './schedule-manager.mjs';
 import {mountLogConsole} from './log-console.mjs';
 import {mountSkillMaintenance} from './skill-maintenance-page.mjs';
-import {mountWorkerPage,renderWorkerSummary} from './worker-page.mjs';
 import {mountPeopleDialog} from './people-ui.mjs';
 import {mountPeoplePage} from './people-page.mjs';
 import {mountEntitiesPage} from './entities-page.mjs';
@@ -274,118 +276,9 @@ export function mountProjects(container,initial){
  render();refresh();
  return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeFeatureAudit();closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeFeatureAudit();workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
 }
-const managementModules=[
- {id:'overview',label:'概览'},
- {id:'projects',label:'项目与技能',description:'查看项目登记、仓库状态、技能和子代理定义。'},
- {id:'worker',label:'Worker 任务',description:'跨会话查看此 Agent 的任务状态、来源和执行详情。'},
- {id:'entities',label:'实体资料库',description:'统一检索人员、组织、服务与资产，查看 AI 和程序同步的来源。'},
- {id:'tasks',label:'定时任务',description:'管理 OpenClaw 联动群任务，查看仓库同步计划和运行记录。'},
- {id:'audit',label:'审计',description:'全局及按功能查看修改人、指派依据、字段变化和操作结果。'},
- {id:'logs',label:'日志',description:'统一查看插件与 Worker 日志，按需开启实时调试。'},
-];
-function mountOverview(container,context,agentId,choose){
- let disposed=false,generation=0,loading=false,results={},loadedAt=null;
- const root=element('section',undefined,'ar-overview');root.setAttribute('aria-label','AgentRepo 运行概览');container.append(root);
- const safe=value=>context.host.redact(String(value??''));
- const sources=[['catalog','list','agent-repo','projects-'],['people','people','agent-repo','projects-'],['entities','entityTypes','agent-repo','projects-'],['logs','repositoryLogs','agent-repo','projects-'],['worker','agentTasks','agent-worker','inspect-'],['maintenance','maintenance','agent-repo','projects-']];
- async function refresh(){
-  const epoch=++generation;loading=true;results={};render();
-  await Promise.allSettled(sources.map(async([key,action,pluginId,prefix])=>{
-   try{
-    const value=await readInspectionResponse(async(name,payload)=>{
-     context.signal.throwIfAborted();if(disposed||epoch!==generation)throw Error('概览已切换');
-     return context.host.request('plugins.sessionAction',{pluginId,actionId:prefix+name,agentId,sessionKey:'agent:'+agentId+':agent-repo-management',payload});
-    },action,{});
-    if(!disposed&&epoch===generation)results[key]={value};
-   }catch(error){if(!disposed&&epoch===generation)results[key]={error:safe(error.message)};}
-  }));
-  if(disposed||epoch!==generation)return;loading=false;loadedAt=new Date().toISOString();render();
- }
- function render(){
-  root.replaceChildren();root.setAttribute('aria-busy',String(loading));
-  const catalog=results.catalog?.value,people=results.people?.value,logs=results.logs?.value;
-  const heading=element('header',undefined,'ar-overview-heading ar-section-heading'),copy=element('div');copy.append(element('h2','管理概览'),element('p','当前 Agent 的资源、计划与待处理事项。','ar-description'));
-  const tools=element('div',undefined,'ar-overview-tools'),refreshButton=button('刷新概览',refresh);refreshButton.disabled=loading;
-  const status=element('span',loading?'正在读取…':Object.values(results).some(result=>result.error)?'部分数据不可用':'更新于 '+date(loadedAt),'ar-meta');status.setAttribute('role','status');tools.append(status,refreshButton);heading.append(copy,tools);root.append(heading);
-  const metrics=element('div',undefined,'ar-management-metrics');metrics.setAttribute('aria-label','AgentRepo 资源统计');
-  const value=(source,count)=>source?.error?'不可读取':source?.value?String(count):'—';
-  for(const [label,count,note,module] of [
-   ['登记项目',value(results.catalog,catalog?.projects?.length),'已登记在项目清单中的仓库','projects'],
-   ['实体资料',value(results.entities,results.entities?.value?.total),'人员、组织、服务与资产统一管理','entities'],
-   ['定时任务',value(results.catalog,catalog?.scheduledTasks?.length),'同步与 OpenClaw 联动任务','tasks'],
-   ['异常记录',value(results.logs,logs?.records?.length),'最近保留的仓库异常，最多 100 条','logs'],
-  ]){
-   const card=button('',()=>choose(module));card.className='ar-metric';card.setAttribute('aria-label','打开'+managementModules.find(item=>item.id===module).label);
-   card.append(element('span',label,'ar-metric-label'),element('strong',count),element('span',note,'ar-metric-note'));metrics.append(card);
-  }root.append(metrics);
-  renderWorkerSummary(root,results.worker??{},loading,()=>choose('worker'),safe);
-  const columns=element('div',undefined,'ar-overview-columns'),attention=element('section',undefined,'ar-overview-card');attention.append(element('h3','待处理事项'),element('p','基于本次读取结果，不代替完整健康检查。','ar-description'));
-  let issues=0;
-  const issue=(title,detail,module)=>{issues++;const row=element('div',undefined,'ar-attention-row'),text=element('div');text.append(element('strong',title),element('p',detail));row.append(text,button('查看'+managementModules.find(item=>item.id===module).label,()=>choose(module)));attention.append(row);};
-  for(const [key,module,label] of [['catalog','projects','项目清单'],['people','entities','人员资料'],['entities','entities','实体资料'],['logs','logs','日志']])if(results[key]?.error)issue(label+'读取失败',results[key].error,module);
-  if(results.maintenance?.error)issue('技能维护状态不可读取',results.maintenance.error,'projects');
-  for(const provider of results.maintenance?.value?.providers??[])if(['unavailable','fallback','degraded'].includes(provider.state))issue(safe(provider.label)+'需处理',safe(provider.scope)+' · '+({unavailable:'不可读取',fallback:'正在使用已验证旧版',degraded:'检查或更新失败'})[provider.state],'projects');
-  const workerDiagnostics=results.worker?.value?.diagnostics;if(workerDiagnostics?.deliveryUncertain)issue(workerDiagnostics.deliveryUncertain+' 个投递结果待核查','Main 可能已经执行，先查看原任务及事件回执。','worker');if(workerDiagnostics?.awaitingMainOverdue)issue(workerDiagnostics.awaitingMainOverdue+' 个任务等待 Main 超过 30 分钟','等待时间仅用于提醒，不代表任务失败。','worker');
-  if(catalog&&!catalog.registrationCommitted)issue('项目登记尚未提交','登记需提交后才能用于正式的项目准备与技能检查。','projects');
-  if(people?.stats?.missing?.email)issue(people.stats.missing.email+' 位人员缺少邮箱','可从实体资料库的人员资源查看来源和账号关联。','entities');
-  if(people?.stats?.giteaSources?.email_prefix)issue(people.stats.giteaSources.email_prefix+' 个账号关联待核验','邮箱推导的候选账号需要核验后再用于人员归属。','entities');
-  if(logs?.records?.length)issue('有 '+logs.records.length+' 条保留的异常记录','历史记录可能已处理，请结合时间与原因判断。','logs');
-  if(!issues)attention.append(element('p',loading?'正在检查待处理事项…':'本次读取未发现上述待处理事项。','ar-empty-note'));
-  const resources=element('section',undefined,'ar-overview-card');resources.append(element('h3','工作区与计划'));
-  const info=(label,value)=>{const row=element('div',undefined,'ar-overview-info');row.append(element('span',label),element('span',safe(value)));resources.append(row);};
-  info('Agent 工作区',catalog?.root??(results.catalog?.error?'不可读取':'读取中…'));
-  info('项目登记',catalog?(catalog.registrationCommitted?'已提交':'待提交'):'—');
-  const source=catalog?.agentSkills;
-  info('角色技能',source?.state==='unavailable'?'不可扫描':source?source.skills.length+' 项 · 不含项目技能':'—');
-  const tasks=catalog?.scheduledTasks;
-  info('定时任务',tasks?(tasks.length?tasks.filter(task=>task.enabled).length+' 项启用 / '+tasks.length+' 项总计':'尚未配置定时计划'):'—');
-  resources.append(element('p','这里只读取状态；刷新不会拉取仓库、执行任务或同步飞书人员。','ar-description'));columns.append(attention,resources);root.append(columns);
-  const shortcuts=element('section',undefined,'ar-overview-shortcuts');shortcuts.append(element('h3','管理模块'));
-  const rows=element('div',undefined,'ar-management-cards');
-  for(const item of managementModules.slice(1)){const card=element('section'),copy=element('div');copy.append(element('h4',item.label),element('p',item.description));card.append(copy,button('打开'+item.label,()=>choose(item.id)));rows.append(card);}shortcuts.append(rows);root.append(shortcuts);
- }
- refresh();return {dispose(){disposed=true;generation++;root.remove();}};
-}
-export function mountAgentRepo(container,initial){
- let recycleView=null;
- let context=initial,disposed=false,child=null,agentId='',section='overview',read,write,presented,routeSection=initial.props.section;
- const root=element('section',undefined,'ar-management');root.setAttribute('aria-label','AgentRepo 管理中心');container.append(root);
- const selected=()=>currentUiTarget({...context,props:{agentId:context.props.agentId}}).agentId;
- const safe=value=>context.host.redact(String(value??''));
- const childContext=()=>({...context,props:{agentId,sessionKey:'agent:'+agentId+':agent-repo-management',managementSection:section,embeddedManagement:true}});
- const regionId='ar-management-content-'+(++panelSequence);
- function renderBody(){
-  child?.dispose();child=null;const body=root.querySelector('.ar-management-body');if(!body)return;
-  body.replaceChildren();root.dataset.section=section;body.setAttribute('aria-label',managementModules.find(item=>item.id===section).label+'内容');
-  for(const tab of root.querySelectorAll('.ar-management-nav button'))tab.setAttribute('aria-current',tab.dataset.section===section?'page':'false');
-  if(section==='overview')child=mountOverview(body,context,agentId,choose);
-  else child=section==='audit'?mountAuditPage(body,context,agentId):section==='worker'?mountWorkerPage(body,context,agentId):section==='entities'?mountEntitiesPage(body,childContext()):mountProjects(body,childContext());
- }
- function choose(id){if(section===id)return;section=id;renderBody();}
- function render(){
-  recycleView?.dispose();recycleView=null;child?.dispose();child=null;root.replaceChildren();root.dataset.section=section;
-  const header=element('header',undefined,'ar-management-header'),heading=element('div');heading.append(element('h1','AgentRepo'));
-  const picker=element('select');picker.setAttribute('aria-label','AgentRepo 所属 Agent');const agents=context.host.agents.rows??[];
-  for(const agent of agents){const option=element('option',safe(agent.name??agent.id));option.value=agent.id;picker.append(option);}
-  if(agentId&&!agents.some(agent=>agent.id===agentId)){const option=element('option',safe(agentId));option.value=agentId;picker.append(option);}
-  picker.value=agentId;picker.onchange=()=>{const id=picker.value;context.host.agents.select(id);if(context.props.agentId)context.host.navigation.openPage({id:'management',params:{agentId:id,section}});};const agentControl=element('label',undefined,'ar-management-agent');agentControl.append(element('span','当前 Agent'),picker);header.append(heading,agentControl);root.append(header);
-  if(!context.presented)return;
-  if(!read){root.append(element('p','需要 operator.read 权限才能查看 AgentRepo。','ar-error'));return;}
-  if(!agentId){root.append(element('p','请先选择一个 Agent。'));return;}
-  const nav=element('nav',undefined,'ar-management-nav');nav.setAttribute('aria-label','AgentRepo 功能模块');
-  for(const item of managementModules){const tab=button(item.label,()=>choose(item.id));tab.dataset.section=item.id;tab.setAttribute('aria-controls',regionId);tab.setAttribute('aria-current',section===item.id?'page':'false');nav.append(tab);}root.append(nav);
-  const body=element('div',undefined,'ar-management-body');body.id=regionId;body.setAttribute('role','region');root.append(body);renderBody();recycleView=mountRecycleBin(root,context,agentId,{onRestored:()=>renderBody()});
- }
- function update(next){
-  if(disposed)return;context=next;const id=selected(),newRead=context.host.connection.canRead,newWrite=context.host.connection.canWrite,newPresented=context.presented;
-  const routeChanged=context.props.section!==routeSection;routeSection=context.props.section;if(routeChanged&&routeSection==='people')section='entities';if(routeChanged&&managementModules.some(item=>item.id===routeSection))section=routeSection;
-  if(routeChanged||id!==agentId||read!==newRead||write!==newWrite||presented!==newPresented){agentId=id;read=newRead;write=newWrite;presented=newPresented;render();}
- }
- if(context.props.section==='people')section='entities';
- if(managementModules.some(item=>item.id===context.props.section))section=context.props.section;
- const stop=context.host.subscribe(()=>update(context));update(initial);
- return {update,dispose(){disposed=true;recycleView?.dispose();child?.dispose();stop();root.remove();}};
-}
+
+export const mountAgentRepo=mountVueView(defineComponent({setup:()=>()=>h(ManagementView,{mountProjects,mountEntities:mountEntitiesPage})}));
+
 export {mountPeoplePage};
 export default {id:'agent-repo',activate(host){
  const panel=host.ui.registerPanel({id:'projects',label:'项目、技能与子代理',mount:mountProjects});

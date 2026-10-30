@@ -1,0 +1,7 @@
+{
+  "extends": "../control-ui-kit/tsconfig.json",
+  "include": [
+    "ui/**/*.ts",
+    "ui/**/*.vue"
+  ]
+}

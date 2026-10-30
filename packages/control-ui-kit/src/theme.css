@@ -17,7 +17,12 @@
  --color-ring:var(--ocp-primary);
  --radius-md:6px;
 }
+@layer base {
 [data-ocp-ui]{--ocp-background:var(--bg,#faf9f7);--ocp-foreground:var(--text,#3b3834);--ocp-muted:var(--muted,#827b73);--ocp-primary:#496d63;--ocp-secondary:color-mix(in srgb,var(--ocp-foreground) 6%,var(--ocp-background));--ocp-border:var(--border,color-mix(in srgb,var(--ocp-foreground) 13%,transparent));--ocp-destructive:var(--error-color,#af5446);--ocp-running:#45718b;--ocp-success:#528272;--ocp-queued:#938033;color:var(--ocp-foreground);font:14px/1.6 system-ui,sans-serif;min-width:0;box-sizing:border-box;}
 [data-ocp-ui] *,[data-ocp-ui] *::before,[data-ocp-ui] *::after{box-sizing:border-box;border-color:var(--ocp-border);border-style:solid;border-width:0;}
+[data-ocp-ui] button,[data-ocp-ui] input,[data-ocp-ui] select,[data-ocp-ui] textarea{font:inherit;color:inherit;}
+[data-ocp-ui] button{background-color:transparent;cursor:pointer;}
+[data-ocp-ui] button:disabled{cursor:default;}
+}
 [data-ocp-overlay]{position:fixed;inset:0;z-index:1000;pointer-events:none;}
 [data-ocp-overlay]>*{pointer-events:auto;}
