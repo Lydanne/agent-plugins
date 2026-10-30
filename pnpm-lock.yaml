@@ -88,6 +88,9 @@ importers:
 
   packages/control-ui-kit:
     dependencies:
+      '@vueuse/core':
+        specifier: 14.4.0
+        version: 14.4.0(vue@3.5.44(typescript@6.0.3))
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

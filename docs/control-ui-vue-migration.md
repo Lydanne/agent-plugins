@@ -8,6 +8,7 @@ This tracks the complete accepted migration, not a reduced completion target. Wo
 - Overview, independent source errors, resource counts, maintenance warnings and Worker summary.
 - Agent-wide Worker task table, filters, pagination, timing, notification warnings and exact task links.
 - Worker sidebar and full task page: model-scoped session list, four detail views, source reader, tool/timeline rendering and exact-scope single/batch deletion. Existing 21 panel behaviors and actual public registration/RPC routing now run under Vitest, plus focused component tests.
+- Entities and personnel, including organization/group sync and account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries. Existing 14 behavior cases run in Vitest; five Chromium cases cover four widths and standalone writes.
 - Audit filters, paging, actor provenance, before/after differences and unknown outcomes.
 - Recycle dialog, stable request IDs, revision checks, retention confirmation, last-page correction and readonly behavior.
 
@@ -15,7 +16,6 @@ The temporary `CompatSection.vue` boundary is still used by the remaining manage
 
 ## Still required for full completion
 
-- Entities and personnel, including sync/account selection, revision-protected editing, drafts, technical identities, lazy graph relationships and standalone compatibility entries.
 - Projects, skills/CLI maintenance, workspace configuration, subagent definitions and the project sidebar.
 - Schedules, native/system task history, settings, audit and existing confirmation/admission semantics.
 - Historical/live diagnostics including explicit lease acquisition, release, virtualized logs, search, export and partial-source failures.

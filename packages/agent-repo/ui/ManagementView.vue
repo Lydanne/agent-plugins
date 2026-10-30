@@ -8,9 +8,10 @@ import OverviewView from './OverviewView.vue';
 import WorkerTasks from './WorkerTasks.vue';
 import AuditView from './AuditView.vue';
 import RecycleView from './RecycleView.vue';
+import EntitiesView from './EntitiesView.vue';
 import CompatSection from './CompatSection.vue';
 import type {AuditPage} from './audit-model';
-const props=defineProps<{mountProjects:ControlUiView;mountEntities:ControlUiView}>();
+const props=defineProps<{mountProjects:ControlUiView}>();
 const context=useHostContext(),regionId=useId(),section=ref('overview'),revision=ref(0);
 const safe=(value:unknown)=>context.value.host.redact(String(value??''));
 const agentId=computed(()=>context.value.props.agentId??context.value.host.agents.selectedId??context.value.host.connection.assistantAgentId??context.value.host.agents.defaultId??'');
@@ -38,7 +39,7 @@ function restored(){revision.value++;}
      <OverviewView :key="key" v-if="section==='overview'" :agent-id="agentId" :choose="choose" />
      <WorkerTasks :key="key" v-else-if="section==='worker'" :agent-id="agentId" />
      <AuditView :key="key" v-else-if="section==='audit'" :invoke="auditInvoke" :safe="safe" />
-     <CompatSection :key="key" v-else :mount="section==='entities'?mountEntities:mountProjects" :context="contentContext" />
+     <EntitiesView :key="key" v-else-if="section==='entities'" :agent-id="agentId" embedded/><CompatSection :key="key" v-else :mount="mountProjects" :context="contentContext" />
     </div>
     <RecycleView :key="agentId+':'+context.host.connection.canWrite" :agent-id="agentId" :on-restored="restored" />
    </template>

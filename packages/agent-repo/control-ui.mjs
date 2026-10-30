@@ -34,7 +34,7 @@ export function mountProjects(container,initial){
  let maintenanceView=null;
  function closeMaintenance(){maintenanceView?.dispose();maintenanceView=null;}
  function closePeople(){peopleDialog?.dispose();peopleDialog=null;}
- function openPeople(){closePeople();peopleDialog=mountPeopleDialog(container,{invoke,isGroup:()=>/^agent:[^:]+:feishu:group:oc_/.test(target().sessionKey??''),canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{peopleDialog=null;}});}
+ function openPeople(){closePeople();peopleDialog=mountPeopleDialog(container,{context,invoke,isGroup:()=>/^agent:[^:]+:feishu:group:oc_/.test(target().sessionKey??''),canWrite:()=>context.host.connection.canWrite===true,safe,onClose:()=>{peopleDialog=null;}});}
  let taskAudit=null;
  let historyGeneration=0,syncDialog=null,syncTaskId=null,syncRunId=null,syncTab='records',syncRenderedView=null;const syncRecords=new Map(),syncViewScroll=new Map();
  const syncLabels={completed:'成功',failed:'失败',running:'未结束',unavailable:'不可读取',started:'开始',worker_submitted:'已提交 Worker',submitted:'Main 已接纳',dispatching:'交接中',unknown:'结果待核验',blocked:'已阻止',verified_not_executed:'已核对未执行',delivered:'消息已送达'};
@@ -277,7 +277,7 @@ export function mountProjects(container,initial){
  return {update(next){const before=observedTarget;context=next;const after=target();observedTarget=after;const read=context.host.connection.canRead,write=context.host.connection.canWrite,readChanged=read!==observedRead||write!==observedWrite;observedRead=read;observedWrite=write;if(readChanged||before.agentId!==after.agentId||before.sessionKey!==after.sessionKey)reset();render();if(next.presented)refresh();else {closeFeatureAudit();closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);generation++;}},dispose(){closeFeatureAudit();workspaceView?.dispose();workspaceView=null;closeScheduleManager();closeMaintenance();closePeople();closeLogDialog(false);closeSyncDialog(false);disposed=true;generation++;stopNavigation();stopHost();root.remove();}};
 }
 
-export const mountAgentRepo=mountVueView(defineComponent({setup:()=>()=>h(ManagementView,{mountProjects,mountEntities:mountEntitiesPage})}));
+export const mountAgentRepo=mountVueView(defineComponent({setup:()=>()=>h(ManagementView,{mountProjects})}));
 
 export {mountPeoplePage};
 export default {id:'agent-repo',activate(host){

@@ -13,6 +13,8 @@
  --color-accent:var(--ocp-secondary);
  --color-accent-foreground:var(--ocp-foreground);
  --color-destructive:var(--ocp-destructive);
+ --color-input:var(--ocp-border);
+ --color-muted:var(--ocp-secondary);
  --color-border:var(--ocp-border);
  --color-ring:var(--ocp-primary);
  --radius-md:6px;

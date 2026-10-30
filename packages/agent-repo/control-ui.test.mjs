@@ -226,7 +226,7 @@ test('log clearing confirms, cancels, handles failure and refreshes records and 
 test('people sidebar dialog closes on Agent switch and ignores late personnel responses',async t=>{
  const f=await browserFixture(t,new URL('./control-ui.mjs',import.meta.url).pathname),pending=deferred(),calls=[];
  const ctx=uiContext(async(_method,p)=>{calls.push(p);if(p.actionId==='projects-people')return pending.promise;return {ok:true,result:catalog(p.agentId)};});
- f.track(f.ui.mountProjects(f.container,ctx));await settle();click(f.container,'人员资料');assert.ok(f.container.querySelector('[aria-label="人员资料管理"]'));
+ f.track(f.ui.mountProjects(f.container,ctx));await settle();click(f.container,'人员资料');await settle();assert.ok(f.container.querySelector('[aria-label="人员资料管理"]'));
  ctx.host.agents.selectedId='other';ctx.notify();await settle();assert.ok(!f.container.querySelector('[aria-label="人员资料管理"]'));
  pending.resolve({ok:true,result:{people:[{name:'stale'}],total:1,nextOffset:null}});await settle();assert.ok(!f.container.textContent.includes('stale'));
  assert.equal(calls.find(p=>p.actionId==='projects-people').agentId,'main');

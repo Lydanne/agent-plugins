@@ -14,11 +14,12 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "vue": "^3.5.0",
-    "reka-ui": "^2.0.0",
+    "@vueuse/core": "14.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "tailwind-merge": "^3.0.0"
+    "reka-ui": "^2.0.0",
+    "tailwind-merge": "^3.0.0",
+    "vue": "^3.5.0"
   },
   "devDependencies": {
     "openclaw": "2026.9.5"
