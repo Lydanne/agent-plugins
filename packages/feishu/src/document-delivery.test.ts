@@ -12,7 +12,7 @@ vi.mock("./accounts.js",()=>({resolveFeishuRuntimeAccount:mocks.account}));
 vi.mock("./docx.js",()=>({createDoc:mocks.create,writeDoc:mocks.write}));
 vi.mock("./runtime.js",()=>({getFeishuRuntime:()=>({media:{loadWebMedia:mocks.load}})}));
 vi.mock("./client.js",()=>({createFeishuClient:()=>({im:{message:{create:mocks.messageCreate,reply:mocks.messageReply,get:mocks.messageGet,patch:mocks.messagePatch}},docx:{documentBlockChildren:{create:mocks.childrenCreate,get:mocks.childrenGet},documentBlock:{patch:mocks.patch}},drive:{media:{uploadAll:mocks.upload},permissionMember:{create:mocks.permission}}})}));
-import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient,reportDocumentTitle} from "./document-delivery.js";
+import {findLocalFileReferences,prepareFeishuDocumentDelivery,attachDocumentFile,resolveDocumentPermissionRecipient,reportDocumentTitle,normalizeDocumentHeadings} from "./document-delivery.js";
 import {withFeishuSendContext} from "./send-context.js";
 import {createFeishuClient} from "./client.js";
 import {sendMessageFeishu,sendCardFeishu,editMessageFeishu} from "./send.js";
@@ -591,4 +591,59 @@ it('keeps contributor controls and never reads or uploads paths in an unapproved
   expect(JSON.parse(mocks.messagePatch.mock.calls[0][0].data.content).header.title.content).toBe('补充权限已确认');
   for(const operation of [mocks.stat,mocks.load,mocks.create,mocks.write,mocks.upload,mocks.permission,mocks.mediaSend,mocks.messageGet])expect(operation).not.toHaveBeenCalled();
  }finally{workerQuestionBridge.contributorRead=previousRead;workerQuestionBridge.contributorDecide=previousDecide;rmSync(stateDir,{recursive:true,force:true});}
+});
+
+it('transcribes and uploads an original report and its staged media copy only once, retaining both reply aliases',async()=>{
+ const source='# 【Runtime 错误】\nSDK summary\n### 核验\nEvidence\n# 【作品错误】\n## https://example.test/work\n### 完整明细\n| id | error |\n| --- | --- |\n| 1 | test |';
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(source),fileName:path.split('/').at(-1)}));
+ const input={cfg:{},to:'chat:oc_target',text:'# 【Runtime 错误】\nBrief SDK result\n# 【作品错误】\nBrief work result\n[完整报告](/workspace/page-error-full.md)\n[附件](/outbound/page-error-full---651c2eb7-d441-49cc-9100-7f6d6d3f242a.md)',mediaUrls:['/outbound/page-error-full---651c2eb7-d441-49cc-9100-7f6d6d3f242a.md']};
+ const result=await prepareFeishuDocumentDelivery(input);const body=mocks.write.mock.calls[0][2];
+ expect(mocks.load).toHaveBeenCalledTimes(2);expect(mocks.upload).toHaveBeenCalledOnce();expect(mocks.upload.mock.calls[0][0].data.file_name).toBe('page-error-full.md');
+ expect(body.match(/^# 摘要$/gm)).toHaveLength(1);expect(body.match(/^# 【Runtime 错误】$/gm)).toHaveLength(1);expect(body.match(/^# 【作品错误】$/gm)).toHaveLength(1);
+ expect(body).toContain('## 【Runtime 错误】\nBrief SDK result');expect(body).toContain('## 核验\nEvidence');expect(body).not.toContain('# page-error-full.md');expect(body.match(/\| 1 \| test \|/g)).toHaveLength(1);
+ expect(result?.text).toContain('[完整报告](https://feishu.cn/docx/doc-test)');expect(result?.text).toContain('[附件](https://feishu.cn/docx/doc-test)');expect(result?.text).not.toContain('/outbound/');
+ await prepareFeishuDocumentDelivery(input);expect(mocks.write).toHaveBeenCalledOnce();expect(mocks.upload).toHaveBeenCalledOnce();
+});
+it('deduplicates same-name same-content references and counts only unique attachments against configured limits',async()=>{
+ mocks.account.mockReturnValue({accountId:'copy-limits',domain:'feishu',config:{documentDelivery:{maxFiles:1,maxTotalMb:0.00004}}});
+ mocks.load.mockResolvedValue({buffer:Buffer.from('# One report\nUnique evidence'),fileName:'report.md'});
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[one](/first/report.md) [two](/second/report.md)'});
+ expect(mocks.upload).toHaveBeenCalledOnce();expect(result?.text).toContain('[two](https://feishu.cn/docx/doc-test)');
+});
+it('keeps same-named different-content reports and different named source files independently',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.startsWith('/first')?'# First report':'# Other report'),fileName:path.split('/').at(-1)}));
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:['/first/report.md','/second/report.md','/second/other.md']});
+ expect(mocks.upload).toHaveBeenCalledTimes(3);const body=mocks.write.mock.calls[0][2];expect(body).toContain('# report.md\n\n## First report');expect(body).toContain('## Other report');expect(body).toContain('# other.md');
+});
+it('deduplicates the staged copy before nested discovery, resolving report evidence from its original directory',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>({buffer:Buffer.from(path.endsWith('.csv')?'id,value\n1,test':'# Report\n[Evidence](./evidence.csv)'),fileName:path.endsWith('.md')?'report.md':'evidence.csv'}));
+ await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[report](/workspace/report.md)',mediaUrls:['/outbound/report-copy.md']});
+ expect(mocks.load.mock.calls.map(([path])=>path)).toEqual(['/workspace/report.md','/outbound/report-copy.md','/workspace/evidence.csv']);expect(mocks.upload).toHaveBeenCalledTimes(2);
+});
+
+
+describe('document outline normalization',()=>{
+ it('closes skipped heading levels, preserving section resets, inline formatting, CRLF and setext headings',()=>{
+  expect(normalizeDocumentHeadings('# First\n### **Details**\n#### Evidence\n# Second\n### Details',1)).toBe('# First\n## **Details**\n### Evidence\n# Second\n## Details');
+  expect(normalizeDocumentHeadings('Title\r\n=====\r\n\r\n### Details',2)).toBe('## Title\r\n\r\n### Details');
+ });
+ it('does not change fenced code, quoted headings, inline hashes or table content',()=>{
+  const literal='```md\n# Code heading\n### Nested code\n```\n\n> # Quoted heading\n\ninline # text\n\n| # column | text |';
+  expect(normalizeDocumentHeadings(literal,2)).toBe(literal);
+ });
+});
+
+it('still checks media permission for every alias before content deduplication',async()=>{
+ mocks.load.mockImplementation(async(path:string)=>{
+  if(path.startsWith('/denied'))throw Object.assign(Error('access denied'),{code:'MEDIA_ACCESS_DENIED'});
+  return {buffer:Buffer.from('# Report'),fileName:'report.md'};
+ });
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[report](/workspace/report.md)',mediaUrls:['/denied/report.md']});
+ expect(result?.text).toContain('附件未成功交付');expect(mocks.load).toHaveBeenCalledTimes(2);
+ expect(mocks.create).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();
+});
+it('uploads only one original attachment after fallback conversion for duplicate report aliases',async()=>{
+ mocks.load.mockResolvedValue({buffer:Buffer.from('# Report'),fileName:'report.md'});mocks.write.mockRejectedValue(Error('converter failed'));
+ const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[original](/workspace/report.md) [copy](/outbound/report.md)'});
+ expect(mocks.upload).toHaveBeenCalledOnce();expect(result?.text).toContain('正文转换未完成');expect(result?.text).toContain('[copy](https://feishu.cn/docx/doc-test)');
 });

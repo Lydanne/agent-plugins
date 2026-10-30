@@ -24,6 +24,32 @@ function replaceLocalReferences(text:string,refs:Reference[]):string {
   return `${label || basename(ref.path)} (${basename(ref.path)})`;
  });
 }
+
+/** Normalize report outlines without interpreting code, tables or quoted examples as headings. */
+export function normalizeDocumentHeadings(markdown:string,minDepth=1):string {
+ const tree=fromMarkdown(markdown);
+ const levels:number[]=[],edits:{start:number;end:number;text:string}[]=[];
+ for(const node of tree.children) {
+  if(node.type!=="heading")continue;
+  const start=node.position?.start.offset,end=node.position?.end.offset;
+  if(start===undefined || end===undefined)continue;
+  while(levels.length && levels[levels.length-1]>=node.depth)levels.pop();
+  levels.push(node.depth);
+  const depth=Math.min(6,minDepth+levels.length-1);
+  const source=markdown.slice(start,end);
+  const content=/^ {0,3}#{1,6}(?:\s|$)/.test(source)
+   ? source.replace(/^ {0,3}#{1,6}[\t ]*/,"")
+   : source.replace(/\r?\n[\t ]*(?:=+|-+)[\t ]*$/,"").replace(/\r?\n/g," ");
+  edits.push({start,end,text:"#".repeat(depth)+" "+content});
+ }
+ for(const edit of edits.reverse())markdown=markdown.slice(0,edit.start)+edit.text+markdown.slice(edit.end);
+ return markdown;
+}
+
+/** Outbound media staging appends this UUID suffix to an otherwise unchanged filename. */
+function documentFileName(name:string):string {
+ return name.replace(/---[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=\.[^.]+$)/i,"");
+}
 type Reference = { raw: string; path: string; markup?:string; label?:string };
 export function resolveLocalFilePath(raw: string, workspaceDir?: string): string | undefined {
   let value = raw.trim().replace(/^<|>$/g, "").replace(/:\d+(?::\d+)?$/, "").replace(/#L\d+(?:-L\d+)?$/, "");
@@ -295,6 +321,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
     (params.agentId ? getAgentScopedMediaLocalRoots(params.cfg, params.agentId) : undefined);
   let total = 0;
   const files = [];
+  const uploadedPaths=new Set<string>(),fileIdentities=new Set<string>();
   const skipped:{path:string;size:number}[]=[];
   const textual = new Set(config?.textExtensions ?? [".md",".markdown",".txt",".sql"]);
   for (const input of inputs) {
@@ -308,7 +335,6 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       captureText(replaceLocalReferences(params.text ?? "",refs),notice);
       continue;
     }
-    if(!bundleSql && files.length>=maxFiles)throw Object.assign(Error("Too many document attachments"),{code:"DOCX_FILE_COUNT_LIMIT"});
     let loaded;
     try {
       loaded = await runBeforeFeishuMessageDispatch(()=>(params.mediaRuntime ?? getFeishuRuntime().media).loadWebMedia(input,buildOutboundMediaLoadOptions({
@@ -321,10 +347,17 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       throw error;
     }
     if(loaded.buffer.length>maxBytes)throw Error("Document attachment exceeds per-file size limit");
+    const name=documentFileName(loaded.fileName ?? basename(input));
+    const identity=JSON.stringify([name,createHash("sha256").update(loaded.buffer).digest("hex")]);
+    // Keep every input alias for reply-link replacement, but transcribe/upload a
+    // same-named byte-identical file just once. Different named sources remain distinct.
+    uploadedPaths.add(input);
+    if(fileIdentities.has(identity))continue;
+    if(!bundleSql && files.length>=maxFiles)throw Object.assign(Error("Too many document attachments"),{code:"DOCX_FILE_COUNT_LIMIT"});
+    fileIdentities.add(identity);
     total += loaded.buffer.length;
     if (total > (config?.maxTotalMb ?? 50)*1024*1024) throw Error("Document attachments exceed total size limit");
     if (!loaded.buffer.length) throw Error("Document attachment is empty");
-    const name=loaded.fileName ?? basename(input);
     let content:string|undefined;
     if(textual.has(extname(name).toLowerCase()) || bundleSql)try{content=new TextDecoder("utf-8",{fatal:true}).decode(loaded.buffer);}catch{}
     if(bundleSql && content===undefined)throw Object.assign(Error("SQL source is not UTF-8"),{code:"DOCX_SQL_ENCODING"});
@@ -337,8 +370,10 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   }
   let markdown = replaceLocalReferences(params.text ?? "",refs);
   if(!files.length && !skipped.length)return {text:markdown || "引用的本地文件不存在，已跳过上传。",mediaUrls:[]};
+  if(markdown.trim())markdown="# 摘要\n\n"+normalizeDocumentHeadings(markdown,2);
   const title = reportDocumentTitle(files[0]?.name ?? basename(skipped[0].path),config?.titleTemplate,params.workerReport);
   let sqlBundle = "";
+  const singleMarkdown=files.filter(file=>file.content!==undefined).length===1 && files.some(file=>/\.m(?:d|arkdown)$/i.test(file.name));
   for (const file of files) {
     if(file.content===undefined)continue;
     const heading=file.name.replace(/([\\`*_\[\]<>#])/g,"\\$1");
@@ -349,7 +384,9 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       const section=`\n\n## ${heading}\n\n${fence}sql\n${file.content}\n${fence}`;
       if(textual.has(".sql"))markdown+=section;sqlBundle+=section;
     }
-    else if (/\.m(?:d|arkdown)$/i.test(file.name)) markdown += `\n\n## ${heading}\n\n${file.content}`;
+    else if (/\.m(?:d|arkdown)$/i.test(file.name)) markdown += singleMarkdown
+      ? `\n\n${normalizeDocumentHeadings(file.content)}`
+      : `\n\n# ${heading}\n\n${normalizeDocumentHeadings(file.content,2)}`;
     else markdown += `\n\n## ${heading}\n\n`+file.content.split(/\r?\n/).map(line=>line.replace(/([\\`*_\[\]<>#])/g,"\\$1")).join("\n");
   }
   const attachments=bundleSql && files.length ? [{name:"sql-sources.md",buffer:Buffer.from(`# SQL 原文汇总（${files.length} 份）\n${sqlBundle}`,"utf8")}] : files;
@@ -407,7 +444,7 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
     const base=config?.urlBase ?? (account.domain==="lark"?"https://www.larksuite.com":"https://feishu.cn");
     const url=base.replace(/\/$/,"")+"/docx/"+documentId;
     const fallbackLink=(config?.linkTemplate ?? "已整理为飞书文档：[{title}]({url})").replaceAll("{title}",title.replace(/[\[\]\\]/g," ")).replaceAll("{url}",url);
-    return {text:documentReplyText(params.text ?? "",refs,new Set(files.map(file=>file.path)),url,fallbackLink,workspaceDir)+(bodyFallback?"\n\n正文转换未完成，原始 Markdown 已附在文档内，请下载查看。":"")+skippedNotice,documentId,url,mediaUrls:[]};
+    return {text:documentReplyText(params.text ?? "",refs,uploadedPaths,url,fallbackLink,workspaceDir)+(bodyFallback?"\n\n正文转换未完成，原始 Markdown 已附在文档内，请下载查看。":"")+skippedNotice,documentId,url,mediaUrls:[]};
   })();
   prepared.set(key,operation);
   operation.catch(()=>prepared.delete(key));
