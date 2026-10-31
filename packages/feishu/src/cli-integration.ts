@@ -12,6 +12,7 @@ import { resolveCliConfig } from './cli-config.js';
 import { FeishuCliManager, type CliRelease } from './cli-manager.js';
 import { cliBaseEnvironment, redactCliOutput } from './cli-process.js';
 import { feishuExternalToolResult } from './tool-result.js';
+import { persistCliDownloads, type CliArtifact } from './cli-artifacts.js';
 import type { FeishuConfig } from './types.js';
 
 const domains = new Set(['approval', 'attendance', 'base', 'calendar', 'contact', 'docs', 'drive',
@@ -70,18 +71,21 @@ export async function executeManagedCli(params: {
   const operations = join(params.manager.root, 'operations');
   await mkdir(operations, { recursive: true, mode: 0o700 });
   const cwd = await mkdtemp(join(operations, 'call-'));
-  let result;
   try {
-    result = await params.manager.run(params.manager.binary(params.release), argv, {
+    const result = await params.manager.run(params.manager.binary(params.release), argv, {
       cwd, env: cliInvocationEnvironment(params.manager.root, params.account, params.identity, params.token),
       timeout: 60_000, signal: params.signal });
+    const redact = (text: string) => redactCliOutput(text, [params.account.appSecret, params.token ?? '']);
+    let payload: unknown;
+    try { payload = JSON.parse(redact(result.code ? result.stderr : result.stdout)); }
+    catch { payload = { message: redact(result.code ? result.stderr : result.stdout).slice(0, 16_000) }; }
+    let artifacts: CliArtifact[] = [];
+    if (result.code === 0 && payload && typeof payload === 'object' && 'ok' in payload && payload.ok === true) {
+      ({ payload, artifacts } = await persistCliDownloads(params.manager.root, cwd, payload, params.signal));
+    }
+    return { exitCode: result.code, version: params.release.version, identity: params.identity,
+      confirmationRequired: result.code === 10, result: payload, ...(artifacts.length ? { artifacts } : {}) };
   } finally { await rm(cwd, { recursive: true, force: true }); }
-  const redact = (text: string) => redactCliOutput(text, [params.account.appSecret, params.token ?? '']);
-  let payload: unknown;
-  try { payload = JSON.parse(redact(result.code ? result.stderr : result.stdout)); }
-  catch { payload = { message: redact(result.code ? result.stderr : result.stdout).slice(0, 16_000) }; }
-  return { exitCode: result.code, version: params.release.version, identity: params.identity,
-    confirmationRequired: result.code === 10, result: payload };
 }
 
 function isMainContext(context: OpenClawPluginToolContext) {

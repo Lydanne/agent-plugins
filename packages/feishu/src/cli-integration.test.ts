@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, stat, readdir, mkdir, symlink, link } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FeishuCliManager } from './cli-manager.js';
@@ -13,6 +14,92 @@ afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)
 const account = { accountId: 'default', appId: 'cli_fixture', appSecret: 'private-app-secret', domain: 'feishu' };
 const release = { id: '12345678-1234-1234-1234-123456789abc', version: '1.0.96', skills: [] };
 const config = { channels: { feishu: { appId: account.appId, appSecret: account.appSecret } } };
+
+it('persists only declared downloads before cleaning the operation directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'feishu-cli-download-')); roots.push(root);
+  const bytes = Buffer.from('规则V2\r\n| 原文 | 数值 |\r\n\0', 'utf8');
+  let operation = '';
+  const manager = new FeishuCliManager(root, resolveCliConfig(), async (_file, _args, options) => {
+    operation = options!.cwd!;
+    await writeFile(join(operation, '规则V2.md'), bytes);
+    await writeFile(join(operation, 'unreported.tmp'), 'must not be retained');
+    return { code: 0, stderr: '', stdout: JSON.stringify({ ok: true, data: { resources: [
+      { saved_path: join(operation, '规则V2.md'), size_bytes: bytes.length },
+      { saved_path: '规则V2.md', size_bytes: bytes.length },
+    ] } }) };
+  });
+  const result = await executeManagedCli({ manager, release, account, args: ['im', '+messages-mget'], identity: 'bot', token: 'fixture' });
+  const payload = result.result as { data: { resources: { saved_path: string }[] } };
+  const path = payload.data.resources[0].saved_path;
+  expect(await readFile(path)).toEqual(bytes);
+  expect(path).toContain(join(root, 'downloads'));
+  expect(payload.data.resources[1].saved_path).toBe(path);
+  expect(result).toMatchObject({ artifacts: [{ path, sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }] });
+  expect((await stat(path)).mode & 0o777).toBe(0o600);
+  await expect(stat(operation)).rejects.toThrow();
+  expect(await readdir(join(path, '..'))).toEqual(['规则V2.md']);
+});
+
+it.each(['missing', 'outside', 'symlink', 'parent-symlink', 'hardlink', 'directory'])('rejects an invalid %s download instead of returning a successful stale path', async kind => {
+  const root = await mkdtemp(join(tmpdir(), 'feishu-cli-invalid-download-')); roots.push(root);
+  const outside = join(root, 'private'); await writeFile(outside, 'private');
+  let operation = '';
+  const manager = new FeishuCliManager(root, resolveCliConfig(), async (_file, _args, options) => {
+    operation = options!.cwd!; let path = join(operation, 'file');
+    if (kind === 'outside') path = outside;
+    if (kind === 'symlink') await symlink(outside, path);
+    if (kind === 'hardlink') await link(outside, path);
+    if (kind === 'directory') await mkdir(path);
+    if (kind === 'parent-symlink') { await symlink(root, path); path = join(path, 'private'); }
+    return { code: 0, stderr: '', stdout: JSON.stringify({ ok: true, data: { saved_path: path } }) };
+  });
+  await expect(executeManagedCli({ manager, release, account, args: ['im', '+messages-mget'], identity: 'bot', token: 'fixture' })).rejects.toThrow(/download/i);
+  await expect(stat(operation)).rejects.toThrow();
+  expect(await readFile(outside, 'utf8')).toBe('private');
+});
+
+it.each([1, 0])('does not publish downloads for CLI/business failures (exit %s)', async code => {
+  const root = await mkdtemp(join(tmpdir(), 'feishu-cli-failed-download-')); roots.push(root);
+  const manager = new FeishuCliManager(root, resolveCliConfig(), async (_file, _args, options) => {
+    const saved_path = join(options!.cwd!, 'partial.md'); await writeFile(saved_path, 'partial');
+    const text = JSON.stringify({ ok: false, saved_path });
+    return { code, stderr: code ? text : '', stdout: code ? '' : text };
+  });
+  const result = await executeManagedCli({ manager, release, account, args: ['im', '+messages-mget'], identity: 'bot', token: 'fixture' });
+  expect(result.result).toMatchObject({ ok: false }); expect(result).not.toHaveProperty('artifacts');
+  await expect(stat(join(root, 'downloads'))).rejects.toThrow();
+  expect(await readdir(join(root, 'operations'))).toEqual([]);
+});
+
+it('cleans partial publication when a later declared download is missing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'feishu-cli-partial-download-')); roots.push(root);
+  const manager = new FeishuCliManager(root, resolveCliConfig(), async (_file, _args, options) => {
+    await writeFile(join(options!.cwd!, 'first.md'), 'first');
+    return { code: 0, stderr: '', stdout: JSON.stringify({ ok: true, resources: [{ saved_path: 'first.md' }, { saved_path: 'missing.md' }] }) };
+  });
+  await expect(executeManagedCli({ manager, release, account, args: ['im', '+messages-mget'], identity: 'bot', token: 'fixture' })).rejects.toThrow(/download/);
+  expect(await readdir(join(root, 'downloads'))).toEqual([]);
+  expect(await readdir(join(root, 'operations'))).toEqual([]);
+});
+
+it('keeps concurrent same-name downloads distinct and refuses redirected storage', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'feishu-cli-concurrent-download-')); roots.push(root);
+  let index = 0;
+  const manager = new FeishuCliManager(root, resolveCliConfig(), async (_file, _args, options) => {
+    await writeFile(join(options!.cwd!, 'same.md'), String(++index));
+    return { code: 0, stderr: '', stdout: JSON.stringify({ ok: true, saved_path: 'same.md' }) };
+  });
+  const invoke = () => executeManagedCli({ manager, release, account, args: ['im', '+messages-mget'], identity: 'bot', token: 'fixture' });
+  const results = await Promise.all([invoke(), invoke()]);
+  const paths = results.map(result => result.artifacts![0].path);
+  expect(new Set(paths).size).toBe(2);
+  expect(new Set(await Promise.all(paths.map(path => readFile(path, 'utf8'))))).toEqual(new Set(['1', '2']));
+  await rm(join(root, 'downloads'), { recursive: true });
+  const outside = await mkdtemp(join(tmpdir(), 'feishu-cli-outside-')); roots.push(outside);
+  await symlink(outside, join(root, 'downloads'));
+  await expect(invoke()).rejects.toThrow(/download/);
+  expect(await readdir(outside)).toEqual([]);
+});
 
 it('isolates child credentials and preserves exact user binding without inheriting operator tokens', () => {
   vi.stubEnv('LARKSUITE_CLI_USER_ACCESS_TOKEN', 'operator-token');
