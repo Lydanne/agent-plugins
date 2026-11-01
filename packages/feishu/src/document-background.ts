@@ -1,3 +1,5 @@
+import {buildOutboundMediaLoadOptions,getAgentScopedMediaLocalRoots} from "openclaw/plugin-sdk/media-runtime";
+import {getFeishuRuntime} from "./runtime.js";
 import {splitCompletionReportLink} from "./completion-report-link.js";
 import {randomUUID} from "node:crypto";
 import {mkdirSync,chmodSync} from "node:fs";
@@ -20,7 +22,7 @@ import {withinCardTableLimit} from "./presentation-card.js";
 import {reportDocumentTitle} from "./document-delivery.js";
 
 type Source=Pick<TaskLease,"taskId"|"revision"|"accountId"|"chatId"|"chatType"|"sessionKey"|"senderId"|"sourceMessageIds">;
-type Job={reportInReminder?:boolean;confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"staging_failed"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
+type Job={workerReport?:DeliveryParams["workerReport"];uploadState?:"pending"|"succeeded"|"failed"|"interrupted";reportInReminder?:boolean;confirmedGrant?:ConfirmedDocumentGrant;uploadFailure?:DocumentDeliveryFailure;id:string;source:Source;sessionId?:string;agentId:string;text:string;mediaUrls?:string[];documentId:string;url:string;workspaceDir?:string;messageId?:string;completionJobId?:string;publishedText?:string;displayPrefix?:string;finalText?:string;editAttempts?:number;retryAt?:number;status:"draft"|"staging_failed"|"queued"|"working"|"done"|"interrupted"|"cancelled"|"update_failed"};
 export type StagedDocument={id:string;text:string};
 function database(stateDir:string) {
   const dir=join(stateDir,"feishu-document-uploads");mkdirSync(dir,{recursive:true,mode:0o700});
@@ -37,8 +39,10 @@ function jobs(stateDir:string,filter?:{statuses?:string[];id?:string;message?:st
   }finally{db.close();}
 }
 
-/** Publish a small, readable cloud placeholder before any full report/file preparation. */
+/** Check file readability, then publish a placeholder before cloud preparation. */
 export async function stageBackgroundDocument(params:DeliveryParams & {stateDir:string;source:Source;sessionId?:string;agentId:string;completionJobId?:string}):Promise<StagedDocument|undefined> {
+  // Turn-scoped readers and grants cannot be serialized or silently dropped.
+  if(params.mediaAccess || params.mediaReadFile || params.mediaLocalRoots !== undefined)return;
   const account=resolveFeishuRuntimeAccount(params),config=account.config.documentDelivery;
   const workspaceDir=params.workspaceDir ?? config?.workspaceDir ?? account.config.workspaceSync?.root ?? params.cfg.agents?.defaults?.workspace;
   // A mixed reply uses ordinary delivery so its images are not lost in the upload queue.
@@ -52,6 +56,23 @@ export async function stageBackgroundDocument(params:DeliveryParams & {stateDir:
   for(const path of candidates)if(await isExistingLocalFile(path))localPaths.push(path);
   if(!localPaths.length)return;
   const check=()=>{params.signal?.throwIfAborted();if(!isCompletionSourceCurrent(params.source,params.stateDir))throw new DOMException("Task source invalid","AbortError");};
+  // Validate host file authority before publishing a cloud report link. This does
+  // not grant paths inferred from model text or serialize temporary file readers.
+  try {
+    const mediaLocalRoots=config?.localRoots ?? getAgentScopedMediaLocalRoots(params.cfg,params.agentId);
+    const maxBytes=Math.min((config?.maxFileMb ?? 20)*1024*1024,20*1024*1024);
+    for(const path of localPaths) {
+      check();
+      await (params.mediaRuntime ?? getFeishuRuntime().media).loadWebMedia(path,buildOutboundMediaLoadOptions({maxBytes,optimizeImages:false,mediaLocalRoots}));
+    }
+  } catch(error) {
+    check();
+    const failure=documentDeliveryFailure(error,"read_files");
+    params.onFailure?.(failure);
+    console.warn(`Feishu report preflight failed: stage=${failure.stage} code=${failure.code ?? "unknown"}`);
+    // Normal delivery retains its size/attachment fallback and exact diagnostic.
+    return;
+  }
   const started=Date.now();
   const client=createFeishuClient(account);
   const recipient=config?.grantToTarget!==false?resolveDocumentPermissionRecipient(params.to,params.source):undefined;
@@ -59,7 +80,7 @@ export async function stageBackgroundDocument(params:DeliveryParams & {stateDir:
     const title=reportDocumentTitle(basename(localPaths[0]),config?.titleTemplate,params.workerReport);
     check();const doc=await createDoc(client,title,config?.folderToken,{grantToRequester:false});
     const url=(config?.urlBase ?? (account.domain==="lark"?"https://www.larksuite.com":"https://feishu.cn")).replace(/\/$/,"")+"/docx/"+doc.document_id;
-    const job:Job={id:randomUUID(),source:params.source,agentId:params.agentId,sessionId:params.sessionId,text:params.text ?? "",mediaUrls:params.mediaUrls,documentId:doc.document_id,url,workspaceDir,completionJobId:params.completionJobId,status:"draft"};
+    const job:Job={id:randomUUID(),source:params.source,agentId:params.agentId,sessionId:params.sessionId,text:params.text ?? "",mediaUrls:params.mediaUrls,documentId:doc.document_id,url,workspaceDir,completionJobId:params.completionJobId,workerReport:params.workerReport,uploadState:"pending",status:"draft"};
     save(params.stateDir,job);
     let phase="write_placeholder";
     try {
@@ -111,15 +132,20 @@ export function registerDocumentBackground(api:OpenClawPluginApi) {
       await withFeishuRequestContext(check,async()=>{
         let text=job.finalText ?? (job.displayPrefix ?? "")+failedDocumentText(job.text,job.url,job.workspaceDir),success=false,skippedNotice="";
         if(!job.finalText && !interrupted) {
-          const document=await prepareFeishuDocumentDelivery({cfg,accountId:job.source.accountId,agentId:job.agentId,mediaRuntime:core.media,to:"chat:"+job.source.chatId,recipientContext:job.source,text:job.text,mediaUrls:job.mediaUrls,workspaceDir:job.workspaceDir,existingDocumentId:job.documentId,confirmedGrant:job.confirmedGrant,signal,onFailure:failure=>{job.uploadFailure=failure;save(stateDir,job);console.warn(`Feishu background document upload failed: stage=${failure.stage} code=${failure.code ?? "unknown"}`);}});
+          const document=await prepareFeishuDocumentDelivery({cfg,accountId:job.source.accountId,agentId:job.agentId,mediaRuntime:core.media,to:"chat:"+job.source.chatId,recipientContext:job.source,text:job.text,mediaUrls:job.mediaUrls,workspaceDir:job.workspaceDir,existingDocumentId:job.documentId,workerReport:job.workerReport,confirmedGrant:job.confirmedGrant,signal,onFailure:failure=>{job.uploadFailure=failure;save(stateDir,job);console.warn(`Feishu background document upload failed: stage=${failure.stage} code=${failure.code ?? "unknown"}`);}});
           success=Boolean(document?.documentId);
+          job.uploadState=success?"succeeded":"failed";
+          if(success)delete job.uploadFailure;
           if(success)text=(job.displayPrefix ?? "")+document!.text;
           else {skippedNotice=document?.skippedAttachmentNotice ?? "";text+=skippedNotice;}
         }
         check();
+        if(interrupted && !job.finalText)job.uploadState="interrupted";
         if(!job.finalText && !success) {
           const client=createFeishuClient(resolveFeishuRuntimeAccount({cfg,accountId:job.source.accountId}));
-          try {await writeDoc(client,job.documentId,"上传未完成\n\n"+(interrupted?"服务重启中断了上传。":"完整报告上传失败或文件不存在。")+"总结已经交付，请联系管理员核对报告。"+skippedNotice,20*1024*1024,30000);} catch {check();console.warn("Feishu upload status document update failed");}
+          const reason=job.uploadFailure?.code==="path-not-allowed"?"报告已生成，但读取目录未获授权；请核对 documentDelivery.localRoots。":job.uploadFailure?.stage==="read_files"?"报告文件读取失败，请核对文件可用性及读取权限。":"完整报告上传失败或文件不存在。";
+          if(job.uploadFailure?.code==="path-not-allowed")text+="\n报告读取目录未获授权（path-not-allowed），请管理员核对报告目录配置。";
+          try {await writeDoc(client,job.documentId,"上传未完成\n\n"+(interrupted?"服务重启中断了上传。":reason)+"总结已经交付，请联系管理员核对报告。"+skippedNotice,20*1024*1024,30000);} catch {check();console.warn("Feishu upload status document update failed");}
         }
         if(job.reportInReminder)text=splitCompletionReportLink(text).text;
         job.finalText=text;save(stateDir,job);

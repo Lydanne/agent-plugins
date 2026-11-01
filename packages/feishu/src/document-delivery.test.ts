@@ -179,7 +179,7 @@ it("ignores remote media URLs and retains errors for existing local files with d
  expect(await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',mediaUrls:['https://example.test/file.csv']})).toBeUndefined();
  expect(mocks.stat).not.toHaveBeenCalled();expect(mocks.load).not.toHaveBeenCalled();
  mocks.load.mockRejectedValue(Object.assign(new Error('access denied'),{code:'path-not-allowed'}));
- expect((await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[report](/workspace/report.md)'}))?.text).toContain('附件未成功交付');
+ expect((await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[report](/workspace/report.md)'}))?.text).toContain('path-not-allowed');
  expect(mocks.create).not.toHaveBeenCalled();
 });
 it("does not claim successful delivery when attachment binding or target permissions fail",async()=>{
@@ -259,10 +259,10 @@ it("reads the owning agent's external workspace through the bound runtime while 
   expect(mocks.load).not.toHaveBeenCalled();expect(mocks.write.mock.calls[0][2]).toContain('# Verified report');
   const missing=await prepareFeishuDocumentDelivery({cfg,agentId:'main',mediaRuntime,to:'chat:oc_target',text:`[Missing](${join(root,'absent.md')})`});
   expect(missing).toEqual({text:'Missing (absent.md)',mediaUrls:[]});expect(mocks.create).toHaveBeenCalledOnce();
-  expect((await prepareFeishuDocumentDelivery({cfg,agentId:'main',mediaRuntime,to:'chat:oc_target',text:`[Other](${other})`}))?.text).toContain('附件未成功交付');
+  expect((await prepareFeishuDocumentDelivery({cfg,agentId:'main',mediaRuntime,to:'chat:oc_target',text:`[Other](${other})`}))?.text).toContain('path-not-allowed');
   expect(mocks.create).toHaveBeenCalledOnce();
   mocks.account.mockReturnValue({accountId:'restricted',config:{documentDelivery:{localRoots:[unrelated]}}});
-  expect((await prepareFeishuDocumentDelivery({cfg,agentId:'main',mediaRuntime,to:'chat:oc_target',text:`[Report](${report})`}))?.text).toContain('附件未成功交付');
+  expect((await prepareFeishuDocumentDelivery({cfg,agentId:'main',mediaRuntime,to:'chat:oc_target',text:`[Report](${report})`}))?.text).toContain('path-not-allowed');
  } finally {rmSync(root,{recursive:true,force:true});rmSync(unrelated,{recursive:true,force:true});}
 });
 
@@ -424,7 +424,8 @@ it.each([false,true])('retains the primary report when supplementary evidence do
 });
 it('records the underlying local file rejection code rather than the generic dispatch wrapper',async()=>{
  mocks.load.mockRejectedValue(Object.assign(Error('private report'),{code:'path-not-allowed'}));
- const onFailure=vi.fn();await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[报告](/denied/report.md)',onFailure});
+ const onFailure=vi.fn();const result=await prepareFeishuDocumentDelivery({cfg:{},to:'chat:oc_target',text:'[报告](/denied/report.md)',onFailure});
+ expect(result?.text).toContain('path-not-allowed');expect(result?.text).toContain('documentDelivery.localRoots');expect(result?.text).not.toContain('private report');
  expect(onFailure).toHaveBeenCalledWith({stage:'read_files',code:'path-not-allowed'});
  expect(mocks.write).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();
 });

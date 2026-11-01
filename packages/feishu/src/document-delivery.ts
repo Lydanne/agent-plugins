@@ -303,8 +303,10 @@ export async function prepareFeishuDocumentDelivery(params: DeliveryParams): Pro
  } catch(error) {
   // File preparation cannot restore a withdrawn task's right to send a reply.
   assertDeliveryCurrent(params,error);
-  params.onFailure?.(documentDeliveryFailure(error));
-  return {text:[fallbackText,"附件未成功交付，已改为文字结果。"].filter(Boolean).join("\n\n")+skippedNotice,mediaUrls:split.images,...(skippedNotice?{skippedAttachmentNotice:skippedNotice}:{})};
+  const failure=documentDeliveryFailure(error);
+  params.onFailure?.(failure);
+  const notice=failure.code==="path-not-allowed"?"报告读取目录未获授权（path-not-allowed），请管理员核对 documentDelivery.localRoots；总结已保留。":"附件未成功交付，已改为文字结果。";
+  return {text:[fallbackText,notice].filter(Boolean).join("\n\n")+skippedNotice,mediaUrls:split.images,...(skippedNotice?{skippedAttachmentNotice:skippedNotice}:{})};
  }
 }
 

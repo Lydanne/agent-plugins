@@ -164,7 +164,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      let staged,stagingFailed=false;
      const workerReport={sessionName:event.topic?.trim() || event.request?.taskSummary || event.request?.task,finishedAt:event.finishedAt ?? Date.now()};
      try {
-      staged=canStage ? await stageBackgroundDocument({cfg:completionCfg,accountId:p.accountId,agentId,stateDir,source:p,sessionId,completionJobId:event.jobId,to:"chat:"+p.chatId,text:finalText,workerReport,
+      staged=canStage ? await stageBackgroundDocument({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,stateDir,source:p,sessionId,completionJobId:event.jobId,to:"chat:"+p.chatId,text:finalText,workerReport,
        mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal}) : undefined;
      } catch {signal.throwIfAborted();stagingFailed=true;}
      const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,workerReport,

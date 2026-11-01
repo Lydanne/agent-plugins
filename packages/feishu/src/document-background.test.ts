@@ -4,7 +4,8 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import type {OpenClawPluginApi} from "openclaw/plugin-sdk/channel-entry-contract";
-const mocks=vi.hoisted(()=>({valid:true,session:"current",enabled:true,create:vi.fn(),write:vi.fn(),permission:vi.fn(),prepare:vi.fn(),edit:vi.fn()}));
+const mocks=vi.hoisted(()=>({valid:true,session:"current",enabled:true,load:vi.fn(),create:vi.fn(),write:vi.fn(),permission:vi.fn(),prepare:vi.fn(),edit:vi.fn()}));
+vi.mock("./runtime.js",()=>({getFeishuRuntime:()=>({media:{loadWebMedia:mocks.load}})}));
 vi.mock("./source-task.js",()=>({isCompletionSourceCurrent:()=>mocks.valid}));
 vi.mock("./accounts.js",()=>({resolveFeishuRuntimeAccount:()=>({configured:true,accountId:"a",config:{documentDelivery:{enabled:mocks.enabled}},domain:"feishu"})}));
 vi.mock("./client.js",()=>({createFeishuClient:()=>({drive:{permissionMember:{create:mocks.permission}}})}));
@@ -24,6 +25,7 @@ async function stage(completionJobId?:string) {return (await stageBackgroundDocu
 function rows():{id:string;status:string;documentId:string;messageId?:string}[] {const db=new DatabaseSync(join(root,"feishu-document-uploads","uploads.sqlite"));try{return (db.prepare("SELECT payload FROM uploads").all() as {payload:string}[]).map(row=>JSON.parse(row.payload));}finally{db.close();}}
 beforeEach(()=>{
  root=mkdtempSync(join(tmpdir(),"doc-background-"));file=join(root,"report.md");writeFileSync(file,"# 完整报告");
+ mocks.load.mockResolvedValue({buffer:Buffer.from("# report")});
  mocks.valid=true;mocks.session="current";mocks.enabled=true;vi.clearAllMocks();
  mocks.create.mockResolvedValue({document_id:"cloud"});mocks.write.mockResolvedValue({});mocks.permission.mockResolvedValue({code:0});mocks.edit.mockResolvedValue({messageId:"original"});
  mocks.prepare.mockResolvedValue({text:"核验总结\n[完整报告](https://feishu.cn/docx/cloud)",documentId:"cloud"});
@@ -49,8 +51,9 @@ it('names the placeholder after its Worker session and Beijing completion date b
  expect(mocks.create).toHaveBeenCalledWith(expect.anything(),'订单导出排查 2026-10-29',undefined,{grantToRequester:false});
  activateBackgroundDocument(root,pending,'original');start();
  await vi.waitFor(()=>expect(rows()[0].status).toBe('done'));
- expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({existingDocumentId:'cloud'}));
+ expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({existingDocumentId:'cloud',workerReport}));
  expect(mocks.create).toHaveBeenCalledOnce();
+ expect(rows()[0]).toMatchObject({uploadState:"succeeded"});
 });
 it.each(['p2p','private'] as const)('shares a %s placeholder with its trusted requester and carries the same grant into upload',async chatType=>{
  const privateSource={...source,chatType,senderId:'ou_requester'};
@@ -213,4 +216,35 @@ it('does not reinsert a report delivered in the reminder after upload',async()=>
  expect(JSON.stringify(mocks.edit.mock.calls)).toContain('附件说明');
  expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain('[完整报告]');
  expect(rows()[0].finalText).toBe('核验总结\n\n附件说明');
+});
+
+it("does not drop turn-scoped file authority into a durable background job",async()=>{
+ for(const authority of [{mediaLocalRoots:[]},{mediaLocalRoots:[root]},{mediaReadFile:async()=>Buffer.from("report")},{mediaAccess:{localRoots:[root]}}]) {
+  const staged=await stageBackgroundDocument({cfg:{},stateDir:root,source,agentId:"main",to:"chat:chat",text:`[报告](${file})`,...authority});
+  expect(staged).toBeUndefined();
+ }
+ expect(mocks.create).not.toHaveBeenCalled();
+});
+it("records report failure separately from successful failure-notice delivery",async()=>{
+ mocks.prepare.mockImplementation(async(params)=>{params.onFailure({stage:"read_files",code:"path-not-allowed"});return {text:"fallback",mediaUrls:[]};});
+ const pending=await stage();activateBackgroundDocument(root,pending,"original");start();
+ await vi.waitFor(()=>expect(rows()[0].status).toBe("done"));
+ expect(rows()[0]).toMatchObject({uploadState:"failed",uploadFailure:{stage:"read_files",code:"path-not-allowed"}});
+ expect(mocks.write.mock.calls.at(-1)![2]).toContain("读取目录未获授权");
+ expect(JSON.stringify(mocks.edit.mock.calls)).toContain("path-not-allowed");
+ service!.stop();service=undefined;start();
+ await new Promise(r=>setTimeout(r,300));expect(mocks.prepare).toHaveBeenCalledOnce();
+});
+
+it("rejects denied report paths before creating or sharing a placeholder",async()=>{
+ mocks.load.mockRejectedValueOnce(Object.assign(Error("private details"),{code:"path-not-allowed"}));
+ const onFailure=vi.fn();
+ expect(await stageBackgroundDocument({cfg:{},stateDir:root,source,agentId:"main",to:"chat:chat",text:`[报告](${file})`,onFailure})).toBeUndefined();
+ expect(onFailure).toHaveBeenCalledWith({stage:"read_files",code:"path-not-allowed"});
+ expect(mocks.create).not.toHaveBeenCalled();expect(mocks.permission).not.toHaveBeenCalled();
+});
+it("uses the bound host runtime for report preflight",async()=>{
+ const loadWebMedia=vi.fn().mockResolvedValue({buffer:Buffer.from("# report")});
+ const result=await stageBackgroundDocument({cfg:{},stateDir:root,source,agentId:"main",to:"chat:chat",text:`[报告](${file})`,mediaRuntime:{loadWebMedia}});
+ expect(result).toBeDefined();expect(loadWebMedia).toHaveBeenCalledOnce();expect(mocks.load).not.toHaveBeenCalled();
 });
