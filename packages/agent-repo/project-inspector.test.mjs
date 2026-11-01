@@ -192,3 +192,12 @@ test('management queries and project inspection share the global default namespa
  assert.equal((await inspector.knowledgeGraph({...f.ctx,payload:{projectId:'a'}})).nodes[0].uid,'global.guide');
  assert.equal((await inspector.detail({...f.ctx,payload:{projectId:'a'}})).inspection.projectMetadata.knowledge.namespaceSource,'global');
 });
+
+test('management path metadata is in the scoped envelope and never rewrites canonical action data',async()=>{
+ const actions=[],raw={cwd:'/agents/main/projects/demo'},context={agentId:'main',sessionKey:'agent:main:management'};
+ registerProjectInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>raw},{getAgentRepoRoot:ctx=>'/agents/'+ctx.agentId});
+ const action=actions.find(a=>a.id==='projects-list'),response=await action.handler(context);assert.equal(response.agentRepoRoot,'/agents/main');assert.deepEqual(action.requiredScopes,['operator.read']);
+ assert.deepEqual(await readInspectionResponse((name,payload)=>actions.find(a=>a.id==='projects-'+name).handler({...context,payload}),'list',{}),raw);assert.equal(raw.cwd,'/agents/main/projects/demo');
+ const denied=await action.handler({...context,sessionKey:'agent:other:management'});assert.equal(denied.ok,false);assert.equal(denied.agentRepoRoot,undefined);
+ const fallback=[];registerProjectInspector({registerSessionAction:a=>fallback.push(a)},{list:async()=>raw},{getAgentRepoRoot:()=>{throw Error('path unavailable');}});const unchanged=await fallback.find(a=>a.id==='projects-list').handler(context);assert.equal(unchanged.ok,true);assert.equal(unchanged.agentRepoRoot,undefined);
+});

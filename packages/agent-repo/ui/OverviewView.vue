@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,reactive,computed,onMounted,onBeforeUnmount} from 'vue';
-import {Button,useHostContext,Card,PageHeader} from '@openclaw-plugins/control-ui-kit';
+import {Button,useHostContext,Card,PageHeader,useRepositoryPaths} from '@openclaw-plugins/control-ui-kit';
 import {useManagementRequest} from './management-request';
 import {managementModules} from './management-model';
 import type {CatalogOverview,PeopleOverview,MaintenanceOverview,OverviewValues,OverviewSource} from './overview-model';
@@ -43,10 +43,11 @@ const issues=computed(()=>{
 });
 const info=computed(()=>{
  const c=values.catalog,s=c?.agentSkills,tasks=c?.scheduledTasks;
- return [['Agent 工作区',c?.root??(errors.catalog?'不可读取':'读取中…')],['项目登记',c?(c.registrationCommitted?'已提交':'待提交'):'—'],['角色技能',s?.state==='unavailable'?'不可扫描':s?s.skills.length+' 项 · 不含项目技能':'—'],['定时任务',tasks?(tasks.length?tasks.filter(t=>t.enabled).length+' 项启用 / '+tasks.length+' 项总计':'尚未配置定时计划'):'—']];
+ return [['Agent 工作区',c?.root?paths.display(c.root):(errors.catalog?'不可读取':'读取中…')],['项目登记',c?(c.registrationCommitted?'已提交':'待提交'):'—'],['角色技能',s?.state==='unavailable'?'不可扫描':s?s.skills.length+' 项 · 不含项目技能':'—'],['定时任务',tasks?(tasks.length?tasks.filter(t=>t.enabled).length+' 项启用 / '+tasks.length+' 项总计':'尚未配置定时计划'):'—']];
 });
 const label=(id:string)=>managementModules.find(item=>item.id===id)?.label??id;
 onMounted(refresh);onBeforeUnmount(()=>{generation++;});
+const paths=useRepositoryPaths();
 </script>
 <template>
  <section class="ar-overview" data-ocp-ui aria-label="AgentRepo 运行概览" :aria-busy="loading">

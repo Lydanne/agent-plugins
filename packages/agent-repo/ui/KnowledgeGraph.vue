@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,onBeforeUnmount,onMounted,ref,useId,watch} from 'vue';
-import {Button,Card,Badge,EmptyState,SearchField,StatusNotice,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,Card,Badge,EmptyState,SearchField,StatusNotice,useHostContext,useRepositoryPaths} from '@openclaw-plugins/control-ui-kit';
 import {useManagementRequest} from './management-request';
 import {layoutKnowledgeGraph} from './knowledge-graph-layout';
 import type {KnowledgeGraph as Graph} from './knowledge-model';
@@ -26,6 +26,7 @@ function pointerMove(event:PointerEvent){const d=drag.value;if(!d)return;const d
 function pointerUp(){suppressClick=drag.value?.moved??false;drag.value=undefined;}
 function svgKey(event:KeyboardEvent){if(event.target!==event.currentTarget)return;const direction:Record<string,[number,number]>={ArrowLeft:[-.1,0],ArrowRight:[.1,0],ArrowUp:[0,-.1],ArrowDown:[0,.1]};const move=direction[event.key];if(move){event.preventDefault();view.value={...view.value,x:view.value.x+move[0]*view.value.width,y:view.value.y+move[1]*view.value.height};}}
 watch(()=>props.projectId,load,{flush:'sync'});onMounted(load);
+const paths=useRepositoryPaths(),showPath=(value:unknown)=>safe(paths.display(value));
 </script>
 <template>
  <section class="kb-graph" aria-label="知识库图谱" :aria-busy="loading">
@@ -33,7 +34,7 @@ watch(()=>props.projectId,load,{flush:'sync'});onMounted(load);
   <p v-if="loading" role="status">正在构建文档引用图谱…</p>
   <StatusNotice v-if="error" tone="error">{{error}}<template #actions><Button variant="outline" @click="load">重试图谱</Button></template></StatusNotice>
   <template v-if="graph">
-   <div class="kb-graph-scope"><span>{{safe(graph.knowledgePath)}}</span><Badge variant="outline">{{safe(graph.metadataNamespace)}}</Badge><Badge variant="secondary">{{graph.normalized?'规范化知识库':'普通 wiki'}}</Badge></div>
+   <div class="kb-graph-scope"><span>{{showPath(graph.knowledgePath)}}</span><Badge variant="secondary">{{graph.normalized?'规范化知识库':'普通 wiki'}}</Badge></div>
    <EmptyState v-if="!graph.available" title="项目尚无知识库目录" description="请添加 wiki 目录或配置知识库路径。"/>
    <EmptyState v-else-if="!nodes.length" title="知识库暂无 Markdown 条目。" description="添加文档与引用关系后，可在此查看图谱。"/>
    <template v-else>

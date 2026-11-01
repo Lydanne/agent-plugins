@@ -1,10 +1,12 @@
 import {themeVariables} from './theme-tokens';
-import {createApp, shallowRef, inject, type Component, type InjectionKey, type ShallowRef} from 'vue';
+import {createApp, computed, shallowRef, inject, type Component, type InjectionKey, type ShallowRef} from 'vue';
 import type {ControlUiViewContext, ControlUiView} from 'openclaw/plugin-sdk/control-ui';
+import {createRepositoryPaths,repositoryPathsKey,type RepositoryPaths} from './repository-paths';
 const contextKey:InjectionKey<ShallowRef<ControlUiViewContext>>=Symbol('control-ui-context');
 const overlayKey:InjectionKey<HTMLElement>=Symbol('control-ui-overlay');
 export function useHostContext(){const context=inject(contextKey);if(!context)throw Error('Missing Control UI host');return context;}
 export function useOverlayTarget(){const target=inject(overlayKey);if(!target)throw Error('Missing Control UI overlay');return target;}
+export function useRepositoryPaths():RepositoryPaths{return inject(repositoryPathsKey,undefined)??{root:computed(()=>undefined),accept:()=>{},consume:()=>{},sync:()=>{},display:value=>String(value??'')};}
 function snapshotWithMethods<T extends object>(value:T):T{
  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,typeof item==='function'?item.bind(value):item])) as T;
 }
@@ -21,6 +23,7 @@ function mountInstance(component:Component,options:{density?:'sidebar'|'page'},c
   container.append(root);document.body.append(overlay);
   const snapshot=()=>({...current,host:{...snapshotWithMethods(current.host),connection:{...current.host.connection},agents:snapshotWithMethods(current.host.agents),sessions:snapshotWithMethods(current.host.sessions)},props:{...current.props}});
   const context=shallowRef(snapshot());
+  const repositoryPaths=createRepositoryPaths(context);
   const syncTheme=()=>{
    if(disposed)return;
    const style=document.defaultView!.getComputedStyle(root);
@@ -28,7 +31,7 @@ function mountInstance(component:Component,options:{density?:'sidebar'|'page'},c
     const value=style.getPropertyValue(name);if(value)overlay.style.setProperty(name,value);else overlay.style.removeProperty(name);
    }
   };
-  const update=(next:ControlUiViewContext)=>{if(disposed)return;current=next;context.value=snapshot();syncTheme();};
+  const update=(next:ControlUiViewContext)=>{if(disposed)return;current=next;context.value=snapshot();repositoryPaths.sync();syncTheme();};
   const feature=createApp(component);
   // Vue IDs are application-local. Plugin bundles may have independent Vue runtimes.
   const sequenceKey=Symbol.for('openclaw-plugins.control-ui-view-sequence.v1');
@@ -37,7 +40,7 @@ function mountInstance(component:Component,options:{density?:'sidebar'|'page'},c
   const sequence=typeof previous==='number'&&Number.isSafeInteger(previous)?previous+1:1;
   registry[sequenceKey]=sequence;feature.config.idPrefix='ocp-'+sequence;
 
-  feature.provide(contextKey,context);feature.provide(overlayKey,overlay);
+  feature.provide(contextKey,context);feature.provide(overlayKey,overlay);feature.provide(repositoryPathsKey,repositoryPaths);
   let unsubscribe=()=>{},mounted=false;
   const signals=[...new Set([initial.signal,initial.host.signal].filter(Boolean))];
   const dispose=()=>{

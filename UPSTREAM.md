@@ -137,3 +137,5 @@ upstream MIT license; it is not an installed-runtime patch or automatic deploy.
 使用 [markdown-it 15.0.3](https://github.com/markdown-it/markdown-it)（MIT，固定运行依赖，并打包进管理 UI）。保持默认 HTML 禁用，限制解析嵌套深度；本地适配器不使用 HTML 字符串注入，仅通过 Vue 文本节点和标签/属性白名单渲染，额外约束知识库路径、链接协议和图片加载。未修改上游源码，构建产物的 THIRD_PARTY_LICENSES.txt 包含实际打包依赖的许可证。
 
 - 知识库图谱复用 markdown-it 15.0.3 的 token 解析读取 Markdown 链接，保留默认 HTML 禁用；本地 SVG 布局为项目自实现，不增加远端图表脚本或第二套 UI 运行时。
+
+- 2026-11-01：共享 UI 增加按可信 AgentRepo 根目录格式化路径的展示适配。根目录作为只读会话操作的可选响应元数据传递，不重写原始业务结果或路径参数；AgentRepo 与 Worker 复用同一相对路径规则与权限生命周期。

@@ -593,7 +593,7 @@ openclaw agent-repo knowledge-validate --agent alice --params '{"projectId":"dem
 
 ### 管理面板中的知识库
 
-打开 OpenClaw 的 AgentRepo 管理中心，进入「知识库」。页面按当前 Agent 的已登记项目提供条目浏览、关键词搜索、Markdown 正文预览、标题目录、文档链接跳转和结构校验弹窗；多个项目需明确选择，单项目自动选中。默认读取项目 `wiki/`，兼容普通目录、独立 Git 知识库和规范化 Bundle，显示实际目录及生效的元数据命名空间（含 `project.json` 配置的 `x_xgj`）。
+打开 OpenClaw 的 AgentRepo 管理中心，进入「知识库」。页面按当前 Agent 的已登记项目提供条目浏览、关键词搜索、Markdown 正文预览、标题目录、文档链接跳转和结构校验弹窗；多个项目需明确选择，单项目自动选中。默认读取项目 `wiki/`，兼容普通目录、独立 Git 知识库和规范化 Bundle，目录以当前 AgentRepo 根为基准显示相对路径，页面不再单独显示 `x_agent` / `x_xgj` 标签；实际解析仍遵守全局、项目与 Bundle 配置。
 
 搜索按空白分词，各词均须匹配标题、UID、功能标识或正文；空搜索恢复全部条目。列表每页 20 条，正文每次最多 100 行，继续读取前核对文件 SHA-256，避免混合不同版本。正文先脱敏，再使用 markdown-it 15.0.3 解析成 Vue 文本和白名单语义节点，支持标题、列表、表格、引用、代码块及行内格式，可切换原文。Front Matter 单独折叠展示；HTML 与脚本保持文本，图片不自动加载。标题目录支持中文和重复标题；分段未读完时明确标注目录仅覆盖已加载正文。目录缺失、无结果、扫描不完整、读取失败和超长行截断均单独提示。
 
@@ -610,3 +610,9 @@ CLI 也支持 `openclaw agent-repo knowledge-list --agent alice --params '{"proj
 知识库顶部使用共享 Tabs 切换「文档 / 图谱」，两个视图共享当前项目选择。图谱按需读取本地文档快照，节点为 Markdown 文档，实线表示正文链接，虚线表示生效命名空间的 `relations`（references/part_of/depends_on/constrained_by/implements/supersedes），箭头由来源指向目标。支持标题/路径/UID 查找、缩放、拖动和方向键平移、适应画布；选择节点可查看关联并通过「打开文档」切回正文。文档索引也提供键盘可操作入口。
 
 `knowledge_graph` / `openclaw agent-repo knowledge-graph` 和管理动作 `knowledgeGraph` 只读当前登记项目，`limit` 默认及最多 100 篇，最多 1,000 条边、10,000 项引用；扫描仍受已有知识目录预算约束。图谱明确标注扫描不完整、数量截断、无效元数据与未解析引用。代码块、行内代码、图片、远程或越界链接、跨 Bundle 目标不成边；无法完整扫描时不推断 UID 唯一性，重复 UID 不任选目标。节点点击不会执行文档指令，图谱不代表内容事实已核验。
+
+### 管理界面的路径展示
+
+AgentRepo 与 Worker 的目录、技能路径、工作区路径、运行目录等路径字段统一以当前已绑定 AgentRepo 根为基准展示（例如 `projects/agent-plugins/wiki`），根目录自身显示 `.`。同卷外部路径显示为 `../` 相对路径；跨 Windows 盘符或根目录尚不可用时保留原值。根目录来自已授权读取响应的 `agentRepoRoot` 展示元数据，不额外请求目录、不推断宿主 HOME，也不提供路径访问授权。
+
+仅转换展示值。API 返回、原始正文/命令/诊断记录与操作参数保留原始路径；导航、导出和后端执行继续使用原数据，不能把界面相对路径当作新的工具范围。切换 Agent、隐藏页面或失去读取权限后清除旧根目录，延迟响应不能复用其他 Agent 的路径基准。

@@ -251,10 +251,11 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
  }
  return inspector;
 }
-export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDiagnosticTransferActive=()=>false}={}){
+export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDiagnosticTransferActive=()=>false,getAgentRepoRoot}={}){
  const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);if(!register){api.logger?.warn?.('Agent Repo panel unavailable: host lacks public session actions');return;}
  const transfers=new Map(),owner=ctx=>JSON.stringify([trustedAgentId(ctx),ctx.sessionKey??null,ctx.client?.connId??null]);
  const part=(id,value,index)=>({encoding:'json-chunks',transferId:id,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
+ async function pathContext(ctx){try{const root=await getAgentRepoRoot?.(ctx);return typeof root==='string'?{agentRepoRoot:root}:{};}catch{return {};}}
  for(const action of [...projectActions,...Object.keys(inspector).filter(key=>key.startsWith('diagnostic'))])register({id:'projects-'+action,description:'Current Agent repository catalog and diagnostic logs',requiredScopes:[['directorySync','recycleRestore','recycleConfigure','workspacePoolSave','scheduleManage','clearRepositoryLogs','syncPeople','updatePerson','deletePerson','maintenanceRun','diagnosticStart','diagnosticRenew','diagnosticClearHistory'].includes(action)?'operator.write':'operator.read'],handler:async ctx=>{
   try{
    const scope=owner(ctx);for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);
@@ -264,7 +265,7 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDia
    const text=JSON.stringify(result);if(text.length>inspectionChunkSize*inspectionMaxChunks)throw Error('Catalog exceeds transfer budget');
    const id=randomUUID(),value={owner:scope,text,expiresAt:now()+120000,...(action==='diagnosticRead'?{diagnosticLeaseId:result.leaseId}:{})};
    if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,value);}
-   return {ok:true,result:part(id,value,0)};
+   return {ok:true,...await pathContext(ctx),result:part(id,value,0)};
   }catch(error){if(action.startsWith('knowledge'))return {ok:false,code:'KNOWLEDGE_UNAVAILABLE',error:'知识库读取失败，请核对项目、元数据配置与目录权限后重试。'};if(action.startsWith('recycle'))return {ok:false,code:'RECYCLE_UNAVAILABLE',error:'回收站操作未完成，请刷新核对权限、来源、版本及运行状态；结果不明时不要重复提交。'};if(action==='audit')return {ok:false,code:'AUDIT_UNAVAILABLE',error:'审计读取失败，请核对筛选条件、权限和审计来源状态。'};if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['directorySyncInfo','directorySync','entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
  }});
 }

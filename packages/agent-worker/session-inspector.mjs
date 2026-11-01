@@ -3,12 +3,12 @@ import {automationDeletionBlocked} from './task-service/deletion.mjs';
 import {createSessionDeletion,sessionDeletionState,sessionSupplements,sessionSubmissionState} from './session-deletion.mjs';
 import {collaborationDiagnostics} from './collaboration-diagnostics.mjs';
 import {createAgentTaskInspector} from './agent-task-inspector.mjs';
-import {trustedAgentId} from './dist/agent-repo-api.mjs';
+import {trustedAgentId,getAgentRepoService} from './dist/agent-repo-api.mjs';
 import {bindingKey,modelFields} from './project-binding.mjs';
 import {requestKeyFor} from './jobs.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import {inspectionChunkSize,inspectionMaxChunks} from './inspection-transport.mjs';
-import {readdir,readFile,stat} from 'node:fs/promises';
+import {readdir,readFile,stat,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
 const uuid=/^[0-9a-f-]{36}$/i;
 const active=new Set(['queued','running','cancelling','unknown','awaiting_main','awaiting_user']);
@@ -25,6 +25,7 @@ function listProgress(job){
  return !text||text.startsWith('{')?'正在执行':text.slice(0,160);
 }
 const hash=value=>createHash('sha256').update(value).digest('hex');
+async function repositoryPathContext(context){try{const root=getAgentRepoService(context,{required:false})?.root;return root?{agentRepoRoot:await realpath(root)}:{};}catch{return {};}}
 export function redactInspection(value){
  if(typeof value==='string')return value.replace(/\b(Bearer\s+)\S+/gi,'$1[redacted]').replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)([^\s,;]+)/gi,'$1[redacted]').replace(/([?&](?:token|key|signature|access_token)=)[^&#\s]+/gi,'$1[redacted]');
  if(Array.isArray(value))return value.map(redactInspection);
@@ -147,7 +148,7 @@ export function registerInspector(api,inspector,{now=()=>Date.now()}={}){
     while(transfers.size>=4||[...transfers.values()].reduce((sum,value)=>sum+value.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);
     transfers.set(transferId,value);
    }
-   return {ok:true,result:part(transferId,value,0)};
+   return {ok:true,...await repositoryPathContext(context),result:part(transferId,value,0)};
   }
   catch(error){if(action==='deleteSession')return {ok:false,error:[
     '请确认要删除的具体会话。','会话不存在或已经删除，请刷新列表。','会话项目不匹配，请刷新列表。','会话已变化，请刷新后重新确认删除。','旧执行器仍占用存储，请先处理原任务。','会话仍有未结束或状态未知的任务，请先处理原任务。','会话仍有待交付或待核查的结果，请先处理交付状态。'

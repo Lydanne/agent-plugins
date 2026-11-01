@@ -1,10 +1,11 @@
 import {computed,ref,shallowRef,reactive,watch,onMounted,onBeforeUnmount,nextTick} from 'vue';
-import {useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {useHostContext,useRepositoryPaths} from '@openclaw-plugins/control-ui-kit';
 import {readInspectionResponse} from '../inspection-transport.mjs';
 import {currentUiTarget} from '../../agent-repo-api/ui-navigation.mjs';
 import {activeStatuses,sessionKey,type SessionRow,type SessionList,type DetailPage,type TaskRecord,type TaskSummary,type OriginalMessage,type MessageEntry} from './models';
 export function useWorkerPanel(projectPage:()=>boolean){
  const context=useHostContext(),root=ref<HTMLElement>(),scroll=ref<HTMLElement>();
+ const paths=useRepositoryPaths();
  const target=computed<Readonly<Record<string,string|undefined>>>(()=>projectPage()?{...context.value.props,...currentUiTarget(context.value)}:context.value.props);
  const binding=computed(()=>JSON.stringify([target.value.agentId,target.value.sessionKey,target.value.projectId,target.value.topic,target.value.jobId,target.value.executionScope,target.value.modelSessionScope]));
  const writable=computed(()=>context.value.host.connection.canWrite===true);
@@ -18,7 +19,7 @@ export function useWorkerPanel(projectPage:()=>boolean){
  const validScope=(key:string)=>alive&&binding.value===key&&context.value.presented&&context.value.host.connection.canRead&&!context.value.signal.aborted;
  async function invoke<T>(action:string,payload:Record<string,unknown>){
   const key=binding.value,host=context.value.host,owner={...target.value};
-  const result=await readInspectionResponse<T>((name,value)=>{context.value.signal.throwIfAborted();if(!validScope(key))throw Error('会话已切换或读取权限失效');return host.request('plugins.sessionAction',{pluginId:'agent-worker',actionId:'inspect-'+name,sessionKey:owner.sessionKey,agentId:owner.agentId,payload:JSON.parse(JSON.stringify(value)) as Record<string,unknown>});},action,payload);
+  const result=await readInspectionResponse<T>(async(name,value)=>{context.value.signal.throwIfAborted();if(!validScope(key))throw Error('会话已切换或读取权限失效');const response=await host.request('plugins.sessionAction',{pluginId:'agent-worker',actionId:'inspect-'+name,sessionKey:owner.sessionKey,agentId:owner.agentId,payload:JSON.parse(JSON.stringify(value)) as Record<string,unknown>});if(!validScope(key))throw Error('会话已切换或读取权限失效');paths.consume(owner.agentId,response);return response;},action,payload);
   if(!validScope(key))throw Error('会话已切换或读取权限失效');return result;
  }
  const projects=computed(()=>[...new Set([...projectIds.value,project.value].filter(Boolean))]);

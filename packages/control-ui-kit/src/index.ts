@@ -1,4 +1,5 @@
-export {mountVueView, useHostContext, useOverlayTarget} from './host';
+export {mountVueView, useHostContext, useOverlayTarget,useRepositoryPaths} from './host';
+export {relativeRepositoryPath} from './repository-paths';
 export {Button} from './components/button';
 export {default as Dialog} from './components/Dialog.vue';
 export {default as ActionMenu} from './components/ActionMenu.vue';

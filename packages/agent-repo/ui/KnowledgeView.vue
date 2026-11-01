@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,onMounted,watch} from 'vue';
-import {Button,Dialog,Tabs,PageHeader,SearchField,NativeSelect,Card,Badge,EmptyState,StatusNotice,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,Dialog,Tabs,PageHeader,SearchField,NativeSelect,Card,Badge,EmptyState,StatusNotice,useHostContext,useRepositoryPaths} from '@openclaw-plugins/control-ui-kit';
 import KnowledgeMarkdown from './KnowledgeMarkdown.vue';
 import KnowledgeGraph from './KnowledgeGraph.vue';
 import type {KnowledgeLink} from './knowledge-markdown';
@@ -56,6 +56,7 @@ async function validate(){
 }
 watch(projectId,()=>{input.value='';query.value='';closeValidation();void load();},{flush:'sync'});
 onMounted(catalog);
+const paths=useRepositoryPaths(),showPath=(value:unknown)=>safe(paths.display(value));
 </script>
 <template>
  <section class="ar-knowledge" aria-label="项目知识库">
@@ -74,7 +75,7 @@ onMounted(catalog);
   <StatusNotice v-if="listError" tone="error">{{listError}}<template #actions><Button variant="outline" @click="load()">重试列表</Button></template></StatusNotice>
   <p v-if="loading" role="status">正在读取知识条目…</p>
   <template v-if="page">
-   <div class="kb-location"><span>{{safe(page.knowledgePath)}}</span><Badge variant="secondary">{{page.normalized?'规范化知识库':'普通 wiki'}}</Badge><Badge variant="outline">{{safe(page.metadataNamespace)}}</Badge></div>
+   <div class="kb-location"><span>{{showPath(page.knowledgePath)}}</span><Badge variant="secondary">{{page.normalized?'规范化知识库':'普通 wiki'}}</Badge></div>
    <EmptyState v-if="!page.available" title="项目尚无知识库目录" description="请添加 wiki 目录或配置知识库路径。" />
    <template v-else>
     <StatusNotice v-if="!page.complete" tone="warning" title="扫描未完成">以下结果可能不完整。请检查目录权限、链接与文件大小。</StatusNotice>
@@ -99,12 +100,12 @@ onMounted(catalog);
   </Tabs>
   <Dialog :open="validationOpen" :session-scoped="false" title="知识库结构校验" description="检查当前项目的本地文档结构与引用。" size="detail" @update:open="closeValidation">
    <div class="kb-validation" aria-label="知识库结构校验结果" :aria-busy="validating">
-    <p class="kb-note">项目：{{safe(projectId)}}<template v-if="validation"> · {{safe(validation.metadataNamespace)}}</template></p>
+    <p class="kb-note">项目：{{safe(projectId)}}</p>
     <p v-if="validating" role="status">正在校验知识库结构…</p>
     <StatusNotice v-if="validationError" tone="error">{{validationError}}</StatusNotice>
     <template v-if="validation">
      <StatusNotice :tone="validation.valid===true?'info':validation.valid===null?'warning':'error'" :title="!validation.available?'知识库目录不存在':validation.valid===null?'校验不完整':validation.valid?'结构校验通过':'存在结构问题'">{{validation.errors?.length??0}} 项错误 / {{validation.warnings?.length??0}} 项提醒</StatusNotice>
-     <p class="kb-note">{{safe(validation.knowledgePath)}}</p>
+     <p class="kb-note">{{showPath(validation.knowledgePath)}}</p>
      <StatusNotice v-if="!validation.complete" tone="warning">扫描未完成，结果可能不完整。</StatusNotice>
      <ul v-if="validation.errors?.length||validation.warnings?.length"><li v-for="(issue,i) in [...(validation.errors??[]),...(validation.warnings??[])]" :key="i">{{safe(issue.path)}} · {{safe(issue.code)}}</li></ul>
     </template>
