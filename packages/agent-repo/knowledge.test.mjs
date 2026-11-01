@@ -16,6 +16,7 @@ test('plain wiki supports Unicode literal search, stable paging and bounded line
  const a=await f.query({action:'knowledge_search',query:'附件 持久化',limit:1});assert.equal(a.total,2);assert.equal(a.entries[0].path,'a.md');assert.equal(a.nextOffset,1);assert.equal(a.normalized,false);
  const b=await f.query({action:'knowledge_search',query:'附件 持久化',limit:1,offset:1});assert.equal(b.entries[0].path,'b.md');assert.equal(a.revision,b.revision);
  const r=await f.query({action:'knowledge_read',path:'a.md',startLine:2,maxLines:1});assert.equal(r.content,'持久化修复');assert.equal(r.nextLine,3);
+ const listing=await f.query({action:'knowledge_list',limit:1});assert.equal(listing.total,2);assert.equal(listing.entries[0].path,'a.md');assert.equal(listing.entries[0].line,1);assert.equal(listing.nextOffset,1);assert.equal((await f.query({action:'knowledge_list',limit:1,offset:1})).entries[0].path,'b.md');await assert.rejects(f.query({action:'knowledge_list',query:'ignored'}));
  const v=await f.query({action:'knowledge_validate'});assert.equal(v.valid,true);
 });
 test('normalized JSON-compatible and YAML frontmatter both support UID reads',async t=>{

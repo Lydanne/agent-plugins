@@ -92,4 +92,4 @@ Main 向 Worker 交接选定项目、条目路径、必要摘录、来源及未�
 
 ## 原生知识接口与命名空间
 
-插件现提供 knowledge_search/read/validate；完整参数与限制见 agent-repo README。project.json 的 knowledge.metadata_namespace 可设置 x_xgj，优先于 Bundle 声明，缺省为 x_agent。不自动迁移已有字段。普通 wiki 可直接搜索读取；有 Bundle 时按所选命名空间做结构校验，部分扫描或目录缺失不算校验通过。该功能不执行知识库中的脚本或指令。
+插件现提供 knowledge_list/search/read/validate；完整参数与限制见 agent-repo README。project.json 的 knowledge.metadata_namespace 可设置 x_xgj，优先于 Bundle 声明，缺省为 x_agent。不自动迁移已有字段。普通 wiki 可直接搜索读取；有 Bundle 时按所选命名空间做结构校验，部分扫描或目录缺失不算校验通过。该功能不执行知识库中的脚本或指令。

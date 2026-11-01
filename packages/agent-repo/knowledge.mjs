@@ -3,7 +3,7 @@ import {constants} from 'node:fs';
 import {resolve,relative,isAbsolute,sep,dirname,basename} from 'node:path';
 import {createHash} from 'node:crypto';
 import {parseDocument} from 'yaml';
-export const knowledgeActions=['knowledge_search','knowledge_read','knowledge_validate'];
+export const knowledgeActions=['knowledge_list','knowledge_search','knowledge_read','knowledge_validate'];
 export const knowledgeParameters={path:{type:'string',maxLength:512,description:'知识目录内的相对 Markdown 路径，不能是绝对路径'},uid:{type:'string',maxLength:320,description:'所配置元数据命名空间内的稳定 UID'},startLine:{type:'integer',minimum:1},maxLines:{type:'integer',minimum:1,maximum:200}};
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const inside=(r,p)=>{const x=relative(r,p);return x===''||(!isAbsolute(x)&&x!=='..'&&!x.startsWith('..'+sep));};
@@ -132,18 +132,18 @@ async function validate(config,result) {
  return {valid:result.complete&&!truncated?errors.length===0:null,complete:result.complete&&!truncated,errors,warnings,scope:'local_structure',limitations:['remote_urls_not_checked','anchors_not_checked','business_truth_not_checked','cross_bundle_targets_not_resolved','outside_scope_file_targets_not_checked']};
 }
 export async function queryKnowledge(project,params) {
- const allowed={knowledge_search:['query','limit','offset'],knowledge_read:['path','uid','startLine','maxLines'],knowledge_validate:[]};
+ const allowed={knowledge_list:['limit','offset'],knowledge_search:['query','limit','offset'],knowledge_read:['path','uid','startLine','maxLines'],knowledge_validate:[]};
  const keys=allowed[params.action];if(!keys||Object.keys(params).some(k=>!['action','projectId',...keys].includes(k)))fail('KNOWLEDGE_ARGUMENT_INVALID');
  const config=await resolveKnowledgeConfig(project.paths.repository,project.paths.knowledge),result=await scan(config);
  const base={projectId:project.projectId,knowledgePath:config.root,metadataNamespace:config.metadataNamespace,namespaceSource:config.namespaceSource,normalized:config.normalized,available:result.available,complete:result.complete,revision:result.revision,issues:result.issues,authority:'reference_only'};
  if(!result.available)return {...base,...(params.action==='knowledge_validate'?{valid:null}:{}),reason:'knowledge_directory_missing'};
  if(params.action==='knowledge_validate')return {...base,...await validate(config,result),scanned:result.docs.length};
- if(params.action==='knowledge_search'){
-  if(typeof params.query!=='string'||!params.query.trim()||params.query.length>320)fail('KNOWLEDGE_ARGUMENT_INVALID');
-  const terms=params.query.trim().toLowerCase().split(/\s+/);if(terms.length>16)fail('KNOWLEDGE_ARGUMENT_INVALID');
+ if(params.action==='knowledge_search'||params.action==='knowledge_list'){
+  if(params.action==='knowledge_search'&&(typeof params.query!=='string'||!params.query.trim()||params.query.length>320))fail('KNOWLEDGE_ARGUMENT_INVALID');
+  const terms=params.action==='knowledge_list'?[]:params.query.trim().toLowerCase().split(/\s+/);if(terms.length>16)fail('KNOWLEDGE_ARGUMENT_INVALID');
   const offset=integer(params.offset,0,0,100000),limit=integer(params.limit,20,1,100);
   const matches=result.docs.flatMap(d=>{const hay=[d.title,d.uid,d.x.feature_id,d.text].join('\n').toLowerCase();if(!terms.every(t=>hay.includes(t)))return [];
-   const lines=d.text.split(/\r?\n/),i=lines.findIndex(l=>terms.some(t=>l.toLowerCase().includes(t)));return [{...summary(d),line:i+1,excerpt:(lines[i]??d.title).slice(0,240)}];});
+   const lines=d.text.split(/\r?\n/),i=lines.findIndex(l=>terms.some(t=>l.toLowerCase().includes(t)));return [{...summary(d),line:i>=0?i+1:1,excerpt:(lines[i]??d.title).slice(0,240)}];});
   return {...base,entries:matches.slice(offset,offset+limit),total:matches.length,offset,limit,nextOffset:offset+limit<matches.length?offset+limit:null};
  }
  if((typeof params.path==='string')===(typeof params.uid==='string'))fail('KNOWLEDGE_ARGUMENT_INVALID');

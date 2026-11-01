@@ -537,7 +537,7 @@ agent_repo inspect 和 skills 返回可选 projectMetadata；skills 同时把该
 
 ## 知识条目接口（只读）
 
-agent_repo 提供 knowledge_search、knowledge_read、knowledge_validate。只查询当前 Agent 登记项目的知识目录；多项目必须传 projectId，不接受任意根目录、其他 Agent、命令或自动 clone。知识目录仍由角色 projects.json 的 knowledge 或默认 wiki/ 决定，project.json 不改变读权限和目录选择。
+agent_repo 提供 knowledge_list、knowledge_search、knowledge_read、knowledge_validate。只查询当前 Agent 登记项目的知识目录；多项目必须传 projectId，不接受任意根目录、其他 Agent、命令或自动 clone。知识目录仍由角色 projects.json 的 knowledge 或默认 wiki/ 决定，project.json 不改变读权限和目录选择。
 
 ### 可配置元数据命名空间
 
@@ -588,3 +588,13 @@ openclaw agent-repo knowledge-validate --agent alice --params '{"projectId":"dem
 目录缺失返回 available=false；部分扫描、超限或输出诊断被截断会标记 complete=false，valid=null，不能当作通过或知识不存在。搜索 total 仅表示本次实际扫描匹配数；用 revision 判断不同分页是否基于同一批本地内容。文件变动、不可读或不安全项保留明确问题，不用静默跳过冒充全库成功。
 
 本阶段校验是插件自带的 Node.js 结构校验，不会运行知识库模板自己的 npm run check，也不宣称完整 OKF 认证、人工审核或线上业务验证。使用模板自身脚本时仍需读取并审阅实际命令。普通仓库没有知识目录或模板文件时，其他项目功能保持可用。
+
+### 管理面板中的知识库
+
+打开 OpenClaw 的 AgentRepo 管理中心，进入「知识库」。页面按当前 Agent 的已登记项目提供条目浏览、关键词搜索、Markdown 正文分段读取和手动结构校验；多个项目需明确选择，单项目自动选中。默认读取项目 `wiki/`，兼容普通目录、独立 Git 知识库和规范化 Bundle，显示实际目录及生效的元数据命名空间（含 `project.json` 配置的 `x_xgj`）。
+
+搜索按空白分词，各词均须匹配标题、UID、功能标识或正文；空搜索恢复全部条目。列表每页 20 条，正文每次最多 100 行，继续读取前核对文件 SHA-256，避免混合不同版本。正文展示为转义并脱敏的 Markdown 源文，不执行其中的 HTML、脚本或指令。目录缺失、无结果、扫描不完整、读取失败和超长行截断均单独提示。
+
+管理接口 `projects-knowledgeCatalog`、`projects-knowledgeList`、`projects-knowledgeSearch`、`projects-knowledgeRead`、`projects-knowledgeValidate` 均要求 `operator.read`，沿用可信 Agent、登记项目、知识目录边界与分块传输校验；不要求写权限，不拉取仓库或修改文件。项目、Agent、页面或权限变化后丢弃旧请求结果。
+
+CLI 也支持 `openclaw agent-repo knowledge-list --agent alice --params '{"projectId":"demo","limit":20,"offset":0}'`；管理动作通过 `openclaw agent-repo manage knowledge-catalog --agent alice` 等入口调用。

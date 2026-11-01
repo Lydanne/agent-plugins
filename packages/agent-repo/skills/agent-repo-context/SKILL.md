@@ -46,7 +46,7 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 
 ## 知识条目搜索、读取与校验
 
-当前项目知识通过 knowledge_search（query/limit/offset）、knowledge_read（path 或 uid 二选一，可传 startLine/maxLines）、knowledge_validate 查询；多项目必须明确 projectId。动作只读已登记知识目录，不接受任意根路径或命令，不自动同步。CLI 使用 knowledge-search/read/validate，参数放 --params。
+当前项目知识通过 knowledge_list（limit/offset，浏览全部条目）、knowledge_search（query/limit/offset）、knowledge_read（path 或 uid 二选一，可传 startLine/maxLines）、knowledge_validate 查询；多项目必须明确 projectId。动作只读已登记知识目录，不接受任意根路径或命令，不自动同步。CLI 使用 knowledge-list/search/read/validate，参数放 --params。
 
 metadata_namespace 优先取项目 project.json 的 knowledge.metadata_namespace，其次 Bundle 声明，再默认 x_agent；支持 x_xgj，配置无效不能猜测或回退。不要自动重写文档命名空间。inspect/skills 的 projectMetadata.knowledge 提供配置摘要。
 

@@ -1,3 +1,4 @@
+import {queryKnowledge} from './knowledge.mjs';
 import {projectActions} from './cli-capabilities.mjs';
 import {getEntitySyncProvider} from './dist/entities-api.mjs';
 import {recycleCatalog,restoreRecycled,configureRecycle} from './recycle-bin.mjs';
@@ -14,7 +15,7 @@ import {readdir,readFile,realpath,lstat} from 'node:fs/promises';
 import {dirname,relative} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {bindingFor} from './configuration.mjs';
-import {containedPath,readProjects,inspectProject} from './repositories.mjs';
+import {containedPath,readProjects,inspectProject,inspectKnowledge} from './repositories.mjs';
 import {readSkillSource,git} from './repository-skills.mjs';
 import {subagentInventory,resolveSubagentCatalog} from './subagents.mjs';
 import {repositoryScheduleBridge,repositorySyncTaskId,repositorySyncTasks} from './scheduled-tasks.mjs';
@@ -77,6 +78,12 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
  async function context(ctx){const agentId=trustedAgentId(ctx),binding=bindingFor(config,{agentId});if(!binding)throw Error('当前 Agent 未绑定 Agent Repo');return {agentId,binding};}
  const inspector={
   ...diagnostics,
+  async knowledgeCatalog(ctx){
+   const {agentId,binding}=await context(ctx);if(Object.keys(ctx.payload??{}).length)throw Error('Knowledge catalog accepts no selectors');
+   const before=await registration(binding),projects=await readProjects(binding.repo),rows=[];
+   for(const p of Object.values(projects))rows.push({projectId:p.projectId,name:p.name,knowledge:await inspectKnowledge(p)});
+   await checkRegistration(binding,before);return {agentId,projects:rows};
+  },
   async recycleBin(ctx){const {agentId,binding}=await context(ctx);return recycleCatalog(binding.repo,agentId,ctx.payload??{});},
   async recycleRestore(ctx){const {agentId,binding}=await context(ctx);return restoreRecycled(binding.repo,agentId,ctx.payload??{},ctx);},
   async recycleConfigure(ctx){const {agentId,binding}=await context(ctx);return configureRecycle(binding.repo,agentId,ctx.payload??{},ctx);},
@@ -214,6 +221,11 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    return {agentId,projectId:project.projectId,name:project.name,root:before.root,repository,cwd:projectRoot,scopeDirectory:before.root+'/'+repository,registryRevision:before.registryRevision,registrationCommitted:!!before.registryRevision,scannedAt:now(),inspection,scopes:availableScopes,sources,subagentSources,candidateSubagentCount,effectiveSkillCount:effective.size,rules:Object.values(rules)};
   },
  };
+ for(const [action,kind] of Object.entries({knowledgeList:'knowledge_list',knowledgeSearch:'knowledge_search',knowledgeRead:'knowledge_read',knowledgeValidate:'knowledge_validate'}))inspector[action]=async ctx=>{
+  const {agentId,binding}=await context(ctx),p=ctx.payload??{},before=await registration(binding),projects=await readProjects(binding.repo);
+  if(typeof p.projectId!=='string'||!Object.hasOwn(projects,p.projectId))throw Error('Select a registered project');
+  const result=await queryKnowledge(projects[p.projectId],{...p,action:kind});await checkRegistration(binding,before);return {agentId,...result};
+ };
  // Persist intent before invoking a mutation. An interrupted pending record is never silently declared successful.
  const mutations={workspacePoolSave:'workspace',maintenanceRun:'skills',syncPeople:'entities',updatePerson:'entities',deletePerson:'entities',clearRepositoryLogs:'logs',diagnosticClearHistory:'logs'};
  for(const [action,feature] of Object.entries(mutations))if(inspector[action]){
@@ -253,6 +265,6 @@ export function registerProjectInspector(api,inspector,{now=()=>Date.now(),isDia
    const id=randomUUID(),value={owner:scope,text,expiresAt:now()+120000,...(action==='diagnosticRead'?{diagnosticLeaseId:result.leaseId}:{})};
    if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,value);}
    return {ok:true,result:part(id,value,0)};
-  }catch(error){if(action.startsWith('recycle'))return {ok:false,code:'RECYCLE_UNAVAILABLE',error:'回收站操作未完成，请刷新核对权限、来源、版本及运行状态；结果不明时不要重复提交。'};if(action==='audit')return {ok:false,code:'AUDIT_UNAVAILABLE',error:'审计读取失败，请核对筛选条件、权限和审计来源状态。'};if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['directorySyncInfo','directorySync','entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
+  }catch(error){if(action.startsWith('knowledge'))return {ok:false,code:'KNOWLEDGE_UNAVAILABLE',error:'知识库读取失败，请核对项目、元数据配置与目录权限后重试。'};if(action.startsWith('recycle'))return {ok:false,code:'RECYCLE_UNAVAILABLE',error:'回收站操作未完成，请刷新核对权限、来源、版本及运行状态；结果不明时不要重复提交。'};if(action==='audit')return {ok:false,code:'AUDIT_UNAVAILABLE',error:'审计读取失败，请核对筛选条件、权限和审计来源状态。'};if(action.startsWith('workspacePool'))return {ok:false,error:error instanceof WorkspaceManagementError?error.message:'工作区管理失败，请核对项目、权限与本地状态',code:'WORKSPACE_MANAGEMENT_FAILED'};if(action.startsWith('diagnostic'))return {ok:false,code:'DIAGNOSTICS_UNAVAILABLE',error:'日志调试请求失败，请核对权限、来源和连接状态；实时调试需重新手动开启。'};if(['maintenance','maintenanceRun'].includes(action))return {ok:false,code:error instanceof MaintenanceError?error.code:'MAINTENANCE_UNAVAILABLE',error:error instanceof MaintenanceError?error.message:'技能维护暂不可用，请核对提供方版本、权限和配置'};return ['directorySyncInfo','directorySync','entityTypes','entities','entity','relations','graph','entityHistory'].includes(action)?{ok:false,error:'无法读取当前 Agent 的实体资料，请核对类型、查询参数和读取权限。',code:'ENTITIES_UNAVAILABLE'}:['people','peopleSyncInfo','syncPeople','updatePerson','deletePerson','maintenanceRun'].includes(action)?{ok:false,error:'无法读取或保存人员资料，请核对权限；资料变化时刷新后重试。',code:'PEOPLE_UNAVAILABLE'}:action==='clearRepositoryLogs'?{ok:false,error:'无法清空当前 Agent 的仓库日志，请核对写入权限及本地目录权限。',code:'REPOSITORY_LOG_CLEAR_FAILED'}:{ok:false,error:'无法读取当前 Agent 的项目、技能或子代理，请核对绑定、项目范围及本地 Git 状态。',code:'PROJECT_INSPECTION_UNAVAILABLE'};}
  }});
 }

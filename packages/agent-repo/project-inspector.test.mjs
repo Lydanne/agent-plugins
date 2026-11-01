@@ -45,7 +45,7 @@ test('dirty inspection shows committed metadata without loading changes or follo
 });
 test('native actions require read scope and chunk ownership includes Agent and conversation',async()=>{
  let clock=0;const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>({text:'x'.repeat(80000)}),detail:async()=>{throw Error('secret-path');}},{now:()=>clock});
- assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun','projects-directorySync','projects-recycleRestore','projects-recycleConfigure'].includes(a.id)).map(a=>a.requiredScopes),Array(20).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
+ assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun','projects-directorySync','projects-recycleRestore','projects-recycleConfigure'].includes(a.id)).map(a=>a.requiredScopes),Array(25).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
  const actual=await readInspectionResponse((action,payload)=>actions.find(a=>a.id==='projects-'+action).handler({...ctx,payload}),'list',{});assert.equal(actual.text.length,80000);
  const first=await actions[0].handler(ctx),transferId=first.result.transferId;
  for(const extra of [{agentId:'other',sessionKey:'agent:other:test'},{sessionKey:'agent:main:other'},{payload:{transferId,index:-1}},{payload:{transferId,index:3}}])assert.equal((await actions[2].handler({...ctx,payload:{transferId,index:1},...extra})).ok,false);
@@ -166,4 +166,20 @@ test('organization sync is source-bound, requires operator write and does not ac
  await assert.rejects(f.inspector.directorySync(context),/写入权限/);await assert.rejects(f.inspector.directorySync({...context,client:{scopes:['operator.write']},payload:{...context.payload,appId:'foreign'}}),/参数/);
  await f.inspector.directorySync({...context,client:{scopes:['operator.write']}});assert.equal(calls.length,1);assert.equal(calls[0].input.agentId,'main');assert.equal(calls[0].requestId,'one');
  await assert.rejects(f.inspector.directorySync({...context,agentId:'foreign',client:{scopes:['operator.write']}}));
+});
+
+test('knowledge management reads only registered project knowledge with configured namespace and readonly action scopes',async t=>{
+ const f=await fixture(t),root=join(f.root,'projects/a');await mkdir(join(root,'wiki'));
+ await writeFile(join(root,'project.json'),JSON.stringify({knowledge:{metadata_namespace:'x_xgj'}}));
+ await writeFile(join(root,'wiki/guide.md'),'---\ntitle: 指南\nx_xgj:\n  uid: example.guide\n---\n# 附件持久化\n');
+ const before=await git(f.root,['status','--porcelain']);const catalog=await f.inspector.knowledgeCatalog(f.ctx);assert.deepEqual(catalog.projects.map(p=>p.projectId),['a','b']);
+ const ctx={...f.ctx,payload:{projectId:'a',limit:1}},list=await f.inspector.knowledgeList(ctx);assert.equal(list.entries[0].uid,'example.guide');assert.equal(list.entries[0].line,1);assert.equal(list.metadataNamespace,'x_xgj');
+ const search=await f.inspector.knowledgeSearch({...f.ctx,payload:{projectId:'a',query:'附件'}});assert.equal(search.total,1);
+ const read=await f.inspector.knowledgeRead({...f.ctx,payload:{projectId:'a',uid:'example.guide'}});assert.match(read.content,/附件持久化/);
+ assert.equal((await f.inspector.knowledgeValidate({...f.ctx,payload:{projectId:'a'}})).valid,true);
+ assert.equal((await f.inspector.knowledgeList({...f.ctx,payload:{projectId:'b'}})).available,false);
+ for(const payload of [{projectId:'a',path:'/private'},{projectId:'unknown'},{projectId:'a',agentId:'other'},{}])await assert.rejects(f.inspector.knowledgeList({...f.ctx,payload}));
+ await assert.rejects(f.inspector.knowledgeCatalog({...f.ctx,payload:{agentId:'other'}}));await assert.rejects(f.inspector.knowledgeList({...ctx,agentId:'other'}));
+ assert.equal(await git(f.root,['status','--porcelain']),before);
+ const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.equal(actions.filter(a=>a.id.startsWith('projects-knowledge')).length,5);assert.ok(actions.filter(a=>a.id.startsWith('projects-knowledge')).every(a=>JSON.stringify(a.requiredScopes)==='["operator.read"]'));
 });

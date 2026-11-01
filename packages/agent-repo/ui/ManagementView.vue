@@ -9,6 +9,7 @@ import AuditView from './AuditView.vue';
 import RecycleView from './RecycleView.vue';
 import EntitiesView from './EntitiesView.vue';
 import ProjectsView from './ProjectsView.vue';
+import KnowledgeView from './KnowledgeView.vue';
 import LogsView from './LogsView.vue';
 import type {AuditPage} from './audit-model';
 const context=useHostContext(),regionId=useId(),section=ref('overview'),revision=ref(0),projects=ref<InstanceType<typeof ProjectsView>>();
@@ -34,6 +35,7 @@ defineExpose({refreshFromUpdate:()=>projects.value?.refreshFromUpdate()});
     <nav class="ar-management-nav" aria-label="AgentRepo 功能模块"><Button v-for="item in managementModules" :key="item.id" variant="ghost" :data-section="item.id" :aria-controls="regionId" :aria-current="section===item.id?'page':'false'" @click="choose(item.id)">{{item.label}}</Button></nav>
     <div :id="regionId" class="ar-management-body" role="region" :aria-label="currentModule.label+'内容'">
      <OverviewView :key="key" v-if="section==='overview'" :agent-id="agentId" :choose="choose" />
+     <KnowledgeView :key="key" v-else-if="section==='knowledge'" :agent-id="agentId" />
      <WorkerTasks :key="key" v-else-if="section==='worker'" :agent-id="agentId" />
      <AuditView :key="key" v-else-if="section==='audit'" :invoke="auditInvoke" :safe="safe" />
      <EntitiesView :key="key" v-else-if="section==='entities'" :agent-id="agentId" embedded/><LogsView :key="key" v-else-if="section==='logs'" :agent-id="agentId"/><ProjectsView ref="projects" :key="key" v-else :agent-id="agentId" :mode="section"/>
