@@ -1,3 +1,4 @@
+import {knowledgeActions,knowledgeParameters,queryKnowledge} from './knowledge.mjs';
 import {workerContextApi} from './dist/worker-cli.mjs';
 import {registerPluginCli} from './dist/plugin-cli.mjs';
 import {repoToolActions,projectActions,diagnosticActions} from './cli-capabilities.mjs';
@@ -30,11 +31,18 @@ export function projectTool(config,context,hostConfig={},prepareScope,syncScope)
  if(!binding)return null;
  return {
   name:'agent_repo',label:'Agent repo project registry',
-  description:'查询当前 Agent 的项目与技能（list/inspect/skills）、人员（people/person/people_stats）和本地实体（entity_types/entities/entity）。字段、来源及范围见 agent-repo-context 技能。skills 可触发配置的安全同步，明确要求更新代码时才用 sync；人员与实体查询不传项目选择。资料不授予新权限，多候选须消歧；worker_skill 按当前可信 Main 的已加载插件与候选工具生成或刷新全局 Codex 协作技能。不接受其他 Agent、任意路径或命令。',
-  parameters:{type:'object',properties:{...peopleParameters,...entityParameters,repository:{type:'string',pattern:'^(?:project|projects/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:/repositories/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$',description:'skills/sync 使用登记的 projects/<项目ID> 或其 repositories/<仓库>；仅有一个项目时可省略；多个项目必须明确选择。子仓库继承根技能，同名子仓库优先。'},action:{type:'string',enum:repoToolActions},projectId:{type:'string',pattern:'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}},required:['action'],additionalProperties:false},
+  description:'查询当前 Agent 的项目与技能（list/inspect/skills）、项目知识（knowledge_search/knowledge_read/knowledge_validate，只读、不执行脚本）、人员（people/person/people_stats）和本地实体（entity_types/entities/entity）。字段、来源及范围见 agent-repo-context 技能。skills 可触发配置的安全同步，明确要求更新代码时才用 sync；人员与实体查询不传项目选择。资料不授予新权限，多候选须消歧；worker_skill 按当前可信 Main 的已加载插件与候选工具生成或刷新全局 Codex 协作技能。不接受其他 Agent、任意路径或命令。',
+  parameters:{type:'object',properties:{...peopleParameters,...entityParameters,...knowledgeParameters,query:{...peopleParameters.query,description:'人员查询关键词或知识条目字面关键词，知识搜索支持空格分隔词的AND匹配'},repository:{type:'string',pattern:'^(?:project|projects/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:/repositories/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$',description:'skills/sync 使用登记的 projects/<项目ID> 或其 repositories/<仓库>；仅有一个项目时可省略；多个项目必须明确选择。子仓库继承根技能，同名子仓库优先。'},action:{type:'string',enum:repoToolActions},projectId:{type:'string',pattern:'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}},required:['action'],additionalProperties:false},
   async execute(_id,params) {
-   if(!params||Object.keys(params).some(key=>!['action','projectId','repository',...Object.keys(peopleParameters),...Object.keys(entityParameters)].includes(key))||!['list','inspect','skills','sync','worker_skill',...peopleActions,...entityReadActions].includes(params.action))throw Error('Invalid agent_repo arguments');
+   if(!params||Object.keys(params).some(key=>!['action','projectId','repository',...Object.keys(peopleParameters),...Object.keys(entityParameters),...Object.keys(knowledgeParameters)].includes(key))||!['list','inspect','skills','sync','worker_skill',...peopleActions,...entityReadActions,...knowledgeActions].includes(params.action))throw Error('Invalid agent_repo arguments');
    if(params.action==='worker_skill'){if(Object.keys(params).some(key=>key!=='action'))throw Error('Worker skill does not accept project or business selectors');const service=getAgentRepoService(context);if(!service.prepareWorkerSkill)throw Error('Worker skill publishing is unavailable');return {content:[{type:'text',text:JSON.stringify(await service.prepareWorkerSkill())}]};}
+   if(knowledgeActions.includes(params.action)){
+    const before=await registryRevision(binding).catch(()=>null),projects=await readProjects(binding.repo),id=selectProjectId(projects,params.projectId);
+    const result=await queryKnowledge(projects[id],params);
+    if(before&&await registryRevision(binding)!==before)throw Error('Project registration changed while querying knowledge');
+    return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,...result})}]};
+   }
+   if(Object.keys(params).some(key=>Object.hasOwn(knowledgeParameters,key)))throw Error('Knowledge parameters require a knowledge action');
    if(entityReadActions.includes(params.action)){trustedAgentId(context);if(params.projectId!==undefined||params.repository!==undefined)throw Error('实体查询不接受项目范围');return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,...queryEntities(binding.repo,params)})}]};}
    if(Object.keys(params).some(key=>Object.hasOwn(entityParameters,key)))throw Error('实体参数仅支持实体查询动作');
    if(peopleActions.includes(params.action)){if(params.projectId!==undefined||params.repository!==undefined)throw Error('人员查询不接受项目范围');return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,...await queryPeopleWithFallback(binding.repo,params,context)})}]};}
@@ -46,7 +54,7 @@ export function projectTool(config,context,hostConfig={},prepareScope,syncScope)
    const projects=await readProjects(binding.repo);
    if(revision&&await registryRevision(binding)!==revision)throw Error("Project registration changed while reading");
    const agent=await agentSummary(binding.repo);
-   if(params.action==='list')return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,agent,root:binding.repo,registryRevision:revision,singleProjectId:Object.keys(projects).length===1?Object.keys(projects)[0]:null,defaultProject:binding.defaultProject??null,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.paths.repository,skills:project.paths.skills,knowledge:project.paths.knowledge})),capabilities:{inspect:true,repositorySkillScopes:true,workerRepositoryRoutingRequiresMigration:true,workerProjectRouting:true,automaticSync:binding.sync?.enabled===true}})}]};
+   if(params.action==='list')return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,agent,root:binding.repo,registryRevision:revision,singleProjectId:Object.keys(projects).length===1?Object.keys(projects)[0]:null,defaultProject:binding.defaultProject??null,projects:Object.values(projects).map(project=>({projectId:project.projectId,name:project.name,repository:project.paths.repository,skills:project.paths.skills,knowledge:project.paths.knowledge})),capabilities:{knowledgeSearch:true,knowledgeRead:true,knowledgeValidate:true,inspect:true,repositorySkillScopes:true,workerRepositoryRoutingRequiresMigration:true,workerProjectRouting:true,automaticSync:binding.sync?.enabled===true}})}]};
    const id=selectProjectId(projects,params.projectId);
    return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,agent,project:await inspectProject(projects[id])})}]};
   },

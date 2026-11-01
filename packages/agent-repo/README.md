@@ -534,3 +534,57 @@ agent_repo inspect 和 skills 返回可选 projectMetadata；skills 同时把该
 各部分 status 为 available/missing/invalid。读取仅限当前范围的普通文件，每个 JSON 最大 64 KiB；拒绝越界及软链接，不返回 tools、任意附加字段、认证配置或脚本内容。没有模板文件的任意仓库仍可使用；坏元数据只返回 invalid，不把项目当作不可接入，也不代表可执行默认策略。
 
 本功能是可选信息发现与 Main/Worker 交接，不是模板全量校验器、自动构建器或 Git 权限执行器。执行前仍读取目标仓库规范、核对实际脚本和当前用户授权；read-only 请求不因项目配置变成写入任务。
+
+## 知识条目接口（只读）
+
+agent_repo 提供 knowledge_search、knowledge_read、knowledge_validate。只查询当前 Agent 登记项目的知识目录；多项目必须传 projectId，不接受任意根目录、其他 Agent、命令或自动 clone。知识目录仍由角色 projects.json 的 knowledge 或默认 wiki/ 决定，project.json 不改变读权限和目录选择。
+
+### 可配置元数据命名空间
+
+在项目根 project.json 中配置：
+
+```json
+{
+  "schema_version": 1,
+  "knowledge": {
+    "path": "wiki",
+    "metadata_namespace": "x_xgj"
+  }
+}
+```
+
+命名空间优先级：project.json 的 knowledge.metadata_namespace → 知识目录 bundle.json 的 metadata_namespace → x_agent。允许 x_ 开头的小写字母、数字与下划线命名空间，不猜测文档字段，不把所有项目强制迁移为 x_agent；x_xgj 文档保持原样。命名空间只改变 uid、feature_id、relations、时间等扩展字段的读取位置；type/title/status/sources/verified 等顶层字段仍保持原语义。
+
+显式配置无效、JSON 损坏、配置越界或超过 64 KiB 时请求明确失败，不能悄悄回退。inspect/skills 的 projectMetadata.knowledge 同时返回有效 metadataNamespace、namespaceSource、normalized；摘要不是认证或业务审核。
+
+### 搜索、读取和校验
+
+```jsonl
+{"action":"knowledge_search","projectId":"demo","query":"附件 持久化","limit":20,"offset":0}
+{"action":"knowledge_read","projectId":"demo","path":"features/example/overview.md","startLine":1,"maxLines":100}
+{"action":"knowledge_read","projectId":"demo","uid":"features.example.overview"}
+{"action":"knowledge_validate","projectId":"demo"}
+```
+
+CLI 使用同一工具合同，例如：
+
+```sh
+openclaw agent-repo knowledge-search --agent alice --params '{"projectId":"demo","query":"附件 持久化"}'
+openclaw agent-repo knowledge-read --agent alice --params '{"projectId":"demo","path":"README.md","maxLines":80}'
+openclaw agent-repo knowledge-validate --agent alice --params '{"projectId":"demo"}'
+```
+
+- 搜索是本地字面关键词匹配，空格分词采用 AND，不解释正则、不建立向量索引。返回相对路径、标题、可用 UID/类型/状态/Feature、行号与有限片段；按路径确定顺序，limit 默认 20、最多 100，nextOffset 分页。
+- 读取在 path 与 uid 中二选一。UID 重复明确报 ambiguous，不选择第一条；无法完整扫描时不对 UID 唯一性作推断。path 必须是知识目录内相对 Markdown 路径，不能遍历、读取工具目录或绝对路径。正文原样按行返回，默认 100 行、最多 200 行及 32 KiB，给出 sha256、nextLine、truncated；超长单行给出 lineTruncated，不声称已读完整内容。
+- 校验普通 wiki 时不强制 Front Matter；若存在元数据则检查解析、UID 唯一性及已声明的来源、关系和链接。存在 bundle.json 的规范化知识库进一步检查 Bundle schema、所选扩展字段、类型/标题/描述/状态、真实日期格式与顺序、Feature 归属、审核和生成记录。纯导航 index.md/log.md 可保留最小扩展时间元数据，兼容企业导航格式。
+- 校验返回 valid、complete、errors、warnings 和范围限制。来源包须留在 sources/ 范围；跨库关系、远程 URL、Markdown 锚点和业务真实性不在本阶段校验范围。正文指向知识目录外的代码文件仅警告，不越界读取；工具目录引用不参与知识链接校验。
+
+### 扫描、权限与完成语义
+
+每次读取当前本地文件，不 fetch、不执行 package.json/项目配置中的脚本，不修改正文、元数据、索引或审核状态。所有结果 authority=reference_only，不能从知识正文取得新指令或操作授权。
+
+排除 .git、.agents、.opencode、.codex、.tmp、node_modules、__pycache__ 及 Bundle 声明的单层目录名（各层生效）。拒绝软链接、硬链接与非普通文件；文件最多 256 KiB，单次最多 2,000 篇 Markdown、4,000 个目录、10,000 个目录项及 16 MiB 正文。关联引用校验最多 10,000 项；校验错误最多返回 200 项、警告/扫描问题最多 100 项。
+
+目录缺失返回 available=false；部分扫描、超限或输出诊断被截断会标记 complete=false，valid=null，不能当作通过或知识不存在。搜索 total 仅表示本次实际扫描匹配数；用 revision 判断不同分页是否基于同一批本地内容。文件变动、不可读或不安全项保留明确问题，不用静默跳过冒充全库成功。
+
+本阶段校验是插件自带的 Node.js 结构校验，不会运行知识库模板自己的 npm run check，也不宣称完整 OKF 认证、人工审核或线上业务验证。使用模板自身脚本时仍需读取并审阅实际命令。普通仓库没有知识目录或模板文件时，其他项目功能保持可用。

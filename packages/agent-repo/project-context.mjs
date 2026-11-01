@@ -1,3 +1,4 @@
+import {resolveKnowledgeConfig} from './knowledge.mjs';
 import {lstat,readFile,realpath} from 'node:fs/promises';
 import {resolve,relative,isAbsolute,sep} from 'node:path';
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -40,7 +41,9 @@ export async function readProjectContext(projectRoot,knowledgePath) {
  if(bundle.data) {
   const b=bundle.data;
   if(b.schema_version!==1||!text(b.bundle_id))bundleInfo.status='invalid';
-  else Object.assign(bundleInfo,{schemaVersion:1,bundleId:b.bundle_id,...(text(b.title)?{title:b.title}:{}),...(b.metadata_namespace==='x_agent'?{metadataNamespace:'x_agent'}:{})});
+  else Object.assign(bundleInfo,{schemaVersion:1,bundleId:b.bundle_id,...(text(b.title)?{title:b.title}:{}),...(typeof b.metadata_namespace==='string'&&/^x_[a-z][a-z0-9_]{0,61}$/.test(b.metadata_namespace)?{metadataNamespace:b.metadata_namespace}:{})});
  }
- return {schemaVersion:1,authority:'reference_only',project:projectInfo,git,validation,bundle:bundleInfo};
+ let knowledge;
+ try{const c=await resolveKnowledgeConfig(root,knowledgeRoot);knowledge={status:'available',metadataNamespace:c.metadataNamespace,namespaceSource:c.namespaceSource,normalized:c.normalized};}catch{knowledge={status:'invalid'};}
+ return {schemaVersion:1,authority:'reference_only',project:projectInfo,git,validation,bundle:bundleInfo,knowledge};
 }

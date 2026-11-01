@@ -36,3 +36,8 @@ test('knowledge selection is bound to caller scope, never to project hints',asyn
  const f=await fixture(t);await f.put('project.json',{schema_version:1,knowledge:{path:'../private'}});await f.put('custom/bundle.json',{schema_version:1,bundle_id:'custom'});await f.put('wiki/bundle.json',{schema_version:1,bundle_id:'default'});
  assert.equal((await readProjectContext(f.root,join(f.root,'custom'))).bundle.bundleId,'custom');assert.equal((await readProjectContext(f.root)).bundle.bundleId,'default');assert.equal((await readProjectContext(f.root,join(f.root,'../outside'))).bundle.status,'invalid');
 });
+test('effective knowledge namespace is configurable and exposed without requiring template schema',async t=>{
+ const f=await fixture(t);await f.put('project.json',{knowledge:{metadata_namespace:'x_xgj'}});await f.put('wiki/bundle.json',{schema_version:1,bundle_id:'legacy',metadata_namespace:'x_agent'});
+ const r=await readProjectContext(f.root);assert.equal(r.knowledge.metadataNamespace,'x_xgj');assert.equal(r.knowledge.namespaceSource,'project.json');
+ await f.put('project.json',{knowledge:{metadata_namespace:'invalid/path'}});assert.equal((await readProjectContext(f.root)).knowledge.status,'invalid');
+});
