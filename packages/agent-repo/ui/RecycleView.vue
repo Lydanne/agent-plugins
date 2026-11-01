@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,computed,watch} from 'vue';
-import {Button,Dialog,HelpTip,Input,NativeSelect,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,Dialog,HelpTip,Input,NativeSelect,useHostContext,StatusNotice,EmptyState,Card,SearchField} from '@openclaw-plugins/control-ui-kit';
 import {useManagementRequest} from './management-request';
 import {recycleLabels,type RecyclePage,type RecycleItem,type Confirmation} from './recycle-model';
 const props=defineProps<{agentId:string;onRestored?:()=>void|Promise<void>}>();
@@ -41,20 +41,20 @@ function go(next:number){offset.value=next;void refresh();}
  <Button class="ar-recycle-fab" aria-label="打开回收站" aria-haspopup="dialog" variant="outline" @click="launch">回收站</Button>
  <Dialog size="wide" :open="open" title="回收站" description="已删除内容、恢复与自动永久删除期限" @update:open="value=>{if(!value)close()}">
   <div class="ar-recycle-dialog" :aria-busy="busy">
-   <p v-if="error" role="alert" class="ar-error">{{error}}</p>
+   <StatusNotice compact tone="error" v-if="error" role="alert" class="ar-error">{{error}}</StatusNotice>
    <template v-if="confirmation">
     <h3>{{confirmation.action==='recycleRestore'?'确认恢复':'确认修改保留期限'}}</h3><p>{{confirmation.label}}</p>
     <p>{{confirmation.action==='recycleRestore'?'计划恢复后保持暂停，需要手动启用；实体恢复不会重建已结束的关联。':'新期限会应用于当前仓库已有的回收站内容。缩短期限后，已到期内容会在下次后台清理时永久删除。审计仍保留。'}}</p>
     <Button :disabled="busy||!writable" @click="execute">{{busy?'提交中…':'确认执行'}}</Button><Button variant="outline" :disabled="busy" @click="confirmation=null;error=''">取消</Button>
    </template>
    <template v-else>
-    <form class="ar-recycle-filters" @submit.prevent="filter"><NativeSelect v-model="feature" aria-label="回收站功能"><option value="">全部功能</option><option value="schedules">定时任务</option><option value="entities">实体与人员</option><option value="logs">日志</option></NativeSelect><Input v-model="query" type="search" placeholder="搜索名称或 ID" aria-label="搜索回收站"/><Button type="submit" :disabled="busy">筛选</Button><Button variant="outline" :disabled="busy" @click="refresh">刷新回收站</Button></form>
+    <div class="ar-recycle-filters"><NativeSelect v-model="feature" aria-label="回收站功能"><option value="">全部功能</option><option value="schedules">定时任务</option><option value="entities">实体与人员</option><option value="logs">日志</option></NativeSelect><SearchField v-model="query" hide-label aria-label="搜索回收站" placeholder="搜索名称或 ID" :busy="busy" @search="value=>{query=value;filter()}" /><Button variant="outline" :disabled="busy" @click="refresh">刷新回收站</Button></div>
     <p v-if="!data">{{busy?'正在读取…':'暂未取得回收站'}}</p>
     <template v-else>
      <div class="ar-recycle-settings-row"><span class="ar-meta">删除后保留 {{data.settings.retentionDays}} 天</span><Button variant="ghost" aria-haspopup="dialog" @click="days=data.settings.retentionDays;policyOpen=true">保留期限设置</Button><HelpTip title="回收站说明"><p>后台每小时检查到期内容；运行中或结果待核验的任务会延后清理。恢复计划后保持暂停。</p></HelpTip></div>
-     <p v-if="data.unavailable?.length" class="ar-warning">{{safe('部分来源不可用：'+data.unavailable.join('、'))}}</p>
-     <p>共 {{data.total}} 项</p><p v-if="!data.records.length" class="ar-muted">回收站为空或没有匹配内容。</p>
-     <article v-for="item in data.records" :key="item.provider+':'+item.id" class="ar-recycle-item"><div><h3>{{safe(item.name)}}</h3><p>{{safe((recycleLabels[item.kind]??item.kind)+' · '+item.id)}}</p><p>删除于 {{new Date(item.deletedAt).toLocaleString()}} · {{item.expired?'已到期，等待后台清理':'预计 '+new Date(item.expiresAt).toLocaleString()+' 后永久删除'}}</p><details v-if="item.preview"><summary>查看内容</summary><pre>{{safe(JSON.stringify(item.preview,null,2))}}</pre></details><p v-if="item.busy||item.restorePending" class="ar-warning">运行中或结果待核验，暂不能恢复。</p></div><Button variant="outline" :aria-label="'恢复'+item.name" :disabled="busy||!writable||item.busy||item.restorePending" @click="restore(item)">恢复</Button></article>
+     <StatusNotice compact tone="warning" v-if="data.unavailable?.length" class="ar-warning">{{safe('部分来源不可用：'+data.unavailable.join('、'))}}</StatusNotice>
+     <p>共 {{data.total}} 项</p><EmptyState compact v-if="!data.records.length" class="ar-muted" :title="'回收站为空或没有匹配内容。'" />
+     <Card as="article" v-for="item in data.records" :key="item.provider+':'+item.id" class="ar-recycle-item ocp:gap-0"><div><h3>{{safe(item.name)}}</h3><p>{{safe((recycleLabels[item.kind]??item.kind)+' · '+item.id)}}</p><p>删除于 {{new Date(item.deletedAt).toLocaleString()}} · {{item.expired?'已到期，等待后台清理':'预计 '+new Date(item.expiresAt).toLocaleString()+' 后永久删除'}}</p><details v-if="item.preview"><summary>查看内容</summary><pre>{{safe(JSON.stringify(item.preview,null,2))}}</pre></details><StatusNotice compact tone="warning" v-if="item.busy||item.restorePending" class="ar-warning">运行中或结果待核验，暂不能恢复。</StatusNotice></div><Button variant="outline" :aria-label="'恢复'+item.name" :disabled="busy||!writable||item.busy||item.restorePending" @click="restore(item)">恢复</Button></Card>
      <nav class="ar-recycle-paging" aria-label="回收站分页"><Button v-if="offset" variant="outline" @click="go(Math.max(0,offset-25))">上一页</Button><Button v-if="data.nextOffset!=null" variant="outline" @click="go(data.nextOffset)">下一页</Button></nav>
     </template>
    </template>

@@ -28,7 +28,8 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       class="ocp:grid ocp:place-content-center ocp:text-current ocp:transition-none"
     >
       <slot v-bind="slotProps">
-        <Check class="ocp:size-3.5" />
+        <svg v-if="props.modelValue === 'indeterminate'" data-slot="checkbox-mixed-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ocp:size-3.5" aria-hidden="true"><path d="M5 12h14" /></svg>
+        <Check v-else class="ocp:size-3.5" />
       </slot>
     </CheckboxIndicator>
   </CheckboxRoot>

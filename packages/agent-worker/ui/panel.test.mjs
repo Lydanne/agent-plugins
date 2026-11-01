@@ -106,7 +106,7 @@ async function press(f,label){
  const control=[...f.container.querySelectorAll('button')].find(node=>node.textContent===label);assert.ok(control,'Missing button: '+label);
  control.dispatchEvent(new f.window.MouseEvent('mousedown',{button:0,ctrlKey:false,bubbles:true}));clickButton(f.container,label);await settle();
 }
-async function checkSession(f,topic='delete-me'){const input=[...f.container.querySelectorAll('.cq-session-check')].find(node=>node.getAttribute('aria-label')==='选择会话 demo / '+topic);assert.ok(input);input.checked=!input.checked;input.dispatchEvent(new f.window.Event('change'));await settle();}
+async function checkSession(f,topic='delete-me'){const input=[...f.container.querySelectorAll('.cq-session-check')].find(node=>node.getAttribute('aria-label')==='选择会话 demo / '+topic);assert.ok(input);input.click();await settle();}
 function batchFixtureRows(){return [deletableSession({topic:'one'}),deletableSession({topic:'two',modelSessionScope:'d'.repeat(64)}),deletableSession({topic:'active',status:'running',canDelete:false,deleteReason:'仍在执行'})];}
 test('session menus hide destructive actions until opened and close with Escape or outside click',async()=>{
  const f=await browserFixture({after:onTestFinished},panelEntry),row=deletableSession();
@@ -120,8 +120,8 @@ test('multi-select exposes deletion only after selection, skips active rows, con
  const f=await browserFixture({after:onTestFinished},panelEntry),rows=batchFixtureRows(),calls=[],removed=new Set();
  const ctx=uiContext(async(_method,p)=>{calls.push(p);if(p.actionId==='inspect-deleteSession'){removed.add(p.payload.topic);return {ok:true,result:{deleted:true}};}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:rows.filter(row=>!removed.has(row.topic))}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
  f.track(f.ui.mountPanel(f.container,ctx));await settle();await openMore(f,'header .cq-more');await press(f,'多选会话');assert.equal(f.container.querySelectorAll('.cq-session-check').length,3);assert.ok(!f.container.textContent.includes('删除所选'));
- const all=f.container.querySelector('[aria-label="全选已加载的可删除会话"]');all.checked=true;all.dispatchEvent(new f.window.Event('change'));await settle();
- assert.match(f.container.textContent,/已选 2 个会话/);assert.equal(f.container.querySelectorAll('.cq-session-check:checked').length,2);assert.equal(f.container.querySelector('[aria-label="选择会话 demo / active"]').disabled,true);
+ const all=f.container.querySelector('[aria-label="全选已加载的可删除会话"]');all.click();await settle();
+ assert.match(f.container.textContent,/已选 2 个会话/);assert.equal(f.container.querySelectorAll('.cq-session-check[aria-checked=true]').length,2);assert.equal(f.container.querySelector('[aria-label="选择会话 demo / active"]').disabled,true);
  await press(f,'删除所选 (2)');assert.match(f.container.querySelector('[role=dialog]').textContent,/4 条历史任务/);assert.equal(calls.filter(p=>p.actionId==='inspect-deleteSession').length,0);
  await press(f,'取消');assert.equal(f.container.querySelector('[role=dialog]'),null);assert.match(f.container.textContent,/已选 2 个/);
  await press(f,'删除所选 (2)');await press(f,'确认批量删除');await settle();
@@ -131,7 +131,7 @@ test('row selection shortcut and partial deletion keep only failures selected wi
  const f=await browserFixture({after:onTestFinished},panelEntry),rows=batchFixtureRows().slice(0,2),calls=[];let removed=false;
  const ctx=uiContext(async(_method,p)=>{if(p.actionId==='inspect-deleteSession'){calls.push(p.payload.topic);if(p.payload.topic==='two')return {ok:false,error:'存储暂不可用'};removed=true;return {ok:true,result:{deleted:true}};}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:1,unknown:0},sessions:removed?[rows[1]]:rows}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
  f.track(f.ui.mountPanel(f.container,ctx));await settle();await openMore(f);await press(f,'选择会话');assert.match(f.container.textContent,/已选 1 个/);await checkSession(f,'two');await press(f,'删除所选 (2)');await press(f,'确认批量删除');await settle();
- assert.deepEqual(calls,['one','two']);assert.match(f.container.textContent,/已删除 1 个会话，1 个未确认删除/);assert.match(f.container.textContent,/two：存储暂不可用/);assert.match(f.container.textContent,/已选 1 个会话/);assert.equal(f.container.querySelector('.cq-session-check').checked,true);
+ assert.deepEqual(calls,['one','two']);assert.match(f.container.textContent,/已删除 1 个会话，1 个未确认删除/);assert.match(f.container.textContent,/two：存储暂不可用/);assert.match(f.container.textContent,/已选 1 个会话/);assert.equal(f.container.querySelector('.cq-session-check').getAttribute('aria-checked'),'true');
  await press(f,'删除所选 (1)');await press(f,'确认批量删除');await settle();assert.deepEqual(calls,['one','two','two']);
 });
 test('selection invalidates changed revisions and clears on project, chat or write-permission changes',async()=>{
@@ -153,7 +153,7 @@ test('selection persists across loaded pages and same-topic models delete by dis
  const f=await browserFixture({after:onTestFinished},panelEntry),one=deletableSession({topic:'same',model:'quick'}),two=deletableSession({topic:'same',model:'deep',modelSessionScope:'e'.repeat(64)}),calls=[];let deleted=false;
  const ctx=uiContext(async(_method,p)=>{if(p.actionId==='inspect-deleteSession'){calls.push(p.payload);deleted=true;return {ok:true,result:{deleted:true}};}return {ok:true,result:{...listing(null),groupCounts:{history:2,active:0,unknown:0},sessions:deleted?[]:[p.payload.offset?two:one],hasMore:!deleted&&!p.payload.offset}};},{sessionKey:'chat'});ctx.host.connection.canWrite=true;
  f.track(f.ui.mountPanel(f.container,ctx));await settle();await openMore(f);await press(f,'选择会话');await press(f,'加载更多会话');await settle();
- const input=f.container.querySelector('[aria-label="选择会话 demo / same · deep"]');input.checked=true;input.dispatchEvent(new f.window.Event('change'));await settle();assert.match(f.container.textContent,/已选 2 个会话/);
+ const input=f.container.querySelector('[aria-label="选择会话 demo / same · deep"]');input.click();await settle();assert.match(f.container.textContent,/已选 2 个会话/);
  await press(f,'删除所选 (2)');assert.match(f.container.querySelector('[role=dialog]').textContent,/quick/);assert.match(f.container.querySelector('[role=dialog]').textContent,/deep/);await press(f,'确认批量删除');await settle();
  assert.equal(calls.length,2);assert.equal(calls[0].topic,calls[1].topic);assert.notEqual(calls[0].modelSessionScope,calls[1].modelSessionScope);
 });

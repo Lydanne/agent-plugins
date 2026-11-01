@@ -31,3 +31,17 @@ Final gates are `pnpm typecheck`, `pnpm build`, isolated `pnpm test` and `pnpm t
 Chromium loads actual built assets and manifests with a synthetic public host. Unsupported actions fail explicitly. Coverage includes 320/400px sidebars, 720px narrow and 1280px desktop, light/dark tokens, scope changes and late responses, in-place host updates, hide/revoke/dispose, independent plugin installs, duplicate mounts and navigation bridge unload. It exercises exact Worker deletion scope, partial failures, stable unknown-result retries, schedule/maintenance/workspace writes, raw records, virtualized 1,500-row logs, real find scrolling, explicit capture and original-Agent late-lease cleanup. Portal bounds, keyboard activation, focus return and native host modal coexistence are browser assertions.
 
 All builds and test artifacts are produced in an isolated checkout. The registered production-loaded checkout is deliberately untouched. These checks are local contract and browser acceptance, not production deployment or real Feishu business end-to-end acceptance.
+
+## 2026-11-01 管理页面组件统一
+
+| 范围 | 接入内容 |
+| --- | --- |
+| 概览与管理壳 | PageHeader、Card、Button、Worker 状态提示；保留模块导航和资源统计 |
+| 项目、技能、CLI、子代理、工作区 | PageHeader、复合 Table、Badge、Switch、Input、EmptyState、StatusNotice；保留详情焦点、设置草稿、确认和原请求重试 |
+| 实体与人员管理 | PageHeader、SearchField、Button、Badge、EmptyState、StatusNotice；保留来源筛选、同步范围、编辑确认和版本检查 |
+| 定时任务与执行记录 | PageHeader、Card、Badge、Textarea、StatusNotice、EmptyState；保留原群授权范围、草稿与保存确认 |
+| Worker 跨会话任务页 | PageHeader、共享项目/状态筛选、SearchField、复合 Table 与提示；保留自动刷新和精确任务导航 |
+| 审计、日志、回收站 | PageHeader、复合 Table、SearchField、Textarea、Card、状态与空结果；保留调试租约、原文读取、恢复和清理确认 |
+| Worker 侧栏与完整任务页 | PageHeader、SearchField、Checkbox（含半选）、Badge、Card、EmptyState、StatusNotice；保留会话筛选、多选删除、部分失败、权限失效与四种详情视图 |
+
+正式 Vue 页面中不再直接声明 input/select/textarea/button/table 及表格内部标签；由共享组件输出原生语义。原文、代码、字段列表、时间线和原生 details 保留语义 HTML，不为统一外观改变读取、安全和确认行为。浏览器验收使用实际构建资源与隔离模拟宿主；部署后再读取真实本机管理页面，分别记录模拟与真实结果。

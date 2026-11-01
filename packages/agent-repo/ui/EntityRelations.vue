@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {EmptyState} from '@openclaw-plugins/control-ui-kit';
 import {ref,onBeforeUnmount} from 'vue';
 import type {GraphService} from '../../agent-repo-api/entities.mjs';
 const props=defineProps<{id:string;invoke:<T>(action:string,payload:Record<string,unknown>)=>Promise<T>;safe:(v:unknown)=>string}>();
@@ -7,4 +8,4 @@ async function expand(event:Event){if(!(event.target as HTMLDetailsElement).open
 function name(fromId:string,toId:string){return result.value?.entities.find(e=>e.id===(fromId===props.id?toId:fromId))?.name??'未知实体';}
 onBeforeUnmount(()=>{alive=false;});
 </script>
-<template><details @toggle="expand"><summary>查看关联关系</summary><p v-if="loading">正在读取…</p><p v-if="error" role="alert">{{error}}</p><template v-if="result"><p v-for="relation in result.relations" :key="relation.id">{{safe((relation.fromId===id?'→ ':'← ')+(result.relationTypes?.find(type=>type.id===relation.typeId)?.label??relation.typeId)+' · '+name(relation.fromId,relation.toId))}}</p><p v-if="!result.relations.length">暂无有效关联</p><p v-if="result.truncated">关联较多，仅展示前 100 条</p></template></details></template>
+<template><details @toggle="expand"><summary>查看关联关系</summary><p v-if="loading">正在读取…</p><p v-if="error" role="alert">{{error}}</p><template v-if="result"><p v-for="relation in result.relations" :key="relation.id">{{safe((relation.fromId===id?'→ ':'← ')+(result.relationTypes?.find(type=>type.id===relation.typeId)?.label??relation.typeId)+' · '+name(relation.fromId,relation.toId))}}</p><EmptyState compact v-if="!result.relations.length" :title="'暂无有效关联'" /><p v-if="result.truncated">关联较多，仅展示前 100 条</p></template></details></template>

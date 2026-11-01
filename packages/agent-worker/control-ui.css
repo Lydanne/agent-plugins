@@ -229,3 +229,13 @@
 .cq-panel .cq-row-open{height:auto;min-height:0;white-space:normal;}
 .cq-panel .cq-row-open .cq-row-progress{margin:6px 0 0;line-height:1.6;-webkit-line-clamp:2;}
 .cq-row-meta{row-gap:4px;}
+
+.cq-panel>[data-slot=page-header]{flex:none}
+.cq-panel [data-slot=search-field]{min-width:0;width:100%}
+.cq-panel [data-slot=search-field] [data-slot=search-controls]{gap:6px}
+.cq-panel [data-slot=search-field] button[type=submit]{font-size:11px;padding-inline:10px}
+.cq-panel [data-slot=alert]{flex:none;min-width:0;overflow-wrap:anywhere}
+.cq-panel .cq-state[data-slot=badge]{font-size:10px;line-height:1.5;padding:2px 6px}
+.cq-panel .cq-task-card[data-slot=card]{background:var(--ocp-background);box-shadow:none}
+.cq-panel .cq-task-card.cq-task-selected[data-slot=card]{background:var(--ocp-muted-background)}
+.cq-panel .cq-task-links [data-slot=button]{color:var(--ocp-foreground);border-color:var(--ocp-border)}

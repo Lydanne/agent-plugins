@@ -17,3 +17,5 @@ Checkbox, Switch, Tooltip, Table, Pagination, Card, Skeleton, Empty, Alert, Coll
 Each plugin build generates THIRD_PARTY_LICENSES.txt from the packages present in the actual bundled module graph, including their complete license and notice files.
 
 PageHeader, SearchField, EmptyState and StatusNotice are local compositions, not additional upstream source copies. They reuse the pinned shadcn-vue Input/Button/Empty/Alert primitives. Theme integration adds paired foreground/background, focus and warning tokens and per-view portal synchronization; Button declares its actual default variant/size so the host reset bridge can preserve contrast. The pinned upstream revision and all original license notices remain unchanged.
+
+Management-wide adoption adds local semantic heading/focus and compact-density options to compositions, an `as` element option to the pinned Card source, and a local controlled Textarea using the shared namespaced field styling. Checkbox/Switch host reset bridges preserve their original Reka state and accessibility contracts. No upstream revision or runtime dependency changed.

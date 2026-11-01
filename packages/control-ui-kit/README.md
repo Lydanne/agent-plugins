@@ -46,3 +46,14 @@ PageHeader 默认使用 h2，操作放在默认插槽；EmptyState 的默认插�
 `themeVariables` 导出宿主和弹层共享的完整变量清单，mountVueView 会同步到当前实例的 overlay。浅色/深色主题由宿主控制，不另加按系统主题切换的 shadcn dark 变体。所有新增选择器都限于 `[data-ocp-ui]`，仅针对明确的 data-slot/data-variant 修复宿主旧按钮 reset，不修改宿主普通按钮。`cn` 作为公共工具合并带 `ocp:` 前缀的 Tailwind 类。
 
 知识库页面是基础组件、通用组合和宿主请求适配搭配使用的完整示例，见 `../agent-repo/ui/KnowledgeView.vue`。其他页面可按功能逐步采用，不需要一次性重写业务逻辑。
+
+### 管理页面统一接入
+
+AgentRepo 与 Worker 的正式页面统一从本包导入表单、表格、标题、状态、空结果、卡片和徽标组件；业务代码保留 Agent/会话/项目范围、请求代次、确认与幂等控制。只读原文、日志树、时间线、字段列表继续使用语义 HTML，不能把组件替换当成权限或业务流程调整。
+
+- PageHeader 支持 `heading="h1|h2|h3"`、`compact` 和 `leading` 插槽；`focus(options?)` 将焦点移到真实标题，用于详情切换，标题不增加 Tab 停靠点。
+- SearchField 的 `hide-label` 只隐藏视觉标签，保留关联 label；可组合项目/状态筛选器。即时过滤的技能列表继续使用 Input。提交及清空时由页面同步 query 后执行原请求。
+- Card 的 `as="div|section|article|aside"` 保留列表和区域语义。密集列表可通过 class 调整间距，不复制 Card 皮肤。
+- StatusNotice、EmptyState 支持 `compact`，供侧栏、表格提示和内嵌区域使用。
+- Textarea 支持受控 `v-model`、`defaultValue` 和原生 rows/maxlength/required/readonly 属性。输入事件同步更新模型，保证同一轮事件内提交取得最新草稿；默认不按内容无限增高。展示只读 JSON 时传 `:model-value` 和 readonly，保留原文字节。
+- Checkbox 的半选状态用 `model-value="indeterminate"`，业务事件以 `$event === true` 判断选中；Switch 用于设置开关。主题层保护两个控件的轨道、边框和选中前景，避免宿主旧 button 样式覆盖状态。

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,ref,watch,useId} from 'vue';
-import {Button,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,useHostContext,StatusNotice,PageHeader} from '@openclaw-plugins/control-ui-kit';
 import {managementModules} from './management-model';
 import {useManagementRequest} from './management-request';
 import OverviewView from './OverviewView.vue';
@@ -27,9 +27,9 @@ defineExpose({refreshFromUpdate:()=>projects.value?.refreshFromUpdate()});
 </script>
 <template>
  <section class="ar-management" data-ocp-ui aria-label="AgentRepo 管理中心" :data-section="section">
-  <header class="ar-management-header"><h1>AgentRepo</h1></header>
+  <PageHeader class="ar-management-header" title="AgentRepo" heading="h1" />
   <template v-if="context.presented">
-   <p v-if="!context.host.connection.canRead" role="alert" class="ar-error">需要 operator.read 权限才能查看 AgentRepo。</p>
+   <StatusNotice compact tone="error" v-if="!context.host.connection.canRead" role="alert" class="ar-error">需要 operator.read 权限才能查看 AgentRepo。</StatusNotice>
    <p v-else-if="!knownAgent">请先选择一个 Agent。</p>
    <template v-else>
     <nav class="ar-management-nav" aria-label="AgentRepo 功能模块"><Button v-for="item in managementModules" :key="item.id" variant="ghost" :data-section="item.id" :aria-controls="regionId" :aria-current="section===item.id?'page':'false'" @click="choose(item.id)">{{item.label}}</Button></nav>

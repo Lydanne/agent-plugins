@@ -129,3 +129,5 @@ upstream MIT license; it is not an installed-runtime patch or automatic deploy.
 
 - control-ui-kit 继续复用已固定版本的 shadcn-vue 源码和 Reka primitives；新增本地 PageHeader、SearchField、EmptyState、StatusNotice 组合，不引入第二套 Vue/React 运行时或远端组件加载。
 - 主题区分辅助文字和浅底色，新增成对前景/背景、焦点与提醒变量，同步到实例弹层；仅针对明确 shadcn Button variant 保留前景对比度。知识库页面改用共享基础组件和通用组合，保留原权限、请求失效和文件版本检查。
+
+- 2026-11-01：AgentRepo 与 Worker 的其余正式管理页面统一接入共享标题、表单、表格、状态与卡片组件，补充语义标题焦点、受控多行输入与复选框半选适配。保留原 API、宿主权限、确认、请求失效和删除/恢复边界；不修改执行与调度协议。

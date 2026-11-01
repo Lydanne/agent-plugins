@@ -46,7 +46,7 @@ body:has([data-ocp-overlay] [data-ocp-modal]) dialog:modal { pointer-events: aut
 [data-ocp-ui] [data-slot=button][data-variant=destructive]{color:#fff;background-color:var(--ocp-destructive)}
 [data-ocp-ui] [data-slot=button][data-variant=default]:hover:not(:disabled){background-color:color-mix(in srgb,var(--ocp-primary) 90%,var(--ocp-background))}
 [data-ocp-ui] .ocp\:page-header{display:flex;justify-content:space-between;align-items:start;gap:20px;flex-wrap:wrap}
-[data-ocp-ui] .ocp\:page-header h2{margin:0;font-size:20px;font-weight:600;line-height:1.35;color:var(--ocp-foreground)}
+[data-ocp-ui] .ocp\:page-header [data-slot=page-title]{margin:0;font-size:20px;font-weight:600;line-height:1.35;color:var(--ocp-foreground)}
 [data-ocp-ui] [data-slot=page-description]{margin:8px 0 0;color:var(--ocp-muted);font-size:13px}
 [data-ocp-ui] [data-slot=page-actions]{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 [data-ocp-ui] .ocp\:search-field{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -60,3 +60,24 @@ body:has([data-ocp-overlay] [data-ocp-modal]) dialog:modal { pointer-events: aut
 [data-ocp-ui] .ocp\:status-notice [data-slot=alert-title]{white-space:normal;display:block;overflow:visible}
 [data-ocp-ui] .ocp\:status-notice[data-tone=warning]{border-color:color-mix(in srgb,var(--ocp-warning) 35%,var(--ocp-border));background:var(--ocp-warning-background)}
 [data-ocp-ui] .ocp\:status-notice [data-slot=notice-actions]{grid-column:2;display:flex;gap:8px;margin-top:8px}
+
+[data-ocp-ui] [data-slot=page-heading]{display:flex;align-items:start;gap:8px;min-width:0}
+[data-ocp-ui] [data-slot=page-title]{overflow-wrap:anywhere}
+[data-ocp-ui] [data-slot=page-header][data-compact]{gap:8px;align-items:center}
+[data-ocp-ui] [data-slot=page-header][data-compact] [data-slot=page-title]{font-size:14px}
+[data-ocp-ui] .ocp\:status-notice[data-compact]{padding:8px 10px;font-size:12px}
+[data-ocp-ui] .ocp\:status-notice[data-compact] [data-slot=alert-description]{font-size:inherit}
+[data-ocp-ui] .ocp\:empty-state[data-compact]{padding:20px 12px}
+[data-ocp-ui] .ocp\:empty-state[data-compact] [data-slot=empty-title]{font-size:14px}
+[data-ocp-ui] [data-ocp-density=sidebar] .ocp\:empty-state{padding:16px 10px}
+[data-ocp-ui] [data-slot=checkbox]{display:inline-flex;align-items:center;justify-content:center;padding:0;width:16px;height:16px;min-width:16px;flex-shrink:0;border:1px solid var(--ocp-border);border-radius:4px;background:var(--ocp-background);color:var(--ocp-foreground)}
+[data-ocp-ui] [data-slot=checkbox][data-state=checked],[data-ocp-ui] [data-slot=checkbox][data-state=indeterminate]{background:var(--ocp-primary);border-color:var(--ocp-primary);color:var(--ocp-primary-foreground)}
+[data-ocp-ui] .ocp\:page-header h1[data-slot=page-title]{font-size:24px}
+[data-ocp-ui] .ocp\:status-notice{margin:10px 0}
+/* Keep switch tracks and thumbs visible under legacy page button resets. */
+[data-ocp-ui] [data-slot=switch]{display:inline-flex;align-items:center;justify-content:flex-start;flex:none;width:34px;height:20px;min-width:34px;padding:1px;border:1px solid transparent;border-radius:999px;background:var(--ocp-border)}
+[data-ocp-ui] [data-slot=switch][data-state=checked]{background:var(--ocp-primary)}
+[data-ocp-ui] [data-slot=switch-thumb]{translate:none;width:16px;height:16px;min-width:16px;border-radius:999px;background:var(--ocp-primary-foreground);box-shadow:0 1px 2px #0002}
+[data-ocp-ui] [data-slot=switch-thumb][data-state=checked]{transform:translateX(14px)}
+[data-ocp-ui] [data-slot=switch-thumb][data-state=unchecked]{transform:translateX(0)}
+[data-ocp-ui] [data-slot=button][data-variant=ghost]:is([aria-current=page],[aria-selected=true]){color:var(--ocp-foreground)}

@@ -31,3 +31,4 @@ export {default as EmptyState} from './components/EmptyState.vue';
 export {default as StatusNotice} from './components/StatusNotice.vue';
 export {cn} from './utils';
 export {themeVariables} from './theme-tokens';
+export {default as Textarea} from './components/Textarea.vue';

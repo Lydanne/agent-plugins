@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,reactive,computed,onMounted,onBeforeUnmount} from 'vue';
-import {Button,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,useHostContext,Card,PageHeader} from '@openclaw-plugins/control-ui-kit';
 import {useManagementRequest} from './management-request';
 import {managementModules} from './management-model';
 import type {CatalogOverview,PeopleOverview,MaintenanceOverview,OverviewValues,OverviewSource} from './overview-model';
@@ -50,10 +50,10 @@ onMounted(refresh);onBeforeUnmount(()=>{generation++;});
 </script>
 <template>
  <section class="ar-overview" data-ocp-ui aria-label="AgentRepo 运行概览" :aria-busy="loading">
-  <header class="ar-overview-heading ar-section-heading"><div><h2>管理概览</h2><p class="ar-description">当前 Agent 的资源、计划与待处理事项。</p></div><div class="ar-overview-tools"><span class="ar-meta" role="status">{{loading?'正在读取…':Object.values(errors).length?'部分数据不可用':'更新于 '+new Date(loadedAt).toLocaleString()}}</span><Button variant="outline" :disabled="loading" @click="refresh">刷新概览</Button></div></header>
-  <div class="ar-management-metrics" aria-label="AgentRepo 资源统计"><button v-for="metric in metrics" :key="metric.module" type="button" class="ar-metric" :aria-label="'打开'+label(metric.module)" @click="choose(metric.module)"><span class="ar-metric-label">{{metric.label}}</span><strong>{{metric.count}}</strong><span class="ar-metric-note">{{metric.note}}</span></button></div>
+  <PageHeader title="管理概览" description="当前 Agent 的资源、计划与待处理事项。" class="ar-overview-heading ar-section-heading"><div class="ar-overview-tools"><span class="ar-meta" role="status">{{loading?'正在读取…':Object.values(errors).length?'部分数据不可用':'更新于 '+new Date(loadedAt).toLocaleString()}}</span><Button variant="outline" :disabled="loading" @click="refresh">刷新概览</Button></div></PageHeader>
+  <div class="ar-management-metrics" aria-label="AgentRepo 资源统计"><Button variant="ghost" v-for="metric in metrics" :key="metric.module" type="button" class="ar-metric" :aria-label="'打开'+label(metric.module)" @click="choose(metric.module)"><span class="ar-metric-label">{{metric.label}}</span><strong>{{metric.count}}</strong><span class="ar-metric-note">{{metric.note}}</span></Button></div>
   <WorkerSummary :value="values.worker" :error="errors.worker" :loading="loading" :safe="safe" :open="()=>choose('worker')" />
-  <div class="ar-overview-columns"><section class="ar-overview-card"><h3>待处理事项</h3><p class="ar-description">基于本次读取结果，不代替完整健康检查。</p><div v-for="(issue,index) in issues" :key="index" class="ar-attention-row"><div><strong>{{issue.title}}</strong><p>{{issue.detail}}</p></div><Button variant="ghost" size="sm" @click="choose(issue.module)">查看{{label(issue.module)}}</Button></div><p v-if="!issues.length" class="ar-empty-note">{{loading?'正在检查待处理事项…':'本次读取未发现上述待处理事项。'}}</p></section><section class="ar-overview-card"><h3>工作区与计划</h3><div v-for="[name,value] in info" :key="name" class="ar-overview-info"><span>{{name}}</span><span>{{safe(value)}}</span></div><p class="ar-description">这里只读取状态；刷新不会拉取仓库、执行任务或同步飞书人员。</p></section></div>
+  <div class="ar-overview-columns"><Card as="section" class="ar-overview-card ocp:gap-0"><h3>待处理事项</h3><p class="ar-description">基于本次读取结果，不代替完整健康检查。</p><div v-for="(issue,index) in issues" :key="index" class="ar-attention-row"><div><strong>{{issue.title}}</strong><p>{{issue.detail}}</p></div><Button variant="ghost" size="sm" @click="choose(issue.module)">查看{{label(issue.module)}}</Button></div><p v-if="!issues.length" class="ar-empty-note">{{loading?'正在检查待处理事项…':'本次读取未发现上述待处理事项。'}}</p></Card><Card as="section" class="ar-overview-card ocp:gap-0"><h3>工作区与计划</h3><div v-for="[name,value] in info" :key="name" class="ar-overview-info"><span>{{name}}</span><span>{{safe(value)}}</span></div><p class="ar-description">这里只读取状态；刷新不会拉取仓库、执行任务或同步飞书人员。</p></Card></div>
   <section class="ar-overview-shortcuts"><h3>管理模块</h3><div class="ar-management-cards"><section v-for="item in managementModules.slice(1)" :key="item.id"><div><h4>{{item.label}}</h4><p>{{item.description}}</p></div><Button variant="ghost" size="sm" @click="choose(item.id)">打开{{item.label}}</Button></section></div></section>
  </section>
 </template>
