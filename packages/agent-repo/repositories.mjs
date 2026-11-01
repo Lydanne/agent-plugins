@@ -45,11 +45,12 @@ export async function readProjects(repo) {
   if(!Array.isArray(entry.skills)||entry.skills.length>20||entry.skills.some(path=>!relativePath(path).startsWith(repository+'/')))throw Error('Project skill paths must be inside its repository');
   if(entry.knowledge!==undefined&&!relativePath(entry.knowledge).startsWith(repository+'/'))throw Error('Project knowledge must be inside its repository');
   // Validate all existing symlink ancestors even when the final path does not exist.
+  const knowledge=entry.knowledge ?? repository+'/wiki';
   const paths={};
-  for(const [key,path] of Object.entries({repository,...(entry.knowledge?{knowledge:entry.knowledge}:{})}))paths[key]=await containedPath(repo,path);
+  for(const [key,path] of Object.entries({repository,knowledge}))paths[key]=await containedPath(repo,path);
   const skills=await Promise.all(entry.skills.map(path=>containedPath(repo,path)));
   for(const path of [...skills,...(paths.knowledge?[paths.knowledge]:[])])if(!inside(paths.repository,path))throw Error('Project resource escapes its repository');
-  projects[projectId]={projectId,...entry,paths:{...paths,skills}};
+  projects[projectId]={projectId,...entry,knowledge,knowledgeExplicit:entry.knowledge!==undefined,paths:{...paths,skills}};
  }
  return projects;
 }
@@ -66,11 +67,24 @@ export function selectProjectId(projects,requested) {
  if(typeof id!=='string'||!Object.hasOwn(projects,id))throw Error('Select a registered projectId for this task; multiple projects require an explicit selection');
  return id;
 }
+export async function inspectKnowledge(project) {
+ const path=project.paths.knowledge,available=await directory(path);
+ const result={path,available,source:project.knowledgeExplicit?'explicit':'default'};
+ if(!available)return result;
+ let kind='directory';
+ try{if(await realpath(await git(path,['rev-parse','--show-toplevel']))===await realpath(path))kind='git';}catch{}
+ let entrypoint;
+ for(const file of ['README.md','index.md']) {
+  const candidate=resolve(path,file);
+  try{if((await lstat(candidate)).isFile()&&await realpath(candidate)===candidate){entrypoint=candidate;break;}}catch(error){if(error.code!=='ENOENT')throw error;}
+ }
+ return {...result,kind,...(entrypoint?{entrypoint}:{})};
+}
 export async function inspectProject(project) {
  const {paths}=project;
  const result={projectId:project.projectId,name:project.name,repository:paths.repository,
   skills:await Promise.all(paths.skills.map(async path=>({path,available:await directory(path)}))),
-  ...(paths.knowledge?{knowledge:{path:paths.knowledge,available:await directory(paths.knowledge)}}:{}),
+  knowledge:await inspectKnowledge(project),
   expectedBranch:project.branch,available:await directory(paths.repository)};
  if(!result.available)return {...result,git:{state:'missing'}};
  try {

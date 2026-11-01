@@ -290,7 +290,7 @@ Node 24.19+；pnpm build 和 pnpm test。测试使用根 .tmp/ 内临时仓库�
 
 角色仓库提供 `tools/agent-worker-policy.json`：schemaVersion=1，四个字符串 executorInstructions、businessDataPolicy、asyncInstructions、delegationInstructions（每项最多40000字符）。`{projectDir}` 替换为登记的项目绝对路径；不得设置 CLI、状态目录或其他机器参数。政策由管理员在应用计划时写入 worker 配置，修改后重新生成计划；已准入任务仍保留原快照。
 
-新计划启用 `plugins.entries.agent-repo.config.agents.<agentId>.sync.enabled`，同时将 `channels.feishu.workspaceSync.enabled` 设为 false，保留旧同步的其他字段以便回退。Agent 根目录来自 binding.repo，项目目录、URL 和分支来自 projects.json；只有明确登记 knowledge=repository+"/wiki" 才同步 wiki。角色技能来自 Agent Repo skills/，开发技能来自独立项目的登记目录，组合索引以 Agent Repo 为根；worker 的 skillContextRoot 指向这个根，cwd 仍为 projects/<项目ID>/。业务项目角色文件不覆盖 Ada 角色。原有 Feishu 单仓同步和技能刷新配置暂留兼容，不自动关闭或切换；两种同步入口不可同时启用。
+新计划启用 `plugins.entries.agent-repo.config.agents.<agentId>.sync.enabled`，同时将 `channels.feishu.workspaceSync.enabled` 设为 false，保留旧同步的其他字段以便回退。Agent 根目录来自 binding.repo，项目目录、URL 和分支来自 projects.json；默认读取项目 wiki；显式 knowledge 优先。只有已声明的 wiki Git 子模块参与子模块同步，普通目录随项目同步，独立 Git 工作区仅读取本地内容。角色技能来自 Agent Repo skills/，开发技能来自独立项目的登记目录，组合索引以 Agent Repo 为根；worker 的 skillContextRoot 指向这个根，cwd 仍为 projects/<项目ID>/。业务项目角色文件不覆盖 Ada 角色。原有 Feishu 单仓同步和技能刷新配置暂留兼容，不自动关闭或切换；两种同步入口不可同时启用。
 
 角色仓库与所选项目顺序更新，不提供跨仓原子回滚；任一失败不进入模型。角色仓库与项目同步调用分别遵守 timeoutMs，项目及其子模块共用项目调用的超时预算，每个仓库均检查 Git 安全状态；本地共享记忆按 preserveLocalMemory 规则处理，冲突时阻止自动同步，管理员应复核后交付，不能自动提交、stash或覆盖。
 
@@ -516,4 +516,4 @@ Git 同步失败会保留具体诊断码并传递到入站拦截提示：`AGENT_
 
 ## 项目知识库规范
 
-项目知识的目录、条目格式、来源、失效条件、构建、查询及验收统一遵循 [Agent Repo 项目知识库规范 v1](skills/agent-repo-context/references/knowledge.md)。`knowledge` 是目录登记；现有插件提供路径检查、目录就绪检查及约定的 Git 同步，不自动建立全文或向量索引。
+项目知识的目录、条目格式、来源、失效条件、构建、查询及验收统一遵循 [Agent Repo 项目知识库规范 v2](skills/agent-repo-context/references/knowledge.md)。`wiki/` 是默认目录，`knowledge` 可覆盖它；现有插件提供路径检查、目录就绪检查及约定的 Git 同步，不自动建立全文或向量索引。

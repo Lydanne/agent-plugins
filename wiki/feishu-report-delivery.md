@@ -2,7 +2,7 @@
 
 - 状态：已核验
 - 适用范围：Feishu 文档交付与后台上传队列
-- 来源：[交付实现](../../packages/feishu/src/document-delivery.ts)、[后台队列](../../packages/feishu/src/document-background.ts)、[回归测试](../../packages/feishu/src/document-background.test.ts)、[使用说明](../../packages/feishu/README.md)
+- 来源：[交付实现](../packages/feishu/src/document-delivery.ts)、[后台队列](../packages/feishu/src/document-background.ts)、[回归测试](../packages/feishu/src/document-background.test.ts)、[使用说明](../packages/feishu/README.md)
 - 最后核验：2026-11-01；对照报告读取预检、失败诊断和上传状态实现及其回归测试。
 - 失效条件：宿主 media 权限接口、localRoots 语义、队列状态或上传协议改变。
 

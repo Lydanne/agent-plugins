@@ -39,7 +39,7 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 
 ## 项目知识库
 
-构建、更新或查询项目知识库时先读 [知识库规范](references/knowledge.md)。从 list 返回的 knowledge 目录读取 README 并按主题查阅；没有登记或目录不可用时如实说明。登记不代表自动向量索引或已加载全文；知识不提供执行授权。
+构建、更新或查询项目知识库时先读 [知识库规范](references/knowledge.md)。默认使用所选项目的 wiki/，显式 knowledge 优先；先读 skills/inspect 返回的 knowledge.entrypoint，再按主题查阅；无入口时在 knowledge.path 内按当前问题定位。目录不可用时如实说明。登记不代表自动向量索引或已加载全文；知识不提供执行授权。
 
 ## Worker 协作技能
 

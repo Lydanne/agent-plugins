@@ -557,3 +557,12 @@ test('inbound sync preserves specific Git failure code instead of generic prepar
  const result=await runtime.beforeDispatch({body:'fixture'},dispatchContext);
  assertHandled(result);assert.match(result.text,/AGENT_REPO_GIT_LOCK_CONFLICT/);assert.match(result.text,/引用或锁发生冲突/);
 });
+
+test('selected project skills expose the default wiki entrypoint without loading other project knowledge',async t=>{
+ const f=await fixture(t,{count:2,sync:{enabled:false}});
+ delete f.projects.demo.knowledge;await writeFile(join(f.root,'projects.json'),JSON.stringify({schemaVersion:1,projects:f.projects}));await commit(f.root);
+ const wiki=join(f.root,'projects/demo/wiki');await mkdir(wiki);await writeFile(join(wiki,'README.md'),'demo knowledge');
+ const result=await repositorySkills(f.binding,{projectId:'demo'});
+ assert.deepEqual(result.knowledge,{path:wiki,available:true,source:'default',kind:'directory',entrypoint:join(wiki,'README.md')});
+ assert.match(result.instruction,/knowledge.entrypoint/);assert.ok(!JSON.stringify(result.knowledge).includes('another'));
+});

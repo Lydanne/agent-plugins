@@ -337,3 +337,17 @@ test('fetch errors retain classified cause and safe command evidence without cha
  assert.match(result.reason,/远端仓库不存在或不可访问/);assert.match(result.diagnostic.operation,/fetch/);
  assert.ok(!JSON.stringify(result).includes('private-missing-remote'));assert.equal(git(f.root,'rev-parse','HEAD'),before);
 });
+
+test('conventional wiki directories and independent Git checkouts are readable without submodule mutation',async()=>{
+ for(const independent of [false,true]) {
+  const f=fixture();const p=addProject(f);
+  if(independent) {
+   f.commit(p.seed,'.gitignore','/wiki/');git(p.root,'pull','--ff-only');
+   git(p.root,'clone',f.remote,'wiki');
+  } else {f.commit(p.seed,'wiki/README.md','ordinary knowledge');git(p.root,'pull','--ff-only');}
+  const before=readFileSync(join(p.root,'wiki',independent?'SOUL.md':'README.md'),'utf8');
+  const result=await syncWorkspace({...p.config,project:{...p.config.project,submodules:[{name:'wiki',path:'wiki'}]}});
+  assert.equal(result.ok,true,result.reason);assert.equal(readFileSync(join(p.root,'wiki',independent?'SOUL.md':'README.md'),'utf8'),before);
+  assert.equal(result.wikiHead,undefined);
+ }
+});

@@ -7,7 +7,7 @@ import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import plugin,{projectTool} from './index.mjs';
 import {resolveConfiguration,bindingFor} from './configuration.mjs';
-import {readProjects,inspectProject,containedPath} from './repositories.mjs';
+import {readProjects,inspectProject,containedPath,inspectKnowledge} from './repositories.mjs';
 import {buildConfigPlan,main} from './cli.mjs';
 const run=promisify(execFile);
 const decode=result=>JSON.parse(result.content[0].text);
@@ -337,4 +337,21 @@ test('project workspacePool accepts explicit bounds and rejects paths, commands 
  const f=await fixture(t);
  for(const pool of [{enabled:true,maxSize:3},{enabled:false,maxSize:1}]){f.entry.workspacePool=pool;await f.save();assert.deepEqual((await readProjects(f.repo)).demo.workspacePool,pool);}
  for(const pool of [{enabled:true,maxSize:0},{enabled:true,maxSize:21},{enabled:'true',maxSize:2},{enabled:true,maxSize:1,path:'/tmp'},{enabled:true,maxSize:1,install:'shell'},{enabled:true}]){f.entry.workspacePool=pool;await f.save();await assert.rejects(readProjects(f.repo),/workspace pool/);}
+});
+
+test('wiki defaults are optional, support plain directories and Git checkouts, and explicit knowledge wins',async t=>{
+ const f=await fixture(t);delete f.entry.knowledge;await f.save();
+ let project=(await readProjects(f.repo)).demo;
+ assert.equal(project.knowledge,'project/wiki');assert.equal(project.knowledgeExplicit,false);
+ assert.equal((await inspectKnowledge(project)).available,false);
+ const wiki=join(f.repo,'project/wiki');await mkdir(wiki,{recursive:true});await writeFile(join(wiki,'README.md'),'Knowledge index');
+ assert.deepEqual(await inspectKnowledge(project),{path:wiki,available:true,source:'default',kind:'directory',entrypoint:join(wiki,'README.md')});
+ await git(wiki,'init','-b','main');assert.equal((await inspectKnowledge(project)).kind,'git');
+ f.entry.knowledge='project/docs';await mkdir(join(f.repo,'project/docs'));await f.save();project=(await readProjects(f.repo)).demo;
+ assert.equal(project.knowledgeExplicit,true);assert.equal(project.paths.knowledge,join(f.repo,'project/docs'));
+ assert.equal((await inspectKnowledge(project)).source,'explicit');
+});
+test('default wiki cannot escape the project or Agent root through symlinks',async t=>{
+ const f=await fixture(t);delete f.entry.knowledge;await f.save();await mkdir(join(f.repo,'project'));await mkdir(join(f.root,'outside'));await symlink(join(f.root,'outside'),join(f.repo,'project/wiki'));
+ await assert.rejects(readProjects(f.repo),/escapes/);
 });

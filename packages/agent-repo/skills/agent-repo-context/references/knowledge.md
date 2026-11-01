@@ -1,17 +1,17 @@
-# Agent Repo 项目知识库规范 v1
+# Agent Repo 项目知识库规范 v2
 
 本规范约束知识的组织、构建、查阅和维护。它是 Agent 工作约定；除下述现有机制外，不声称插件已实现条目校验、自动索引或自动更新。
 
 ## 现有机制
 
-- `projects.json` 的可选 `knowledge` 是相对 Agent Repo 的目录路径，必须位于对应项目仓库内；拒绝路径逃逸及越界软链接。
-- `agent_repo list` 返回知识目录位置，`inspect` 返回目录是否可用；目录存在只证明就绪，不证明内容完整、可信或最新。
-- 登记 `knowledge=repository + "/wiki"` 时，按既有 Git 同步策略处理 wiki；需要已初始化的 Git 仓库。普通 `docs/knowledge` 随项目仓库同步，没有独立 wiki 同步步骤。
+- 默认知识库为所选项目根目录的 `wiki/`，无需登记；显式 `projects.json.knowledge` 优先覆盖默认值。路径相对 Agent Repo，必须位于对应项目内；拒绝路径逃逸及越界软链接。
+- `agent_repo list` 返回有效目录位置；`inspect` 和 `skills` 返回可用性、来源（default/explicit）、目录或独立 Git 类型以及入口。优先 README.md，其次 index.md。目录存在不证明已读取或仍为最新。默认目录缺失不阻止普通项目任务；显式配置但不存在的目录仍需管理员准备。
+- `wiki/` 可以是普通目录、独立 Git 工作区或已声明的 Git 子模块。普通目录随项目同步；独立 Git 工作区读取当前本地内容，不自动 clone/pull 或推断远端授权。仅已声明的 wiki Git 子模块按既有同步策略更新，未初始化仍阻止同步；缺省 wiki 不再强制要求子模块。独立 Git 工作区仍遵守项目干净检查，通常由项目 .gitignore 排除该嵌套目录；插件不会自动修改忽略规则。
 - 登记不会自动将文件加入 `memory_search`，不会自动导入飞书文档，不注册新的知识搜索工具，也不会把整库自动注入 Main 或 Worker。
 
 ## 目录与登记
 
-新建知识库优先使用项目内 `docs/knowledge/`，已有独立 wiki 可沿用。不要为符合目录名称迁移现有业务资料或自动创建子模块。
+新建知识库默认使用项目根目录 `wiki/`；已有其他目录可用 knowledge 显式配置。默认读取只发生于所选项目，不扫描兄弟项目；先读入口再按问题取相关内容，不整库注入。不要自动创建 Git 子模块或获取独立仓库远端。
 
 ```json
 {
@@ -22,14 +22,13 @@
       "url": "https://example.invalid/team/demo.git",
       "branch": "main",
       "repository": "projects/demo",
-      "skills": ["projects/demo/.agents/skills"],
-      "knowledge": "projects/demo/docs/knowledge"
+      "skills": ["projects/demo/.agents/skills"]
     }
   }
 }
 ```
 
-知识目录至少包含 `README.md` 入口；按主题维护少量 Markdown 条目，按需要增加子目录。入口列出主题、简短用途、相对链接、状态和最后核验日期。优先链接原有权威文档，避免复制出第二套易过期规则。登记后须核验 list/inspect，而不是只编辑 JSON。
+知识目录至少包含 `README.md` 入口；按主题维护少量 Markdown 条目，按需要增加子目录。入口列出主题、简短用途、相对链接、状态和最后核验日期。优先链接原有权威文档，避免复制出第二套易过期规则。使用默认值或显式配置后均须核验 list/inspect/skills，不能只编辑 JSON。
 
 ## 条目格式
 
@@ -66,7 +65,7 @@
 
 ## 查询与任务使用
 
-先 list 选项目，从返回的 knowledge 位置读取 README；目录或工具不可用时明确说明，不能把 unavailable 当作没有知识。先按入口定位主题，再按需读取原文和关联权威文档。不要遍历所有项目或加载整库。
+先 list 选项目，再从 skills/inspect 返回的 knowledge.entrypoint 读取入口；无入口时在 knowledge.path 按当前问题定位文档；目录或工具不可用时明确说明，不能把 unavailable 当作没有知识。先按入口定位主题，再按需读取原文和关联权威文档。不要遍历所有项目或加载整库。
 
 回答提供来源与适用限制。价格、版本、线上状态等易变化事实须重新核验；资料冲突时对照当前代码、配置或原始业务来源，不静默拼接不同版本。失效条目保留替代入口，不能继续作为当前操作依据。
 

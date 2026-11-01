@@ -84,10 +84,12 @@ async function projectBlockers(project,repo) {
   const instructions=await readFile(instructionsPath,'utf8');
   if(/ada_memory|codex_query|客服执行工具|Agent Worker 后台任务/.test(instructions))blockers.push('Project Repo still contains legacy Ada tool or role instructions; complete role separation before activation');
  }catch(error){if(error.code!=='ENOENT')throw error;}
- if(project.knowledge&&!status.knowledge?.available)blockers.push('Project knowledge directory is not prepared');
- if(project.knowledge===project.repository+'/wiki') {
-  try{const wiki=await lstat(join(project.paths.repository,'wiki','.git'));if(!wiki.isFile()&&!wiki.isDirectory())throw Error();}catch{blockers.push('wiki submodule is not initialized');}
+ if(project.knowledgeExplicit&&!status.knowledge?.available)blockers.push('Project knowledge directory is not prepared');
+ if(project.knowledge===project.repository+'/wiki'&&status.git.state==='available') {
+  const tree=(await exec('git',['-c','core.fsmonitor=false','-C',project.paths.repository,'ls-tree','HEAD','--','wiki'],{timeout:5000,maxBuffer:1024*1024,env:{...process.env,GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'}})).stdout.trim();
+  if(tree.startsWith('160000 commit '))try{const marker=await lstat(join(project.paths.repository,'wiki','.git'));if(!marker.isFile()&&!marker.isDirectory())throw Error();}catch{blockers.push('wiki submodule is not initialized');}
  }
+
  return blockers;
 }
 export async function syncPreparation({config,agentId,repo,requireWorkspaceMatch=true,pluginPath}) {

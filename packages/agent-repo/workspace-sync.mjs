@@ -301,6 +301,19 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       if (!gitName(targetBranch) || !gitName(targetRemote) || !/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9._-]+)*$/.test(entry.name) || entry.name.split("/").some(part => part === "." || part === "..")) throw new SyncBlocked("非法子模块配置");
       if (isAbsolute(entry.path) || entry.path.split(/[\\/]/).some((part) => !part || part === ".." || part === ".")) throw new SyncBlocked("非法子模块相对路径");
       const directory = join(root, entry.path);
+      // A conventional wiki can be ordinary project files or a separately managed
+      // Git checkout. Only declared gitlinks enter the submodule update protocol.
+      if(entry.name === "wiki" && entry.path === "wiki") {
+        const tree=await git(root,["ls-tree","HEAD","--",entry.path]);
+        if(!tree.startsWith("160000 commit ")) {
+          if(await exists(join(root,".gitmodules"))) {
+            let declared;
+            try{declared=await git(root,["config","--file",".gitmodules","--get","submodule.wiki.path"]);}catch(error){if(error.code!==1)throw error;}
+            if(declared!==undefined)throw new SyncBlocked("知识库声明与 Git 子模块状态不一致");
+          }
+          continue;
+        }
+      }
       if (await git(root, ["config", "--file", ".gitmodules", "--get", `submodule.${entry.name}.path`]) !== entry.path || !(await git(root, ["ls-tree", "HEAD", "--", entry.path])).startsWith("160000 commit ")) throw new SyncBlocked(`${repo}不是声明的子模块`);
       if (!await exists(join(directory, ".git"))) throw new SyncBlocked(`${repo}尚未初始化，请管理员准备子模块`);
       if (await realpath(directory) !== directory) throw new SyncBlocked(`${repo}目录不能是外部软链接`);

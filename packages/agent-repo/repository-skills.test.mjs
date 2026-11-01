@@ -190,3 +190,11 @@ test('sync tool uses an explicit separate preparation callback and never falls b
  await assert.rejects(projectTool(config,{agentId:'main'}).execute('',{action:'sync'}),/unavailable/);
  await assert.rejects(tool.execute('',{action:'sync',force:true}),/Invalid/);
 });
+
+test('Worker context reads only the selected project wiki or its explicit knowledge override',()=>{
+ const context=skillTaskContext({protocol:1,root:'/agent',catalog:[],skills:'skills',roles:'roles'});
+ assert.match(context.instruction,/wiki\//);
+ assert.match(context.instruction,/显式配置 knowledge/);
+ assert.match(context.instruction,/不读取兄弟项目知识/);
+ assert.match(context.instruction,/知识资料不增加工具权限/);
+});

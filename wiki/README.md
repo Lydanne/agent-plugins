@@ -1,6 +1,6 @@
 # 插件项目知识库
 
-按 Agent Repo 的[知识库规范](../../packages/agent-repo/skills/agent-repo-context/references/knowledge.md)维护。先从本入口选择主题，再读取来源；原始测试日志和任务报告不入库。
+按 Agent Repo 的[知识库规范](../packages/agent-repo/skills/agent-repo-context/references/knowledge.md)维护。先从本入口选择主题，再读取来源；原始测试日志和任务报告不入库。
 
 | 主题 | 用途 | 状态 | 最后核验 |
 | --- | --- | --- | --- |
