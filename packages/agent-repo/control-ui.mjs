@@ -19,7 +19,7 @@ export {mountPeoplePage};
 export default {id:'agent-repo',activate(host){
  const panel=host.ui.registerPanel({id:'projects',label:'项目、技能与子代理',mount:mountProjects});
  const people=host.ui.registerPage({id:'people',label:'飞书人员管理',mount:mountPeoplePage});
- const entities=host.ui.registerPage({id:'entities',label:'实体资料库',mount:mountEntitiesPage});
+ const entities=host.ui.registerPage({id:'entities',label:'实体库',mount:mountEntitiesPage});
  const management=host.ui.registerPage({id:'management',label:'AgentRepo',mount:mountAgentRepo});
  const navigation=host.ui.registerNavigation({id:'agent-repo',label:'AgentRepo',page:{id:'management'},icon:'folder',order:60,defaultVisible:true});
  return ()=>{navigation();management();entities();people();panel();};

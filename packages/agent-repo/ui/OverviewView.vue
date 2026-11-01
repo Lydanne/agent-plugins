@@ -36,7 +36,7 @@ const issues=computed(()=>{
  for(const p of values.maintenance?.providers??[])if(['unavailable','fallback','degraded'].includes(p.state))add(safe(p.label)+'需处理',safe(p.scope)+' · '+({unavailable:'不可读取',fallback:'正在使用已验证旧版',degraded:'检查或更新失败'} as Record<string,string>)[p.state],'projects');
  const d=values.worker?.diagnostics;if(d?.deliveryUncertain)add(d.deliveryUncertain+' 个投递结果待核查','Main 可能已经执行，先查看原任务及事件回执。','worker');if(d?.awaitingMainOverdue)add(d.awaitingMainOverdue+' 个任务等待 Main 超过 30 分钟','等待时间仅用于提醒，不代表任务失败。','worker');
  if(values.catalog&&!values.catalog.registrationCommitted)add('项目登记尚未提交','登记需提交后才能用于正式的项目准备与技能检查。','projects');
- if(values.people?.stats?.missing?.email)add(values.people.stats.missing.email+' 位人员缺少邮箱','可从实体资料库的人员资源查看来源和账号关联。','entities');
+ if(values.people?.stats?.missing?.email)add(values.people.stats.missing.email+' 位人员缺少邮箱','可从实体库的人员资源查看来源和账号关联。','entities');
  if(values.people?.stats?.giteaSources?.email_prefix)add(values.people.stats.giteaSources.email_prefix+' 个账号关联待核验','邮箱推导的候选账号需要核验后再用于人员归属。','entities');
  if(values.logs?.records?.length)add('有 '+values.logs.records.length+' 条保留的异常记录','历史记录可能已处理，请结合时间与原因判断。','logs');
  return result;

@@ -14,8 +14,8 @@ test('AgentRepo is a global management center and personnel is only one of its m
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),{ctx,calls}=fixtureHost();ctx.host.sessions.selectedKey='';
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  assert.match(f.container.textContent,/AgentRepo/);assert.match(f.container.textContent,/管理概览/);assert.equal(calls.length,6);
- const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','知识库','Worker 任务','实体资料库','定时任务','审计','日志']);
- click(f.container,'打开实体资料库');await settle();assert.equal(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'),null);assert.ok(f.container.querySelector('[aria-label="人员库所属 Agent"]')===null);assert.match(f.container.textContent,/实体资料库/);
+ const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体库','定时任务','审计','日志','知识库']);
+ click(f.container,'打开实体库');await settle();assert.equal(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'),null);assert.ok(f.container.querySelector('[aria-label="人员库所属 Agent"]')===null);assert.match(f.container.textContent,/实体库/);
  assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-entities');
  click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
  click(f.container,'定时任务');await settle();assert.match(f.container.textContent,/暂无定时任务/);assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]')===null);
@@ -26,7 +26,7 @@ test('AgentRepo is a global management center and personnel is only one of its m
 test('management center retains its module across Agent switches and discards hidden module responses',async ()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),{ctx,calls}=fixtureHost(),pending=deferred();
  ctx.host.request=async(method,params)=>{calls.push(params);return params.actionId==='projects-entities'?pending.promise:{ok:true,result:params.actionId==='projects-maintenance'?{apiVersion:1,providers:[]}:params.actionId==='inspect-agentTasks'?worker:catalog};};
- const view=f.track(f.ui.mountAgentRepo(f.container,ctx));click(f.container,'实体资料库');await settle();
+ const view=f.track(f.ui.mountAgentRepo(f.container,ctx));click(f.container,'实体库');await settle();
  ctx.host.agents.select('other');await settle();assert.equal(calls.at(-1).agentId,'other');assert.equal(calls.at(-1).sessionKey,'agent:other:agent-repo-entities');
  click(f.container,'概览');await settle();pending.resolve({ok:true,result:{people:[],total:99,nextOffset:null}});await settle();assert.match(f.container.textContent,/管理概览/);assert.ok(!f.container.textContent.includes('99 位同事'));
  view.update({...ctx,props:{section:'logs'}});await settle();assert.equal(f.container.querySelector('[aria-label="AgentRepo 功能模块"] [aria-current=page]').textContent,'日志');
@@ -62,7 +62,7 @@ test('module switches retain the management shell, navigation focus and consiste
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),{ctx,calls}=fixtureHost();
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  const header=f.container.querySelector('.ar-management-header'),nav=f.container.querySelector('.ar-management-nav'),region=f.container.querySelector('.ar-management-body');
- for(const [label,title] of [['项目与技能','项目与技能'],['Worker 任务','Worker 任务'],['实体资料库','实体资料库'],['定时任务','定时任务'],['审计','审计'],['日志','日志'],['概览','管理概览']]){
+ for(const [label,title] of [['项目与技能','项目与技能'],['Worker 任务','Worker 任务'],['实体库','实体库'],['定时任务','定时任务'],['审计','审计'],['日志','日志'],['概览','管理概览']]){
   const control=[...nav.querySelectorAll('button')].find(button=>button.textContent===label);control.focus();control.click();await settle();
   assert.equal(f.container.querySelector('.ar-management-header'),header);assert.equal(f.container.querySelector('.ar-management-nav'),nav);assert.equal(f.container.querySelector('.ar-management-body'),region);
   assert.ok(f.window.document.activeElement===control);assert.equal(control.getAttribute('aria-current'),'page');assert.equal(control.getAttribute('aria-controls'),region.id);

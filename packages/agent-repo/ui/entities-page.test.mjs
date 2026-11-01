@@ -9,7 +9,7 @@ function host(request){const ctx=uiContext(request);ctx.host.agents.rows=[{id:'m
 test('library browses typed records, searches and exposes provenance without write actions',async ()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../entities-page.mjs')),calls=[];
  const ctx=host(async(method,args)=>{calls.push(args);return {ok:true,result:args.actionId==='projects-entityTypes'?{types,total:3}:{entities:[record],total:1,nextOffset:null}};});ctx.host.sessions.selectedKey='';
- f.track(f.ui.mountEntitiesPage(f.container,ctx));await settle();assert.match(f.container.textContent,/实体资料库/);assert.match(f.container.textContent,/工单服务/);assert.match(f.container.textContent,/程序同步/);assert.match(f.container.textContent,/srv-1/);assert.equal(calls[0].sessionKey,'agent:main:agent-repo-entities');
+ f.track(f.ui.mountEntitiesPage(f.container,ctx));await settle();assert.match(f.container.textContent,/实体库/);assert.match(f.container.textContent,/工单服务/);assert.match(f.container.textContent,/程序同步/);assert.match(f.container.textContent,/srv-1/);assert.equal(calls[0].sessionKey,'agent:main:agent-repo-entities');
  click(f.container,'系统服务2');await settle();assert.equal(calls.at(-1).payload.typeId,'service');
  const search=f.container.querySelector('[aria-label="搜索实体"]');search.value='工单';search.dispatchEvent(new f.window.Event('input',{bubbles:true}));select(f.window,f.container,'实体来源','cmdb');await settle();click(f.container,'搜索');await settle();assert.equal(calls.at(-1).payload.query,'工单');assert.equal(calls.at(-1).payload.source,'cmdb');assert.ok(calls.every(call=>['projects-directorySyncInfo','projects-entities','projects-entityTypes'].includes(call.actionId)));
  const before=calls.length;ctx.host.sessions.selectedKey='agent:main:unrelated';ctx.notify();await settle();assert.equal(calls.length,before);
@@ -18,7 +18,7 @@ test('library browses typed records, searches and exposes provenance without wri
 test('Agent switch, hidden page and permission loss discard previous entity details',async ()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../entities-page.mjs')),pending=deferred();
  const ctx=host(async(method,args)=>args.agentId==='main'?pending.promise:{ok:true,result:args.actionId==='projects-entityTypes'?{types,total:0}:{entities:[],total:0,nextOffset:null}});
- const view=f.track(f.ui.mountEntitiesPage(f.container,ctx));select(f.window,f.container,'实体资料库所属 Agent','other');await settle();pending.resolve({ok:true,result:{entities:[record],types,total:1,nextOffset:null}});await settle();assert.ok(!f.container.textContent.includes('工单服务'));assert.match(f.container.textContent,/暂无资料/);
+ const view=f.track(f.ui.mountEntitiesPage(f.container,ctx));select(f.window,f.container,'实体库所属 Agent','other');await settle();pending.resolve({ok:true,result:{entities:[record],types,total:1,nextOffset:null}});await settle();assert.ok(!f.container.textContent.includes('工单服务'));assert.match(f.container.textContent,/暂无资料/);
  ctx.host.connection.canRead=false;ctx.notify();await settle();assert.match(f.container.textContent,/operator.read/);assert.ok(f.container.querySelector('[aria-label="实体列表"]')===null);view.update({...ctx,presented:false});await settle();assert.ok(f.container.querySelector('input')===null);
 });
 test('failed reads are actionable and never presented as an empty successful catalog',async ()=>{
