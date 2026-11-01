@@ -519,3 +519,5 @@ Git 同步失败会保留具体诊断码并传递到入站拦截提示：`AGENT_
 项目知识的目录、条目格式、来源、失效条件、构建、查询及验收统一遵循 [Agent Repo 项目知识库规范 v2](skills/agent-repo-context/references/knowledge.md)。`wiki/` 是默认目录，`knowledge` 可覆盖它；现有插件提供路径检查、目录就绪检查及约定的 Git 同步，不自动建立全文或向量索引。
 
 配套公开模板：[agent-project-temple](https://github.com/Lydanne/agent-project-temple)、[agent-wiki-temple](https://github.com/Lydanne/agent-wiki-temple)。项目元数据 project.json 与角色登记 projects.json 分工不同；完整说明见仓库 docs/agent-templates.md。
+
+项目可以是任意符合现有登记与安全准备合同的独立 Git 仓库，不要求采用模板或 project.json；skills 可为空。模板仅为推荐结构，Git 模式沿用各仓自身政策。模板的 read-only/local/direct/review 工作流见仓库 docs/agent-templates.md，不是插件自动执行的新能力。

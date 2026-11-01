@@ -74,3 +74,5 @@ OpenClaw 宿主升级或重装后，检查 [Control UI 绑定表单补丁的部�
 ## 通用项目与知识库模板
 
 推荐使用 [agent-project-temple](https://github.com/Lydanne/agent-project-temple) 创建项目工作区，使用 [agent-wiki-temple](https://github.com/Lydanne/agent-wiki-temple) 创建项目 wiki。企业结构来源、元数据及技能通用化、初始化与 agent-repo 接入见 [模板说明](docs/agent-templates.md)。
+
+agent-repo 支持任意符合登记合同的项目仓库，使用模板不是前提。两个模板补充了可配置的 Git 工作模式和逐仓交付流程，详见上述模板说明；Git 模式属于仓库工作约定，不提供新的宿主权限。

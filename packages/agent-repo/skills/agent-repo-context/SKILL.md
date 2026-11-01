@@ -33,6 +33,9 @@ people/person 优先返回人工更正后的本地值；无匹配时可由配套
 
 ## 项目与技能
 
+project 可登记任意符合当前路径、远端、分支与安全准备合同的独立 Git 仓库，不要求来自模板或含 project.json。模板仅是推荐结构。仓库现有规范和 Git 工作模式继续有效；不把模板的默认 review 或自动化约定套用到任意项目，也不从角色仓授权推断可推送业务仓库或独立 wiki。
+
+
 list/inspect 只读登记和本地状态，不证明远端最新。多项目按本轮意图明确选定，歧义时询问，defaultProject 不作任务回退。skills 返回所选 repository 的有效技能索引；读取适用 SKILL.md 和 instructions 的规范后，agent_worker run 传同一 repository。Worker cwd 是项目根，子仓库后缀只限定技能与规范范围；同名子仓库覆盖项目根、角色边界优先，兄弟仓库不生效。
 
 启用同步时 skills 会执行管理员配置的安全准备；只有明确要求更新代码时才使用 sync，立即同步所选项目、wiki 和登记的直接业务子仓库。失败保留现场，不 reset、stash、初始化、切换分支、提交或推送；核对 synchronization 后才能称已同步。本地修改降级不等于远端更新成功。

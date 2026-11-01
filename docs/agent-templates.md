@@ -1,5 +1,11 @@
 # 通用 Agent 模板与 agent-repo
 
+## 任意项目仓库均可接入
+
+agent-repo 的 project 是角色仓库 projects.json 中登记的实际项目仓库，不要求从模板生成，也不要求存在 project.json、特定语言、目录骨架或模板标记。既有代码仓库、文档仓库与知识仓库均可接入；仍须满足现有路径/远端/分支、独立 Git 根和安全准备合同。skills 可为空数组，知识目录默认 wiki/，显式 knowledge 可覆盖，缺省知识目录缺失不阻止普通任务。
+
+模板只是推荐起点。project.json 是模板自身元数据，不是 agent-repo 运行时准入条件；其 Git 模式也不是插件会自动执行或强制实施的宿主设置。不能为了接入而强制改造任意仓库成模板布局。
+
 ## 两个模板仓库
 
 | 模板 | 用途 | 主要内容 |
@@ -63,3 +69,20 @@ wiki 模板提供 knowledge-ingest、knowledge-build、skill-maintenance；项�
 两个模板均可运行 `python3 scripts/check.py` 和 `python3 -m unittest discover -s tests`；项目模板还校验 wiki 种子。检查覆盖模板元数据、UID、关系目标、本地链接及关键策略反例，不检查远端链接可访问性、事实真实性或生产行为。GitHub Actions 执行同一组检查。
 
 agent-repo 不因模板接入而增加向量检索、自动材料采集、飞书发布或自动合并能力。新增或语义变化内容保持 draft，真实审核和外部发布分别记录。
+
+## Git 工作模式与各仓交付
+
+两个模板均提供 `.agents/skills/git-workflow/SKILL.md`、场景引用和只读 `scripts/git-check.py`。项目模板在 project.json.git 配置，独立 wiki 在 git-policy.json 配置；同一仓库只维护一份模式来源。
+
+| delivery | 工作模式 | 交付范围 |
+| --- | --- | --- |
+| read-only | 只读检查 | 无修改、提交、fetch、push 或 PR |
+| local | 本地完成 | 修改、验证、精确提交，停止于本地 SHA |
+| direct | 直接交付 | 在已获授权且允许直推的目标分支普通 push，并核对远端 SHA |
+| review | 分支评审 | 任务分支、提交、push、创建或复用 PR、核对当前 head 的 CI/Review/冲突，保留 PR open |
+
+默认 review；auto_merge=false。当前用户指令、目标仓库规范、宿主权限和平台保护优先，模式不能充当新授权。模板约定不是 agent-repo schema 的新增字段；任意仓库沿用自己的 AGENTS.md、技能及 Git 政策，不必创建这些配置文件。
+
+工作流覆盖：现场/未推送提交/worktree 检查、安全快进、任务分支、适用验证、精确暂存、提交、推送回执核对、PR 去重与 head 门禁、失败/冲突保留以及逐仓交付结果。根项目、独立业务仓库和独立 wiki 分别判定模式；普通 wiki 归父仓，子模块先交付子仓再按授权更新 gitlink。不让单仓授权扩展为递归更新或跨仓推送，也不把 PR、合并和部署混为完成。
+
+只读检查脚本不访问远端、不判断授权、不修改 Git；其本地 ahead/behind 仅针对现有远端跟踪引用。远端新鲜度、CI 和平台审批需按实际工具另外核验。
