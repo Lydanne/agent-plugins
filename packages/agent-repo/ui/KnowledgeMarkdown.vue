@@ -9,7 +9,7 @@ const prefix='kb-'+useId().replace(/[^a-z0-9-]/gi,'')+'-';
 const MarkdownBody=()=>h('article',{class:'kb-markdown',tabindex:-1,'aria-label':'Markdown 正文'},renderKnowledgeTokens(parsed.value.tokens,{path:props.path,prefix,navigate}));
 function scroll(fragment:string){
  const slug=fragment?parsed.value.headings.find(item=>item.slug===fragment)?.slug??parsed.value.headings.find(item=>item.slug===headingSlug(fragment))?.slug:parsed.value.headings[0]?.slug;
- const target=fragment?Array.from(root.value?.querySelectorAll<HTMLElement>('[data-kb-heading]')??[]).find(el=>el.dataset.kbHeading===slug):root.value?.querySelector<HTMLElement>('.kb-markdown');
+ const target=fragment?Array.from(root.value?.querySelectorAll<HTMLElement>('[data-kb-heading]')??[]).find(el=>el.dataset.kbHeading===slug):root.value;
  if(!target){notice.value=props.partial?'目标标题尚未加载，请加载后续内容。':'未找到链接指向的标题。';return false;}
  notice.value='';target.scrollIntoView?.({block:'start',behavior:'smooth'});target.focus({preventScroll:true});return true;
 }
@@ -20,16 +20,16 @@ function navigate(link:KnowledgeLink){
 }
 let pendingFragment:string|undefined;
 function jump(fragment:string){pendingFragment=!scroll(fragment)&&props.partial?fragment:undefined;}
-watch(()=>[props.path,props.navigationId],async()=>{source.value=false;notice.value='';pendingFragment=undefined;await nextTick();if(props.fragment)jump(props.fragment);},{immediate:true});
+watch(()=>[props.path,props.navigationId],async()=>{source.value=false;notice.value='';pendingFragment=undefined;await nextTick();jump(props.fragment);},{immediate:true});
 watch(()=>props.content,async()=>{if(pendingFragment!==undefined&&!source.value){await nextTick();jump(pendingFragment);}});
 </script>
 <template>
- <div ref="root" class="kb-renderer">
+ <div ref="root" class="kb-renderer" tabindex="-1">
   <div class="kb-reader-tools"><span>{{source?'Markdown 原文':'Markdown 预览'}}</span><Button variant="outline" size="sm" :aria-pressed="source" @click="source=!source">{{source?'查看预览':'查看原文'}}</Button></div>
   <StatusNotice v-if="notice" tone="warning" class="kb-link-notice">{{notice}}</StatusNotice>
   <pre v-if="source" class="kb-source" tabindex="0" aria-label="Markdown 原文">{{content}}</pre>
   <template v-else>
-   <nav v-if="parsed.headings.length" class="kb-toc" aria-label="文档标题目录"><strong>目录</strong><small v-if="partial">随已加载正文更新</small><ol><li v-for="heading in parsed.headings" :key="heading.slug" :style="{paddingInlineStart:(heading.level-1)*12+'px'}"><a :href="'#'+prefix+heading.slug" @click.prevent="scroll(heading.slug)">{{heading.text||'无标题'}}</a></li></ol></nav>
+   <nav v-if="parsed.headings.length" class="kb-toc" aria-label="文档标题目录"><strong>目录</strong><small v-if="partial">随已加载正文更新</small><ol><li v-for="heading in parsed.headings" :key="heading.slug" :style="{paddingInlineStart:(heading.level-1)*12+'px'}"><a :href="'#'+prefix+heading.slug" @click.prevent="jump(heading.slug)">{{heading.text||'无标题'}}</a></li></ol></nav>
    <details v-if="parsed.frontmatter" class="kb-frontmatter"><summary>文档元数据</summary><pre>{{parsed.frontmatter}}</pre></details>
    <MarkdownBody />
   </template>

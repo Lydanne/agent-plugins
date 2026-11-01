@@ -46,7 +46,7 @@ test('does not concatenate changed document revisions or paint a stale Agent res
 });
 
 test('Markdown preview has a TOC, safe scoped document navigation, anchors, back navigation and raw source',async()=>{
- const body='# 知识指南\n\n[同篇](#第二节) · [下一篇](nested/next.md#目标) · [越界](../outside.md) · [缺失](missing.md) · [未加载](#尾部)\n\n## 第二节\n\n**重点**\n\n| 字段 | 值 |\n| --- | --- |\n| UID | `guide` |';
+ const body='# 知识指南\n\n[同篇](#第二节) · [下一篇](nested/next.md#目标) · [无锚点下一篇](nested/next.md) · [越界](../outside.md) · [缺失](missing.md) · [未加载](#尾部)\n\n## 第二节\n\n**重点**\n\n| 字段 | 值 |\n| --- | --- |\n| UID | `guide` |';
  const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId!=='projects-knowledgeRead'?listing:p.payload.path==='missing.md'?{...scope,found:false}:p.payload.path==='nested/next.md'?{...doc,entry:{...entry,path:'nested/next.md',title:'下一篇'},content:'# 下一篇\n\n## 目标\n\n跳转成功',nextLine:null}:p.payload.startLine===11?{...doc,content:'\n## 尾部\n\n完整结尾',startLine:11,endLine:14,totalLines:14,nextLine:null}:{...doc,content:body,endLine:10,totalLines:14,nextLine:11});
  const link=text=>[...f.container.querySelectorAll('.kb-markdown a')].find(el=>el.textContent===text);
  f.container.querySelector('.kb-entry').click();await settle();assert.equal(f.container.querySelectorAll('.kb-toc a').length,2);assert.equal(f.container.querySelectorAll('.kb-markdown td').length,2);
@@ -54,6 +54,7 @@ test('Markdown preview has a TOC, safe scoped document navigation, anchors, back
  const count=f.calls.length;link('越界').click();await settle();assert.equal(f.calls.length,count);assert.match(f.container.textContent,/链接超出当前知识库目录/);
  link('下一篇').click();await settle();assert.equal(f.calls.at(-1).payload.path,'nested/next.md');assert.equal(f.calls.at(-1).payload.projectId,'one');assert.equal(f.window.document.activeElement.textContent,'目标');
  click(f.container,'返回上篇');await settle();assert.equal(f.calls.at(-1).payload.path,'guide.md');
+ link('无锚点下一篇').click();await settle();assert.ok(f.window.document.activeElement.classList.contains('kb-renderer'));click(f.container,'返回上篇');await settle();
  link('缺失').click();await settle();assert.match(f.container.textContent,/条目已不存在/);assert.equal(f.container.querySelector('.kb-markdown'),null);click(f.container,'返回上篇');await settle();
  link('未加载').click();await settle();assert.match(f.container.textContent,/目标标题尚未加载/);click(f.container,'加载后续内容');await settle();assert.equal(f.window.document.activeElement.textContent,'尾部');assert.equal(f.container.querySelectorAll('.kb-toc a').length,3);
  click(f.container,'查看原文');await settle();assert.ok(f.container.querySelector('[aria-label="Markdown 原文"]').textContent.startsWith('# 知识指南'));assert.equal(f.container.querySelector('.kb-markdown'),null);click(f.container,'查看预览');await settle();
@@ -70,4 +71,12 @@ test('validation is a closeable modal with loading, failure, retry and stale-res
  click(modal,'重新校验');await settle();modal=f.container.querySelector('[role=dialog]');assert.match(modal.textContent,/存在结构问题/);assert.match(modal.textContent,/1 项错误 \/ 1 项提醒/);assert.match(modal.textContent,/\[redacted\]\.md/);assert.match(modal.textContent,/结果可能不完整/);
  select(f.window,f.container,'知识库项目','two');await settle();assert.equal(f.container.querySelector('[role=dialog]'),null);
  click(f.container,'校验结构');await settle();f.ctx.host.connection.canRead=false;f.ctx.notify();await settle();assert.equal(f.container.querySelector('[role=dialog]'),null);
+});
+
+
+test('choosing another TOC heading cancels an earlier unloaded anchor destination',async()=>{
+ const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId!=='projects-knowledgeRead'?listing:p.payload.startLine===3?{...doc,content:'## later',startLine:3,endLine:3,nextLine:null}:{...doc,content:'# start\n\n[稍后](#later)\n\n## current'});
+ f.container.querySelector('.kb-entry').click();await settle();f.container.querySelector('.kb-markdown a').click();await settle();assert.match(f.container.textContent,/目标标题尚未加载/);
+ [...f.container.querySelectorAll('.kb-toc a')].find(el=>el.textContent==='current').click();await settle();assert.equal(f.window.document.activeElement.textContent,'current');
+ click(f.container,'加载后续内容');await settle();assert.notEqual(f.window.document.activeElement.textContent,'later');assert.ok(!f.container.textContent.includes('目标标题尚未加载'));
 });
