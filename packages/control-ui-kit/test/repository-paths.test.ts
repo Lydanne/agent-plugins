@@ -24,10 +24,12 @@ test('Windows volumes and UNC paths do not invent cross-volume relative paths',(
 });
 test('path metadata is scoped to the visible readable Agent and never changes raw response or action values',()=>{
  const context=shallowRef({props:{},presented:true,signal:new AbortController().signal,host:{connection:{canRead:true},agents:{selectedId:'alice'}}} as unknown as ControlUiViewContext),paths=createRepositoryPaths(context);
- const response={ok:true,agentRepoRoot:'/agents/alice',result:{cwd:'/agents/alice/projects/demo'}},before=JSON.stringify(response);
- paths.consume('alice',response);expect(paths.display(response.result.cwd)).toBe('projects/demo');expect(JSON.stringify(response)).toBe(before);
+ const envelope=(root:string)=>({ok:true,result:{encoding:'json-chunks',agentRepoRoot:root,chunk:JSON.stringify({cwd:'/agents/alice/projects/demo'})}});
+ const response=envelope('/agents/alice'),before=JSON.stringify(response);
+ paths.consume('alice',{ok:true,agentRepoRoot:'/unsupported'});paths.consume('alice',{ok:true,result:{agentRepoRoot:'/not-a-transfer'}});expect(paths.root.value).toBeUndefined();
+ paths.consume('alice',response);expect(paths.display(JSON.parse(response.result.chunk).cwd)).toBe('projects/demo');expect(JSON.stringify(response)).toBe(before);
  context.value={...context.value,host:{...context.value.host,agents:{...context.value.host.agents,selectedId:'bob'}}};paths.sync();expect(paths.root.value).toBeUndefined();paths.consume('alice',response);expect(paths.root.value).toBeUndefined();
- paths.consume('bob',{ok:true,agentRepoRoot:'/agents/bob'});expect(paths.display('/agents/bob/wiki')).toBe('wiki');
- context.value={...context.value,presented:false};paths.sync();expect(paths.root.value).toBeUndefined();context.value={...context.value,presented:true};paths.consume('bob',{ok:false,agentRepoRoot:'/wrong'});paths.consume('bob',{ok:true,agentRepoRoot:'../wrong'});expect(paths.root.value).toBeUndefined();
- paths.consume('bob',{ok:true,agentRepoRoot:'/agents/bob'});context.value={...context.value,host:{...context.value.host,connection:{...context.value.host.connection,canRead:false}}};paths.sync();expect(paths.root.value).toBeUndefined();
+ paths.consume('bob',envelope('/agents/bob'));expect(paths.display('/agents/bob/wiki')).toBe('wiki');
+ context.value={...context.value,presented:false};paths.sync();expect(paths.root.value).toBeUndefined();context.value={...context.value,presented:true};paths.consume('bob',{...envelope('/wrong'),ok:false});paths.consume('bob',envelope('../wrong'));expect(paths.root.value).toBeUndefined();
+ paths.consume('bob',envelope('/agents/bob'));context.value={...context.value,host:{...context.value.host,connection:{...context.value.host.connection,canRead:false}}};paths.sync();expect(paths.root.value).toBeUndefined();
 });

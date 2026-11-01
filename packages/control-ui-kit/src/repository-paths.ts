@@ -25,7 +25,7 @@ export function createRepositoryPaths(context:ShallowRef<ControlUiViewContext>){
  const root=computed(()=>allowed()&&state.value?.agentId===agentId()?state.value.path:undefined);
  function accept(owner:string|undefined,value:unknown){const id=owner??agentId();if(!allowed()||!id||id!==agentId()||typeof value!=='string'||!absolutePath(value)||state.value?.agentId===id&&state.value.path===value)return;state.value={agentId:id,path:value};}
  return {root,accept,
-  consume(owner:string|undefined,response:unknown){if(response&&typeof response==='object'&&(response as {ok?:unknown}).ok===true)accept(owner,(response as {agentRepoRoot?:unknown}).agentRepoRoot);},
+  consume(owner:string|undefined,response:unknown){if(!response||typeof response!=='object'||(response as {ok?:unknown}).ok!==true)return;const part=(response as {result?:unknown}).result;if(part&&typeof part==='object'&&(part as {encoding?:unknown}).encoding==='json-chunks')accept(owner,(part as {agentRepoRoot?:unknown}).agentRepoRoot);},
   sync(){if(!allowed()||state.value?.agentId!==agentId())state.value=undefined;},
   display(value:unknown){const text=String(value??'');return root.value?relativeRepositoryPath(root.value,text):text;},
  };

@@ -9,7 +9,7 @@ const listing={...scope,entries:[entry],total:1,offset:0,nextOffset:null};
 const doc={...scope,found:true,entry,content:'# 知识指南\n<script>SECRET</script>',startLine:1,endLine:2,totalLines:3,nextLine:3,sha256:'a',lineTruncated:false};
 async function fixture(handler){
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
- const ctx=uiContext(async(method,p)=>{calls.push(p);assert.equal(method,'plugins.sessionAction');assert.equal(p.sessionKey,'agent:'+p.agentId+':agent-repo-management');return {ok:true,agentRepoRoot:p.agentId==='other'?'/other':'/project',result:await handler(p)};},{section:'knowledge'});ctx.host.connection.canWrite=false;ctx.host.redact=value=>String(value).replaceAll('SECRET','[redacted]');
+ const ctx=uiContext(async(method,p)=>{calls.push(p);assert.equal(method,'plugins.sessionAction');assert.equal(p.sessionKey,'agent:'+p.agentId+':agent-repo-management');return {ok:true,result:{encoding:'json-chunks',transferId:'fixture',totalChunks:1,index:0,agentRepoRoot:p.agentId==='other'?'/other':'/project',chunk:JSON.stringify(await handler(p))}};},{section:'knowledge'});ctx.host.connection.canWrite=false;ctx.host.redact=value=>String(value).replaceAll('SECRET','[redacted]');
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();return {...f,ctx,calls};
 }
 const catalog={projects:[{projectId:'one',name:'项目一'}]};

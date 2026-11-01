@@ -148,7 +148,7 @@ export function registerInspector(api,inspector,{now=()=>Date.now()}={}){
     while(transfers.size>=4||[...transfers.values()].reduce((sum,value)=>sum+value.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);
     transfers.set(transferId,value);
    }
-   return {ok:true,...await repositoryPathContext(context),result:part(transferId,value,0)};
+   return {ok:true,result:{...part(transferId,value,0),...await repositoryPathContext(context)}};
   }
   catch(error){if(action==='deleteSession')return {ok:false,error:[
     '请确认要删除的具体会话。','会话不存在或已经删除，请刷新列表。','会话项目不匹配，请刷新列表。','会话已变化，请刷新后重新确认删除。','旧执行器仍占用存储，请先处理原任务。','会话仍有未结束或状态未知的任务，请先处理原任务。','会话仍有待交付或待核查的结果，请先处理交付状态。'

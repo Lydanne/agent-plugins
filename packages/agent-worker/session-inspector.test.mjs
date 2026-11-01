@@ -207,6 +207,6 @@ test('Worker path labels receive only the trusted AgentRepo root without changin
  const {realpath}=await import('node:fs/promises'),{registerAgentRepoService}=await import('./dist/agent-repo-api.mjs'),root=await realpath(await mkdtemp(join(tmpdir(),'worker-root-metadata-')));t.after(()=>rm(root,{recursive:true,force:true}));
  const stop=registerAgentRepoService({apiVersion:1,agentId:'path-main',root,listProjects:async()=>({projects:[]}),inspectProject:async()=>({}),prepareExecutionScope:async()=>({})},{owner:Symbol()});t.after(stop);
  const raw={sessions:[{cwd:join(root,'projects/demo')}]},actions=[];registerInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>raw});
- const response=await actions.find(a=>a.id==='inspect-list').handler({agentId:'path-main',sessionKey:'agent:path-main:test',payload:{}});assert.equal(response.agentRepoRoot,root);assert.equal(JSON.parse(response.result.chunk).sessions[0].cwd,raw.sessions[0].cwd);
- const foreign=await actions.find(a=>a.id==='inspect-list').handler({agentId:'other',sessionKey:'agent:path-main:test',payload:{}});assert.equal(foreign.agentRepoRoot,undefined);
+ const response=await actions.find(a=>a.id==='inspect-list').handler({agentId:'path-main',sessionKey:'agent:path-main:test',payload:{}});assert.deepEqual(Object.keys(response).sort(),['ok','result']);assert.equal(response.result.agentRepoRoot,root);assert.equal(JSON.parse(response.result.chunk).sessions[0].cwd,raw.sessions[0].cwd);
+ const foreign=await actions.find(a=>a.id==='inspect-list').handler({agentId:'other',sessionKey:'agent:path-main:test',payload:{}});assert.equal(foreign.result?.agentRepoRoot,undefined);
 });

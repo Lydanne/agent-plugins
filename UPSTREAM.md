@@ -138,4 +138,4 @@ upstream MIT license; it is not an installed-runtime patch or automatic deploy.
 
 - 知识库图谱复用 markdown-it 15.0.3 的 token 解析读取 Markdown 链接，保留默认 HTML 禁用；本地 SVG 布局为项目自实现，不增加远端图表脚本或第二套 UI 运行时。
 
-- 2026-11-01：共享 UI 增加按可信 AgentRepo 根目录格式化路径的展示适配。根目录作为只读会话操作的可选响应元数据传递，不重写原始业务结果或路径参数；AgentRepo 与 Worker 复用同一相对路径规则与权限生命周期。
+- 2026-11-01：共享 UI 增加按可信 AgentRepo 根目录格式化路径的展示适配。根目录作为会话操作 `result` 数据块的可选展示元数据传递，兼容宿主封闭的响应外壳，不重写原始业务结果或路径参数；AgentRepo 与 Worker 复用同一相对路径规则与权限生命周期。

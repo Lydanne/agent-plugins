@@ -174,7 +174,7 @@ test('process clocks tick without replacing disclosures and stop at task complet
 for(const fields of [{cwd:'/agent/workspace/xgj-0/a long directory',directoryKind:'workspace'},{cwd:'/agent/projects/xgj',directoryKind:'project'},{workspacePending:true},{}]) test('session directory display '+JSON.stringify(fields),async()=>{
   const f=await browserFixture({after:onTestFinished},panelEntry);
   const session={topic:'directory',status:'completed',tags:[],heat:0,taskCount:1,interactionCount:1,...fields};
-  const ctx=uiContext(async(_m,p)=>({ok:true,agentRepoRoot:'/agent',result:p.payload.topic?{session,records:[],currentTasks:[],taskHistory:[],hasMore:false}:{...listing(null),sessions:[session],groupCounts:{active:0,history:1,unknown:0}}}),{agentId:'main',sessionKey:'agent:main:test'});
+  const ctx=uiContext(async(_m,p)=>({ok:true,result:{encoding:'json-chunks',transferId:'fixture',totalChunks:1,index:0,agentRepoRoot:'/agent',chunk:JSON.stringify(p.payload.topic?{session,records:[],currentTasks:[],taskHistory:[],hasMore:false}:{...listing(null),sessions:[session],groupCounts:{active:0,history:1,unknown:0}})}}),{agentId:'main',sessionKey:'agent:main:test'});
   f.track(f.ui.mountPanel(f.container,ctx));await settle();f.container.querySelector('.cq-row-open').click();await settle();await press(f,'会话信息');
   assert.ok(f.container.textContent.includes(fields.cwd?.replace('/agent/','')??(fields.workspacePending?'等待分配 workspace':'未记录运行目录')));if(fields.cwd){assert.ok(!f.container.querySelector('.cq-information').textContent.includes('/agent/'));assert.equal(session.cwd,fields.cwd);}
   if(fields.directoryKind==='workspace')assert.ok(f.container.textContent.includes('独立 workspace'));

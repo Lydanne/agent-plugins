@@ -613,6 +613,6 @@ CLI 也支持 `openclaw agent-repo knowledge-list --agent alice --params '{"proj
 
 ### 管理界面的路径展示
 
-AgentRepo 与 Worker 的目录、技能路径、工作区路径、运行目录等路径字段统一以当前已绑定 AgentRepo 根为基准展示（例如 `projects/agent-plugins/wiki`），根目录自身显示 `.`。同卷外部路径显示为 `../` 相对路径；跨 Windows 盘符或根目录尚不可用时保留原值。根目录来自已授权读取响应的 `agentRepoRoot` 展示元数据，不额外请求目录、不推断宿主 HOME，也不提供路径访问授权。
+AgentRepo 与 Worker 的目录、技能路径、工作区路径、运行目录等路径字段统一以当前已绑定 AgentRepo 根为基准展示（例如 `projects/agent-plugins/wiki`），根目录自身显示 `.`。同卷外部路径显示为 `../` 相对路径；跨 Windows 盘符或根目录尚不可用时保留原值。根目录来自已授权读取响应 `result` 数据块中的 `agentRepoRoot` 展示元数据，不额外请求目录、不推断宿主 HOME，也不提供路径访问授权。
 
 仅转换展示值。API 返回、原始正文/命令/诊断记录与操作参数保留原始路径；导航、导出和后端执行继续使用原数据，不能把界面相对路径当作新的工具范围。切换 Agent、隐藏页面或失去读取权限后清除旧根目录，延迟响应不能复用其他 Agent 的路径基准。
