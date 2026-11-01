@@ -6,7 +6,7 @@ All formal AgentRepo and AgentWorker browser entries use Vue 3 Composition API a
 
 | Surface | Vue implementation and retained behavior |
 | --- | --- |
-| Management shell / overview | Seven modules in original order; independent source errors, resource counts, maintenance warnings and Worker summary |
+| Management shell / overview | Eight modules including project knowledge; independent source errors, resource counts, maintenance warnings and Worker summary |
 | Projects and compatibility sidebar | Agent/project tabs, repository scopes, metadata, subagents, warnings, project skills, CLI policy maintenance and Worker navigation |
 | Workspace / skill maintenance | Lazy reads, draft preservation, revision and request IDs, confirmations, update policies, capacity/occupancy, audit and stale-response isolation |
 | Agent-wide Worker tasks | Cross-session summaries, filters, paging, timing, delivery warnings and exact job links; separate data adapter from current-session Worker queries |
@@ -18,7 +18,7 @@ All formal AgentRepo and AgentWorker browser entries use Vue 3 Composition API a
 
 ## Shared kit and distribution
 
-`@openclaw-plugins/control-ui-kit` owns host snapshots, per-view theme/portal roots, shadcn-vue source components and reusable interactions. It contains Button, Input, NativeSelect, Select, Checkbox, Switch, Tabs, Badge, Tooltip, Table, Pagination, Card, Skeleton, Empty, Alert, Collapsible, Dialog, AlertDialog, Sheet, Popover and DropdownMenu. Business views own authorization, scope invalidation and server outcome interpretation. No router, Pinia or caching framework was introduced.
+`@openclaw-plugins/control-ui-kit` owns host snapshots, per-view theme/portal roots, shadcn-vue source components and reusable interactions. It contains Button, Input, NativeSelect, Select, Checkbox, Switch, Tabs, Badge, Tooltip, Table, Pagination, Card, Skeleton, Empty, Alert, Collapsible, Dialog, AlertDialog, Sheet, Popover and DropdownMenu. PageHeader, SearchField, EmptyState and StatusNotice compose these primitives for consistent feature pages. Business views own authorization, scope invalidation and server outcome interpretation. No router, Pinia or caching framework was introduced.
 
 Theme variables inherit the host palette; management green and sidebar blue-gray are retained. Tailwind utilities use `ocp:` with no global Preflight. Base rules stay inside plugin roots. The sole native-dialog compatibility exception restores pointer interaction to a host top-layer dialog while a plugin modal owns the body lock. Chromium verifies that dismissing the host dialog leaves the plugin dialog open.
 

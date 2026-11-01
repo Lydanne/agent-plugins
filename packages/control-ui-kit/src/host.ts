@@ -1,3 +1,4 @@
+import {themeVariables} from './theme-tokens';
 import {createApp, shallowRef, inject, type Component, type InjectionKey, type ShallowRef} from 'vue';
 import type {ControlUiViewContext, ControlUiView} from 'openclaw/plugin-sdk/control-ui';
 const contextKey:InjectionKey<ShallowRef<ControlUiViewContext>>=Symbol('control-ui-context');
@@ -23,7 +24,7 @@ function mountInstance(component:Component,options:{density?:'sidebar'|'page'},c
   const syncTheme=()=>{
    if(disposed)return;
    const style=document.defaultView!.getComputedStyle(root);
-   for(const name of ['--bg','--text','--muted','--border','--error-color','--ocp-background','--ocp-foreground','--ocp-muted','--ocp-primary','--ocp-secondary','--ocp-border','--ocp-destructive','--ocp-running','--ocp-success','--ocp-queued']){
+   for(const name of themeVariables){
     const value=style.getPropertyValue(name);if(value)overlay.style.setProperty(name,value);else overlay.style.removeProperty(name);
    }
   };

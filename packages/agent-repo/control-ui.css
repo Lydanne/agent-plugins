@@ -13,7 +13,7 @@
 .ar-management>.ar-meta{margin:18px 0 0;font-size:11px;color:var(--ar-muted)}
 .ar-management-nav{display:flex;gap:24px;margin:10px 0 28px;border-bottom:1px solid var(--ar-line);overflow-x:auto}
 .ar-management-nav button{background:transparent;border:0;border-radius:0;border-bottom:2px solid transparent;padding:14px 0 12px;color:var(--ar-muted);white-space:nowrap}
-.ar-management-nav button[aria-current=page]{color:var(--ar-accent);border-bottom-color:var(--ar-accent);font-weight:650}
+.ar-management-nav button[aria-current=page]{color:var(--ar-ink);border-bottom-color:var(--ar-accent);font-weight:650}
 .ar-management button:focus-visible,.ar-management select:focus-visible{outline:2px solid #709b8b;outline-offset:3px}
 .ar-overview h2{font-size:20px;line-height:1.4;letter-spacing:-.02em;margin:0}
 .ar-overview h3{font-size:14px;font-weight:650;margin:0 0 6px}

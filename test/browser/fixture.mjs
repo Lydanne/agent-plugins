@@ -1,4 +1,5 @@
 const params=new URLSearchParams(location.search),container=document.querySelector('#view');
+document.documentElement.dataset.theme=params.get('theme')==='dark'?'dark':'light';
 const listeners=new Set(),pages=new Map(),panels=new Map(),activations=[],calls=[],opened=[];
 const extraViews=[];let stopWorker;
 let logHistoryFailure=false,logSourceFailure=false,logReadFailure=false,logWarnings=false,delayLogStarts=false,pendingLogStarts=[],leaseSequence=0;
@@ -35,8 +36,17 @@ let person={id:'person-1',revision:'person-r1',name:'测试同事',email:'person
 const entity={id:'entity-1',typeId:'service',name:'测试工单服务',summary:'结构化资料与来源保持完整',attributes:{url:'https://example.test/service/'+('long-id-'.repeat(18))},source:{kind:'program',namespace:'cmdb',externalId:'service-source-1'},observedAt:'2026-10-29',updatedAt:'2026-10-30',revision:'entity-r1'};
 const entityTypes=[{id:'person',label:'人员资源',count:1,fields:{}},{id:'service',label:'系统服务',count:1,fields:{url:{label:'服务地址'}}}];
 let directoryRun=null,peopleRun=null;
+const knowledgeScope={knowledgePath:'/fixture/projects/demo/wiki',metadataNamespace:'x_xgj',namespaceSource:'project.json',normalized:true,available:true,complete:true,issues:[]};
+const knowledgeDocs=[{path:'guides/knowledge.md',title:'项目知识库使用指南',uid:'guides.knowledge',content:'# 项目知识库使用指南\n\n通过项目 wiki 保存来源明确、可以复核的知识。\n\n'+Array.from({length:120},(_,i)=>'第 '+(i+1)+' 条：报告的正文、来源与验证记录应当分别核对。').join('\n')},{path:'guides/report.md',title:'报告交付验收',uid:'guides.report',content:'# 报告交付验收\n\n搜索、读取和验证本地 Markdown 文档。\n\n<script>这段原文必须显示为文本。</script>'}];
 async function resultFor(p){
  const v=p.payload??{};
+ if(p.actionId==='projects-knowledgeCatalog')return {projects:[{projectId:'demo',name:'示例项目'},{projectId:'empty',name:'未创建知识库的项目'}]};
+ if(p.actionId?.startsWith('projects-knowledge')){
+  if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
+  if(p.actionId==='projects-knowledgeValidate')return {...knowledgeScope,valid:true,errors:[],warnings:[]};
+  if(p.actionId==='projects-knowledgeRead'){const d=knowledgeDocs.find(d=>d.path===v.path);if(!d)return {...knowledgeScope,found:false};const lines=d.content.split('\n'),start=v.startLine??1,end=Math.min(lines.length,start+(v.maxLines??100)-1);return {...knowledgeScope,found:true,entry:d,content:lines.slice(start-1,end).join('\n'),startLine:start,endLine:end,totalLines:lines.length,nextLine:end<lines.length?end+1:null,sha256:'fixture-'+d.uid,lineTruncated:false};}
+  const entries=knowledgeDocs.filter(d=>!v.query||v.query.toLowerCase().split(/\s+/).every(t=>(d.title+' '+d.uid+' '+d.content).toLowerCase().includes(t))).map(({content,...entry})=>({...entry,excerpt:content.split('\n')[2],line:1})),offset=v.offset??0,limit=v.limit??20;return {...knowledgeScope,entries:entries.slice(offset,offset+limit),offset,total:entries.length,nextOffset:offset+limit<entries.length?offset+limit:null};
+ }
  if(p.actionId==='projects-diagnosticHistory'){if(logHistoryFailure)throw Error('模拟历史读取失败');return {agentId:p.agentId,rows:logHistory(p.agentId),warnings:logWarnings?['模拟部分来源不可读']:[]};}
  if(p.actionId==='projects-repositoryLogs')return {agentId:p.agentId,records:[]};
  if(p.actionId==='projects-diagnosticSources'){if(logSourceFailure)throw Error('模拟来源读取失败');return {agentId:p.agentId,sources:logSources};}

@@ -89,3 +89,13 @@ it('still installs a replacement lifetime after an old host unsubscribe error',a
  expect(()=>view.update?.({...b.ctx,props:{topic:'replacement'}})).toThrow(error);await nextTick();expect(a.container.textContent).toBe('replacement');expect(b.listeners.size).toBe(1);
  view.dispose?.();expect(b.listeners.size).toBe(0);a.container.remove();b.container.remove();
 });
+
+it('keeps customized shadcn surface and contrast tokens synchronized to the owning portal',async()=>{
+ const f=fixture();const view=mountVueView(defineComponent({render:()=>h('p','theme')}))(f.container,f.ctx)!;
+ try{
+  const root=f.container.querySelector<HTMLElement>('[data-ocp-view-root]')!,overlay=document.querySelector<HTMLElement>('[data-ocp-overlay]')!;
+  for(const [name,value] of Object.entries({'--ocp-primary-foreground':'#fefefe','--ocp-muted-background':'#20242a','--ocp-warning-background':'#42351f','--ocp-ring':'#88aaff'}))root.style.setProperty(name,value);
+  f.notify();await nextTick();expect(overlay.style.getPropertyValue('--ocp-muted-background')).toBe('#20242a');expect(overlay.style.getPropertyValue('--ocp-primary-foreground')).toBe('#fefefe');expect(overlay.style.getPropertyValue('--ocp-warning-background')).toBe('#42351f');expect(overlay.style.getPropertyValue('--ocp-ring')).toBe('#88aaff');
+  root.style.removeProperty('--ocp-warning-background');f.notify();await nextTick();expect(overlay.style.getPropertyValue('--ocp-warning-background')).toBe('');
+ }finally{view.dispose?.();f.container.remove();}
+});

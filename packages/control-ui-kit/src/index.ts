@@ -23,3 +23,11 @@ export * from './components/alert-dialog';
 export * from './components/sheet';
 export * from './components/select';
 export * from './components/dropdown-menu';
+
+// Local compositions of the shadcn-vue primitives, with host theme and lifecycle adapters.
+export {default as PageHeader} from './components/PageHeader.vue';
+export {default as SearchField} from './components/SearchField.vue';
+export {default as EmptyState} from './components/EmptyState.vue';
+export {default as StatusNotice} from './components/StatusNotice.vue';
+export {cn} from './utils';
+export {themeVariables} from './theme-tokens';

@@ -10,21 +10,21 @@
  --color-popover-foreground:var(--ocp-foreground);
  --color-foreground:var(--ocp-foreground);
  --color-primary:var(--ocp-primary);
- --color-primary-foreground:#fff;
+ --color-primary-foreground:var(--ocp-primary-foreground);
  --color-secondary:var(--ocp-secondary);
- --color-secondary-foreground:var(--ocp-foreground);
+ --color-secondary-foreground:var(--ocp-secondary-foreground);
  --color-muted-foreground:var(--ocp-muted);
  --color-accent:var(--ocp-secondary);
  --color-accent-foreground:var(--ocp-foreground);
  --color-destructive:var(--ocp-destructive);
  --color-input:var(--ocp-border);
- --color-muted:var(--ocp-secondary);
+ --color-muted:var(--ocp-muted-background);
  --color-border:var(--ocp-border);
- --color-ring:var(--ocp-primary);
+ --color-ring:var(--ocp-ring);
  --radius-md:6px;
 }
 @layer base {
-[data-ocp-ui]{--ocp-background:var(--bg,#faf9f7);--ocp-foreground:var(--text,#3b3834);--ocp-muted:var(--muted,#827b73);--ocp-primary:#496d63;--ocp-secondary:color-mix(in srgb,var(--ocp-foreground) 6%,var(--ocp-background));--ocp-border:var(--border,color-mix(in srgb,var(--ocp-foreground) 13%,transparent));--ocp-destructive:var(--error-color,#af5446);--ocp-running:#45718b;--ocp-success:#528272;--ocp-queued:#938033;color:var(--ocp-foreground);font:14px/1.6 system-ui,sans-serif;min-width:0;box-sizing:border-box;}
+[data-ocp-ui]{--ocp-background:var(--bg,#faf9f7);--ocp-foreground:var(--text,#3b3834);--ocp-muted:var(--muted,#827b73);--ocp-primary:#496d63;--ocp-primary-foreground:#fff;--ocp-secondary-foreground:var(--ocp-foreground);--ocp-muted-background:var(--ocp-secondary);--ocp-ring:var(--ocp-primary);--ocp-warning:var(--warning-color,#94651d);--ocp-warning-background:color-mix(in srgb,var(--ocp-warning) 8%,var(--ocp-background));--ocp-secondary:color-mix(in srgb,var(--ocp-foreground) 6%,var(--ocp-background));--ocp-border:var(--border,color-mix(in srgb,var(--ocp-foreground) 13%,transparent));--ocp-destructive:var(--error-color,#af5446);--ocp-running:#45718b;--ocp-success:#528272;--ocp-queued:#938033;color:var(--ocp-foreground);font:14px/1.6 system-ui,sans-serif;min-width:0;box-sizing:border-box;}
 [data-ocp-ui] *,[data-ocp-ui] *::before,[data-ocp-ui] *::after{box-sizing:border-box;border-color:var(--ocp-border);border-style:solid;border-width:0;}
 [data-ocp-ui] button,[data-ocp-ui] input,[data-ocp-ui] select,[data-ocp-ui] textarea{font:inherit;color:inherit;}
 [data-ocp-ui] button{background-color:transparent;cursor:pointer;}
@@ -39,3 +39,24 @@
 
 /* Restore native top-layer host dialogs while a Reka modal owns the body lock. */
 body:has([data-ocp-overlay] [data-ocp-modal]) dialog:modal { pointer-events: auto; }
+
+/* Host integration rules intentionally live outside utility layers: legacy host
+   button resets must not erase the foreground of an explicit shadcn variant. */
+[data-ocp-ui] [data-slot=button][data-variant=default]{color:var(--ocp-primary-foreground);background-color:var(--ocp-primary)}
+[data-ocp-ui] [data-slot=button][data-variant=destructive]{color:#fff;background-color:var(--ocp-destructive)}
+[data-ocp-ui] [data-slot=button][data-variant=default]:hover:not(:disabled){background-color:color-mix(in srgb,var(--ocp-primary) 90%,var(--ocp-background))}
+[data-ocp-ui] .ocp\:page-header{display:flex;justify-content:space-between;align-items:start;gap:20px;flex-wrap:wrap}
+[data-ocp-ui] .ocp\:page-header h2{margin:0;font-size:20px;font-weight:600;line-height:1.35;color:var(--ocp-foreground)}
+[data-ocp-ui] [data-slot=page-description]{margin:8px 0 0;color:var(--ocp-muted);font-size:13px}
+[data-ocp-ui] [data-slot=page-actions]{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+[data-ocp-ui] .ocp\:search-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+[data-ocp-ui] .ocp\:search-field>label{font-size:13px}
+[data-ocp-ui] [data-slot=search-controls]{display:flex;align-items:center;gap:8px}
+[data-ocp-ui] [data-slot=search-input-wrapper]{position:relative;flex:1;min-width:0}
+[data-ocp-ui] [data-slot=search-input-wrapper]>input{padding-right:38px}
+[data-ocp-ui] [data-slot=search-input-wrapper]>button{position:absolute;right:2px;top:50%;transform:translateY(-50%);color:var(--ocp-muted);font-size:20px}
+[data-ocp-ui] [data-slot=search-input-wrapper]>input::-webkit-search-cancel-button{appearance:none}
+[data-ocp-ui] .ocp\:empty-state{padding:32px 16px;gap:12px}
+[data-ocp-ui] .ocp\:status-notice [data-slot=alert-title]{white-space:normal;display:block;overflow:visible}
+[data-ocp-ui] .ocp\:status-notice[data-tone=warning]{border-color:color-mix(in srgb,var(--ocp-warning) 35%,var(--ocp-border));background:var(--ocp-warning-background)}
+[data-ocp-ui] .ocp\:status-notice [data-slot=notice-actions]{grid-column:2;display:flex;gap:8px;margin-top:8px}
