@@ -70,3 +70,7 @@ Feishu 编译为 `dist/` 并生成配置 schema；ESM 插件进行语法检查�
 OpenClaw 宿主升级或重装后，检查 [Control UI 绑定表单补丁的部署、回滚与升级流程](patches/openclaw/2026.10.5-config-form/OPERATIONS.md)。该补丁不会由插件自动安装；必须按实际宿主版本复核，并验证正式配置保存不会丢字段。
 
 [早期飞书开发与本机验证记录](docs/history/initial-feishu-development.md) 只用于追溯，不作为当前操作指南。
+
+## 通用项目与知识库模板
+
+推荐使用 [agent-project-temple](https://github.com/Lydanne/agent-project-temple) 创建项目工作区，使用 [agent-wiki-temple](https://github.com/Lydanne/agent-wiki-temple) 创建项目 wiki。企业结构来源、元数据及技能通用化、初始化与 agent-repo 接入见 [模板说明](docs/agent-templates.md)。

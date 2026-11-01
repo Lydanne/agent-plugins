@@ -30,6 +30,14 @@
 
 知识目录至少包含 `README.md` 入口；按主题维护少量 Markdown 条目，按需要增加子目录。入口列出主题、简短用途、相对链接、状态和最后核验日期。优先链接原有权威文档，避免复制出第二套易过期规则。使用默认值或显式配置后均须核验 list/inspect/skills，不能只编辑 JSON。
 
+## 企业结构基础与通用模板
+
+新建完整知识库基于 [agent-wiki-temple](https://github.com/Lydanne/agent-wiki-temple)，项目工作区基于 [agent-project-temple](https://github.com/Lydanne/agent-project-temple)。两者通用化自企业知识库/项目结构，保留 Feature 多视图、sources 来源包与治理边界；不带入企业业务数据、工具或特权。
+
+完整模板元数据采用 type/title/description/status/sources 与 x_agent（uid、owner、feature_id、relations、真实创建/修改时间）；generated、verified 和复核期限保留各自语义。材料归档与知识正文构建分两阶段，语义变化内容保持 draft。模板内部元数据与校验规则以其治理文档为准。
+
+下面的普通 Markdown 条目格式可用于现有轻量知识库。现有目录不因采用完整模板而自动迁移；显式迁移时保留真实 UID、历史时间、来源和共享边界，不捏造审核。模板 project.json 不取代角色 projects.json，也不注册新工具。
+
 ## 条目格式
 
 条目必须说明以下信息，使用普通 Markdown 即可，不要求新增 YAML 字段或自建解析器：
