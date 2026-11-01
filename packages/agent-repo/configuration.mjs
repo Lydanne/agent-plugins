@@ -22,7 +22,9 @@ export function resolveSync(input) {
  return {enabled:input.enabled===true,timeoutMs:input.timeoutMs??30000,branch:input.branch??'main',remote:input.remote??'origin',preserveLocalMemory:input.preserveLocalMemory!==false,inboundChannels:structuredClone(inboundChannels),...(gitEnvironment!==undefined?{gitEnvironment:{...gitEnvironment}}:{}),...(schedule?{submoduleSchedule:structuredClone(schedule)}:{})};
 }
 export function resolveConfiguration(input={}) {
- if(!object(input)||Object.keys(input).some(key=>key!=='agents'))throw Error('Invalid agent-repo configuration');
+ if(!object(input)||Object.keys(input).some(key=>!['agents','knowledge'].includes(key)))throw Error('Invalid agent-repo configuration');
+ const knowledge=input.knowledge;
+ if(knowledge!==undefined&&(!object(knowledge)||Object.keys(knowledge).some(key=>key!=='metadataNamespace')||typeof knowledge.metadataNamespace!=='string'||!/^x_[a-z][a-z0-9_]{0,61}$/.test(knowledge.metadataNamespace)))throw Error('Invalid knowledge metadata namespace');
  const agents=input.agents??{};
  if(!object(agents)||Object.keys(agents).length>100)throw Error('Invalid Agent Repo bindings');
  const result={};
@@ -39,7 +41,7 @@ export function resolveConfiguration(input={}) {
   const sync=resolveSync(binding.sync);
   result[agentId]={repo,...(binding.defaultProject?{defaultProject:binding.defaultProject}:{}),...(sync?{sync}:{})};
  }
- return {agents:result};
+ return {agents:result,...(knowledge?{knowledge:{metadataNamespace:knowledge.metadataNamespace}}:{})};
 }
 export function bindingFor(config,context) {
  // Agent ownership comes from the public host tool context, never tool arguments.

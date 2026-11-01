@@ -5,7 +5,7 @@ const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const text=v=>typeof v==='string'&&v.length<=160&&!/[\u0000\r\n]/.test(v)?v:undefined;
 const inside=(root,path)=>{const p=relative(root,path);return p===''||(!isAbsolute(p)&&p!=='..'&&!p.startsWith('..'+sep));};
 /** Optional, bounded metadata discovery. No commands, tool config, identities or credentials are returned. */
-export async function readProjectContext(projectRoot,knowledgePath) {
+export async function readProjectContext(projectRoot,knowledgePath,knowledgeDefaults) {
  const root=await realpath(projectRoot);
  async function load(path) {
   const target=resolve(root,path);
@@ -44,6 +44,6 @@ export async function readProjectContext(projectRoot,knowledgePath) {
   else Object.assign(bundleInfo,{schemaVersion:1,bundleId:b.bundle_id,...(text(b.title)?{title:b.title}:{}),...(typeof b.metadata_namespace==='string'&&/^x_[a-z][a-z0-9_]{0,61}$/.test(b.metadata_namespace)?{metadataNamespace:b.metadata_namespace}:{})});
  }
  let knowledge;
- try{const c=await resolveKnowledgeConfig(root,knowledgeRoot);knowledge={status:'available',metadataNamespace:c.metadataNamespace,namespaceSource:c.namespaceSource,normalized:c.normalized};}catch{knowledge={status:'invalid'};}
+ try{const c=await resolveKnowledgeConfig(root,knowledgeRoot,knowledgeDefaults);knowledge={status:'available',metadataNamespace:c.metadataNamespace,namespaceSource:c.namespaceSource,normalized:c.normalized};}catch{knowledge={status:'invalid'};}
  return {schemaVersion:1,authority:'reference_only',project:projectInfo,git,validation,bundle:bundleInfo,knowledge};
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {ref,onMounted,watch} from 'vue';
-import {Button,Dialog,PageHeader,SearchField,NativeSelect,Card,Badge,EmptyState,StatusNotice,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,Dialog,Tabs,PageHeader,SearchField,NativeSelect,Card,Badge,EmptyState,StatusNotice,useHostContext} from '@openclaw-plugins/control-ui-kit';
 import KnowledgeMarkdown from './KnowledgeMarkdown.vue';
+import KnowledgeGraph from './KnowledgeGraph.vue';
 import type {KnowledgeLink} from './knowledge-markdown';
 import {useManagementRequest} from './management-request';
 import type {KnowledgeCatalog,KnowledgePage,KnowledgeDocument,KnowledgeValidation} from './knowledge-model';
@@ -9,6 +10,9 @@ const props=defineProps<{agentId:string}>(),context=useHostContext(),request=use
 const projects=ref<KnowledgeCatalog['projects']>([]),projectId=ref(''),input=ref(''),query=ref(''),page=ref<KnowledgePage>(),document=ref<KnowledgeDocument>(),validation=ref<KnowledgeValidation>();
 const catalogLoading=ref(false),loading=ref(false),reading=ref(false),validating=ref(false),catalogError=ref(''),listError=ref(''),readError=ref(''),validationError=ref(''),selected=ref('');
 const validationOpen=ref(false),fragment=ref(''),navigationId=ref(0),history=ref<{path:string;fragment:string}[]>([]);
+const view=ref('documents'),graphRevision=ref(0),views=[{id:'documents',label:'文档'},{id:'graph',label:'图谱'}];
+function refreshKnowledge(){void catalog();if(projectId.value)void load();graphRevision.value++;}
+async function openGraphDocument(path:string){const project=projectId.value,valid=request.capture();view.value='documents';if(!page.value)await load();if(valid()&&projectId.value===project&&view.value==='documents'&&page.value?.available)selectEntry(path);}
 let listEpoch=0,readEpoch=0,validationEpoch=0,catalogEpoch=0;
 const safe=(value:unknown)=>context.value.host.redact(String(value??''));
 function clearDetail(){readEpoch++;history.value=[];fragment.value='';selected.value='';document.value=undefined;readError.value='';reading.value=false;}
@@ -55,15 +59,18 @@ onMounted(catalog);
 </script>
 <template>
  <section class="ar-knowledge" aria-label="项目知识库">
-  <PageHeader class="ar-section-heading" title="知识库" description="浏览项目文档，搜索知识条目并查看正文。"><Button variant="outline" :disabled="catalogLoading||loading" @click="catalog(); projectId && load()">刷新知识库</Button></PageHeader>
+  <PageHeader class="ar-section-heading" title="知识库" description="浏览项目文档，搜索知识条目并查看正文。"><Button variant="outline" :disabled="catalogLoading||loading" @click="refreshKnowledge">刷新知识库</Button></PageHeader>
   <StatusNotice v-if="catalogError" tone="error">{{catalogError}}</StatusNotice>
+  <Tabs v-model="view" :items="views" label="知识库视图" list-class="kb-view-tabs" activation-mode="manual">
   <div class="kb-controls">
    <label class="kb-project">项目<NativeSelect v-model="projectId" aria-label="知识库项目" :disabled="catalogLoading"><option value="">{{catalogLoading?'正在读取项目…':'请选择项目'}}</option><option v-for="p in projects" :key="p.projectId" :value="p.projectId">{{safe(p.name)}} · {{safe(p.projectId)}}</option></NativeSelect></label>
-   <SearchField v-model="input" class="kb-search" aria-label="搜索知识库" placeholder="标题、UID 或正文关键词" maxlength="320" :disabled="!projectId" :busy="loading" @search="search" />
-   <Button variant="outline" :disabled="!projectId||validating||!page?.available" @click="validate">{{validating?'正在校验…':'校验结构'}}</Button>
+   <SearchField v-if="view==='documents'" v-model="input" class="kb-search" aria-label="搜索知识库" placeholder="标题、UID 或正文关键词" maxlength="320" :disabled="!projectId" :busy="loading" @search="search" />
+   <Button variant="outline" :disabled="!projectId||validating||page?.available===false" @click="validate">{{validating?'正在校验…':'校验结构'}}</Button>
   </div>
   <EmptyState v-if="!catalogLoading&&!catalogError&&!projects.length" title="当前 Agent 尚未登记项目。" description="登记项目后可浏览项目的 wiki。" />
   <EmptyState v-else-if="!projectId&&!catalogLoading&&!catalogError" title="请选择要查看的项目。" description="每个项目的知识目录、搜索结果和正文独立读取。" />
+  <KnowledgeGraph v-if="view==='graph'&&projectId" :key="projectId+':'+graphRevision" :agent-id="agentId" :project-id="projectId" @open="openGraphDocument" />
+  <template v-if="view==='documents'">
   <StatusNotice v-if="listError" tone="error">{{listError}}<template #actions><Button variant="outline" @click="load()">重试列表</Button></template></StatusNotice>
   <p v-if="loading" role="status">正在读取知识条目…</p>
   <template v-if="page">
@@ -88,6 +95,8 @@ onMounted(catalog);
     </div>
    </template>
   </template>
+  </template>
+  </Tabs>
   <Dialog :open="validationOpen" :session-scoped="false" title="知识库结构校验" description="检查当前项目的本地文档结构与引用。" size="detail" @update:open="closeValidation">
    <div class="kb-validation" aria-label="知识库结构校验结果" :aria-busy="validating">
     <p class="kb-note">项目：{{safe(projectId)}}<template v-if="validation"> · {{safe(validation.metadataNamespace)}}</template></p>
@@ -106,5 +115,5 @@ onMounted(catalog);
  </section>
 </template>
 <style scoped>
-.ar-knowledge{min-width:0}.kb-controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:24px 0}.kb-project{display:flex;flex-direction:column;gap:6px;font-size:13px;max-width:300px}.kb-project :deep([data-slot=native-select-wrapper]){width:100%}.kb-project :deep(select){height:36px;background:var(--ocp-background);border-color:var(--ocp-border)}.kb-search{flex:1;min-width:220px}.kb-location{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 16px;font-size:12px;color:var(--ocp-muted)}.kb-location>span:first-child{overflow-wrap:anywhere;min-width:0}.kb-workspace{display:grid;grid-template-columns:minmax(240px,32%) minmax(0,1fr);gap:20px;margin-top:16px}.kb-card{padding:0;gap:0;min-width:0;overflow:hidden;background:var(--ocp-background)}.kb-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;border-bottom:1px solid var(--ocp-border)}.kb-card-heading h3{font-size:14px;line-height:1.5;margin:0;overflow-wrap:anywhere}.kb-card-heading p{font-size:12px;color:var(--ocp-muted);margin:6px 0 0;overflow-wrap:anywhere}.kb-entries{padding:8px}.kb-entry{display:flex;flex-direction:column;align-items:stretch;gap:4px;text-align:left;white-space:normal;width:100%;height:auto;padding:14px 12px;border:1px solid transparent;overflow-wrap:anywhere}.kb-entry[aria-pressed=true]{background:var(--ocp-muted-background);border-color:var(--ocp-border)}.kb-entry strong{font-size:13px;font-weight:600}.kb-entry span,.kb-entry small{font-size:12px;color:var(--ocp-muted);font-weight:400}.kb-excerpt{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.kb-pagination{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px;border-top:1px solid var(--ocp-border);margin-top:auto;font-size:12px;color:var(--ocp-muted)}.kb-document{padding:16px 20px}.kb-line-count,.kb-note{font-size:12px;color:var(--ocp-muted);margin:0 0 12px}.kb-reading{padding:0 20px}.kb-back{margin:12px 20px 0;align-self:flex-start}.kb-validation{display:grid;gap:16px}.kb-validation .kb-note{margin:0;overflow-wrap:anywhere}.kb-validation ul{max-height:250px;overflow:auto;font-size:12px;overflow-wrap:anywhere;padding-left:20px}@media(max-width:760px){.kb-workspace{grid-template-columns:1fr}.kb-project{width:100%;max-width:100%}.kb-search{min-width:0;flex-basis:calc(100% - 100px)}.kb-results{max-height:460px;overflow:auto}}
+.ar-knowledge{min-width:0}.ar-knowledge :deep(.kb-view-tabs){margin-top:16px;padding-bottom:8px;border-bottom:1px solid var(--ocp-border)}.kb-controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:24px 0}.kb-project{display:flex;flex-direction:column;gap:6px;font-size:13px;max-width:300px}.kb-project :deep([data-slot=native-select-wrapper]){width:100%}.kb-project :deep(select){height:36px;background:var(--ocp-background);border-color:var(--ocp-border)}.kb-search{flex:1;min-width:220px}.kb-location{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 16px;font-size:12px;color:var(--ocp-muted)}.kb-location>span:first-child{overflow-wrap:anywhere;min-width:0}.kb-workspace{display:grid;grid-template-columns:minmax(240px,32%) minmax(0,1fr);gap:20px;margin-top:16px}.kb-card{padding:0;gap:0;min-width:0;overflow:hidden;background:var(--ocp-background)}.kb-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;border-bottom:1px solid var(--ocp-border)}.kb-card-heading h3{font-size:14px;line-height:1.5;margin:0;overflow-wrap:anywhere}.kb-card-heading p{font-size:12px;color:var(--ocp-muted);margin:6px 0 0;overflow-wrap:anywhere}.kb-entries{padding:8px}.kb-entry{display:flex;flex-direction:column;align-items:stretch;gap:4px;text-align:left;white-space:normal;width:100%;height:auto;padding:14px 12px;border:1px solid transparent;overflow-wrap:anywhere}.kb-entry[aria-pressed=true]{background:var(--ocp-muted-background);border-color:var(--ocp-border)}.kb-entry strong{font-size:13px;font-weight:600}.kb-entry span,.kb-entry small{font-size:12px;color:var(--ocp-muted);font-weight:400}.kb-excerpt{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.kb-pagination{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px;border-top:1px solid var(--ocp-border);margin-top:auto;font-size:12px;color:var(--ocp-muted)}.kb-document{padding:16px 20px}.kb-line-count,.kb-note{font-size:12px;color:var(--ocp-muted);margin:0 0 12px}.kb-reading{padding:0 20px}.kb-back{margin:12px 20px 0;align-self:flex-start}.kb-validation{display:grid;gap:16px}.kb-validation .kb-note{margin:0;overflow-wrap:anywhere}.kb-validation ul{max-height:250px;overflow:auto;font-size:12px;overflow-wrap:anywhere;padding-left:20px}@media(max-width:760px){.kb-workspace{grid-template-columns:1fr}.kb-project{width:100%;max-width:100%}.kb-search{min-width:0;flex-basis:calc(100% - 100px)}.kb-results{max-height:460px;overflow:auto}}
 </style>

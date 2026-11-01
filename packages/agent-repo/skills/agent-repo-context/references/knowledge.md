@@ -92,4 +92,10 @@ Main 向 Worker 交接选定项目、条目路径、必要摘录、来源及未�
 
 ## 原生知识接口与命名空间
 
-插件现提供 knowledge_list/search/read/validate；完整参数与限制见 agent-repo README。project.json 的 knowledge.metadata_namespace 可设置 x_xgj，优先于 Bundle 声明，缺省为 x_agent。不自动迁移已有字段。普通 wiki 可直接搜索读取；有 Bundle 时按所选命名空间做结构校验，部分扫描或目录缺失不算校验通过。该功能不执行知识库中的脚本或指令。
+插件现提供 knowledge_list/search/read/validate/graph；完整参数与限制见 agent-repo README。project.json 的 knowledge.metadata_namespace 可设置 x_xgj，优先于 Bundle 声明及插件全局默认值，最终缺省为 x_agent。不自动迁移已有字段。普通 wiki 可直接搜索读取；有 Bundle 时按所选命名空间做结构校验，部分扫描或目录缺失不算校验通过。该功能不执行知识库中的脚本或指令。
+
+## 文档关系图谱与元数据默认值
+
+`agent_repo(action="knowledge_graph", projectId="...", limit=100)` 只读当前知识目录的 Markdown 链接和元数据 `relations`，返回节点、定向边、扫描完整性、数量限制和未解析引用计数。正文代码示例、图片、远程/越界链接与跨库关系不作为本地图谱边；重复 UID 不任选目标，扫描不完整时不推断 UID 唯一性。最多 100 篇与 1,000 条边；部分图谱不能当作完整依赖清单或事实认证。管理页面顶部「文档 / 图谱」Tab 可切换，并从节点详情打开正文。
+
+元数据命名空间统一优先级为 `project.json.knowledge.metadata_namespace` → 知识目录 `bundle.json.metadata_namespace` → 插件全局配置 `knowledge.metadataNamespace` → `x_agent`。全局项位于宿主 `plugins.entries.agent-repo.config` 内，仅提供缺省值，不改变知识目录权限。显式无效配置失败，不回退或猜测 `x_xgj`；工具参数不能覆盖它。

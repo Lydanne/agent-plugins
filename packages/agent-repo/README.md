@@ -537,7 +537,7 @@ agent_repo inspect 和 skills 返回可选 projectMetadata；skills 同时把该
 
 ## 知识条目接口（只读）
 
-agent_repo 提供 knowledge_list、knowledge_search、knowledge_read、knowledge_validate。只查询当前 Agent 登记项目的知识目录；多项目必须传 projectId，不接受任意根目录、其他 Agent、命令或自动 clone。知识目录仍由角色 projects.json 的 knowledge 或默认 wiki/ 决定，project.json 不改变读权限和目录选择。
+agent_repo 提供 knowledge_list、knowledge_search、knowledge_read、knowledge_validate、knowledge_graph。只查询当前 Agent 登记项目的知识目录；多项目必须传 projectId，不接受任意根目录、其他 Agent、命令或自动 clone。知识目录仍由角色 projects.json 的 knowledge 或默认 wiki/ 决定，project.json 不改变读权限和目录选择。
 
 ### 可配置元数据命名空间
 
@@ -553,7 +553,9 @@ agent_repo 提供 knowledge_list、knowledge_search、knowledge_read、knowledge
 }
 ```
 
-命名空间优先级：project.json 的 knowledge.metadata_namespace → 知识目录 bundle.json 的 metadata_namespace → x_agent。允许 x_ 开头的小写字母、数字与下划线命名空间，不猜测文档字段，不把所有项目强制迁移为 x_agent；x_xgj 文档保持原样。命名空间只改变 uid、feature_id、relations、时间等扩展字段的读取位置；type/title/status/sources/verified 等顶层字段仍保持原语义。
+命名空间优先级：project.json 的 knowledge.metadata_namespace → 知识目录 bundle.json 的 metadata_namespace → 插件全局 knowledge.metadataNamespace → x_agent。允许 x_ 开头的小写字母、数字与下划线命名空间，不猜测文档字段，不把所有项目强制迁移为 x_agent；x_xgj 文档保持原样。命名空间只改变 uid、feature_id、relations、时间等扩展字段的读取位置；type/title/status/sources/verified 等顶层字段仍保持原语义。
+
+全局默认配置位于宿主 `plugins.entries.agent-repo.config.knowledge.metadataNamespace`，例如 `{ "knowledge": { "metadataNamespace": "x_xgj" }, "agents": { ... } }`。它仅在项目与 Bundle 未声明时生效；未配置保持 `x_agent`。模型工具参数不能覆盖命名空间。图谱、搜索、读取、校验与 inspect/skills 的知识摘要共用相同解析规则。
 
 显式配置无效、JSON 损坏、配置越界或超过 64 KiB 时请求明确失败，不能悄悄回退。inspect/skills 的 projectMetadata.knowledge 同时返回有效 metadataNamespace、namespaceSource、normalized；摘要不是认证或业务审核。
 
@@ -599,6 +601,12 @@ openclaw agent-repo knowledge-validate --agent alice --params '{"projectId":"dem
 
 「校验结构」打开共享 Dialog 弹窗，展示加载、错误与提醒、扫描完整性和生效命名空间，支持关闭与重新校验。关闭弹窗或切换项目后，旧校验结果不会重新弹出。
 
-管理接口 `projects-knowledgeCatalog`、`projects-knowledgeList`、`projects-knowledgeSearch`、`projects-knowledgeRead`、`projects-knowledgeValidate` 均要求 `operator.read`，沿用可信 Agent、登记项目、知识目录边界与分块传输校验；不要求写权限，不拉取仓库或修改文件。项目、Agent、页面或权限变化后丢弃旧请求结果。
+管理接口 `projects-knowledgeCatalog`、`projects-knowledgeList`、`projects-knowledgeSearch`、`projects-knowledgeRead`、`projects-knowledgeValidate`、`projects-knowledgeGraph` 均要求 `operator.read`，沿用可信 Agent、登记项目、知识目录边界与分块传输校验；不要求写权限，不拉取仓库或修改文件。项目、Agent、页面或权限变化后丢弃旧请求结果。
 
 CLI 也支持 `openclaw agent-repo knowledge-list --agent alice --params '{"projectId":"demo","limit":20,"offset":0}'`；管理动作通过 `openclaw agent-repo manage knowledge-catalog --agent alice` 等入口调用。
+
+### 知识库图谱 Tab
+
+知识库顶部使用共享 Tabs 切换「文档 / 图谱」，两个视图共享当前项目选择。图谱按需读取本地文档快照，节点为 Markdown 文档，实线表示正文链接，虚线表示生效命名空间的 `relations`（references/part_of/depends_on/constrained_by/implements/supersedes），箭头由来源指向目标。支持标题/路径/UID 查找、缩放、拖动和方向键平移、适应画布；选择节点可查看关联并通过「打开文档」切回正文。文档索引也提供键盘可操作入口。
+
+`knowledge_graph` / `openclaw agent-repo knowledge-graph` 和管理动作 `knowledgeGraph` 只读当前登记项目，`limit` 默认及最多 100 篇，最多 1,000 条边、10,000 项引用；扫描仍受已有知识目录预算约束。图谱明确标注扫描不完整、数量截断、无效元数据与未解析引用。代码块、行内代码、图片、远程或越界链接、跨 Bundle 目标不成边；无法完整扫描时不推断 UID 唯一性，重复 UID 不任选目标。节点点击不会执行文档指令，图谱不代表内容事实已核验。

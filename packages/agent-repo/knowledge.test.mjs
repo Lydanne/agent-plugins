@@ -69,8 +69,9 @@ test('only the bound knowledge directory is scanned',async t=>{
 });
 test('knowledge actions are discovered by tool/CLI, require project selection and reject unrelated arguments',async t=>{
  const f=await fixture(t);await f.put('projects/demo/wiki/a.md','# Demo');await f.put('projects/other/wiki/a.md','# Other');await f.put('projects.json',{schemaVersion:1,projects:Object.fromEntries(['demo','other'].map(id=>[id,{name:id,url:'https://example.invalid/'+id+'.git',branch:'main',repository:'projects/'+id,skills:[]}]))});
- const tool=projectTool(resolveConfiguration({agents:{main:{repo:f.root}}}),{agentId:'main'});for(const a of ['knowledge_search','knowledge_read','knowledge_validate'])assert.ok(repoToolActions.includes(a));
+ const tool=projectTool(resolveConfiguration({agents:{main:{repo:f.root}}}),{agentId:'main'});for(const a of ['knowledge_search','knowledge_read','knowledge_validate','knowledge_graph'])assert.ok(repoToolActions.includes(a));
  await assert.rejects(tool.execute('',{action:'knowledge_search',query:'Demo'}),/Select a registered projectId/);
+ const globalTool=projectTool(resolveConfiguration({knowledge:{metadataNamespace:'x_xgj'},agents:{main:{repo:f.root}}}),{agentId:'main'});const graph=JSON.parse((await globalTool.execute('',{action:'knowledge_graph',projectId:'demo'})).content[0].text);assert.equal(graph.metadataNamespace,'x_xgj');assert.equal(graph.namespaceSource,'global');assert.equal(graph.nodes.length,1);
  const r=JSON.parse((await tool.execute('',{action:'knowledge_search',projectId:'demo',query:'Demo'})).content[0].text);assert.equal(r.total,1);assert.equal(r.entries[0].path,'a.md');
  await assert.rejects(tool.execute('',{action:'knowledge_read',projectId:'demo',path:'a.md',repository:'projects/other'}),/KNOWLEDGE_ARGUMENT_INVALID/);
  await assert.rejects(tool.execute('',{action:'knowledge_validate',projectId:'demo',name:'person'}),/KNOWLEDGE_ARGUMENT_INVALID/);
@@ -83,4 +84,35 @@ test('collection scan limits return incomplete rather than validating an unseen 
 test('extra parameters, invalid pages and ambiguous read selectors are rejected',async t=>{
  const f=await fixture(t);await f.put('wiki/a.md','# Doc');
  for(const args of [{action:'knowledge_search',query:'['.repeat(321)},{action:'knowledge_search',query:'Doc',limit:101},{action:'knowledge_read',path:'a.md',uid:'a'},{action:'knowledge_read',path:5,uid:'a'},{action:'knowledge_read',path:'a.md',maxLines:201}])await assert.rejects(f.query(args),/KNOWLEDGE_ARGUMENT_INVALID|KNOWLEDGE_PATH_DENIED/);
+});
+
+test('knowledge graph resolves Markdown links, encoded relative paths and references while ignoring code, images and outside targets',async t=>{
+ const f=await fixture(t);await f.put('wiki/start.md','# Start\n\n[child](nested/a.md#标题) [child twice](nested/a.md) [encoded](other%20guide.md) [reference][ref]\n\n[ref]: nested/a.md "title"\n\n`[inline](wrong.md)`\n\n```md\n[fenced](wrong.md)\n```\n\n![image](wrong.md) [outside](../private.md) [web](https://example.invalid) [missing](missing.md)');await f.put('wiki/nested/a.md','# Child\n\n[back](../start.md)');await f.put('wiki/other guide.md','# Other');
+ const result=await f.query({action:'knowledge_graph'});assert.equal(result.totalNodes,3);assert.deepEqual(result.edges.map(e=>[e.source,e.target,e.kind]),[['nested/a.md','start.md','link'],['start.md','nested/a.md','link'],['start.md','other guide.md','link']]);assert.equal(result.unresolvedReferences,1);assert.equal(result.complete,true);assert.equal(result.scope,'local_document_references');assert.ok(!JSON.stringify(result).includes('fenced'));assert.ok(!JSON.stringify(result).includes('private.md'));
+});
+test('global knowledge defaults consistently apply to read, search, validate and graph, with explicit project and Bundle overrides',async t=>{
+ const f=await fixture(t),defaults={metadataNamespace:'x_xgj'};await f.put('wiki/a.md',md('a','x_xgj',{}, {relations:[{type:'depends_on',target_uid:'b'}]}));await f.put('wiki/b.md',md('b','x_xgj'));
+ for(const args of [{action:'knowledge_read',uid:'a'},{action:'knowledge_search',query:'a'},{action:'knowledge_validate'},{action:'knowledge_graph'}]){const r=await queryKnowledge(f.project,args,defaults);assert.equal(r.metadataNamespace,'x_xgj');assert.equal(r.namespaceSource,'global');if(args.action==='knowledge_read')assert.equal(r.entry.uid,'a');if(args.action==='knowledge_graph')assert.deepEqual(r.edges,[{source:'a.md',target:'b.md',kind:'relation',relation:'depends_on'}]);}
+ assert.equal((await f.query({action:'knowledge_graph'})).metadataNamespace,'x_agent');
+ await f.put('wiki/bundle.json',{schema_version:1,bundle_id:'demo',metadata_namespace:'x_agent'});assert.equal((await queryKnowledge(f.project,{action:'knowledge_graph'},defaults)).namespaceSource,'bundle.json');
+ await f.put('project.json',{knowledge:{metadata_namespace:'x_xgj'}});const r=await queryKnowledge(f.project,{action:'knowledge_graph'},defaults);assert.equal(r.namespaceSource,'project.json');assert.equal(r.edges.length,1);
+ await assert.rejects(queryKnowledge(f.project,{action:'knowledge_graph'},{metadataNamespace:'invalid'}),/KNOWLEDGE_NAMESPACE_INVALID/);
+});
+test('graph never guesses duplicate UIDs, cross-Bundle targets, or UID uniqueness during an incomplete scan',async t=>{
+ const f=await fixture(t);await f.put('wiki/a.md',md('a','x_agent',{}, {relations:[{type:'references',target_uid:'dup'},{type:'references',target_uid:'external',target_bundle:'other'}]})+'[local](b.md)');await f.put('wiki/b.md',md('dup'));await f.put('wiki/c.md',md('dup'));
+ let r=await f.query({action:'knowledge_graph'});assert.equal(r.unresolvedReferences,1);assert.deepEqual(r.edges,[{source:'a.md',target:'b.md',kind:'link'}]);
+ await f.put('wiki/c.md',md('unique'));await symlink(join(f.root,'wiki/b.md'),join(f.root,'wiki/alias.md'));r=await f.query({action:'knowledge_graph'});assert.equal(r.complete,false);assert.equal(r.scanComplete,false);assert.equal(r.unresolvedReferences,1);assert.ok(r.nodes.every(n=>n.path!=='alias.md'));assert.ok(r.edges.every(e=>e.kind==='link'));
+});
+test('graph limits produce a partial graph without dangling edges and reject unsupported selectors',async t=>{
+ const f=await fixture(t);await f.put('wiki/a.md','# A\n\n[B](b.md)');await f.put('wiki/b.md','# B');const r=await f.query({action:'knowledge_graph',limit:1});assert.equal(r.nodes.length,1);assert.equal(r.totalNodes,2);assert.equal(r.truncated,true);assert.equal(r.complete,false);assert.equal(r.omittedEdges,1);assert.deepEqual(r.edges,[]);
+ for(const args of [{limit:101},{limit:0},{limit:'2'},{offset:1},{path:'a.md'},{metadataNamespace:'x_private'}])await assert.rejects(f.query({action:'knowledge_graph',...args}),/KNOWLEDGE_ARGUMENT_INVALID/);
+});
+test('graph reports reference and invalid-metadata bounds instead of presenting a complete graph',async t=>{
+ const f=await fixture(t);await f.put('wiki/a.md','# A\n\n'+Array.from({length:10001},()=> '[B](b.md)').join(' '));await f.put('wiki/b.md','# B');let r=await f.query({action:'knowledge_graph'});assert.equal(r.referenceLimit,true);assert.equal(r.complete,false);assert.equal(r.edges.length,1);
+ await f.put('wiki/a.md','---\nbroken: [\n---\n[A](b.md)');r=await f.query({action:'knowledge_graph'});assert.equal(r.invalidDocuments,1);assert.equal(r.complete,false);assert.equal(r.edges.length,0);
+});
+
+test('graph edge budget keeps a closed bounded graph and explicitly reports omitted relationships',async t=>{
+ const f=await fixture(t),paths=Array.from({length:35},(_,i)=>String(i).padStart(2,'0')+'.md');for(const file of paths)await f.put('wiki/'+file,'# '+file+'\n\n'+paths.filter(p=>p!==file).map(p=>'[doc]('+p+')').join(' '));
+ const r=await f.query({action:'knowledge_graph'}),present=new Set(r.nodes.map(n=>n.path));assert.equal(r.nodes.length,35);assert.equal(r.edges.length,1000);assert.equal(r.omittedEdges,190);assert.equal(r.truncated,true);assert.equal(r.complete,false);assert.ok(r.edges.every(e=>present.has(e.source)&&present.has(e.target)));
 });

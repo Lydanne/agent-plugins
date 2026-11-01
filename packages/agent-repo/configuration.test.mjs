@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {test} from 'node:test';
 import Ajv from 'ajv';
-import {resolveSync} from './configuration.mjs';
+import {resolveConfiguration,resolveSync} from './configuration.mjs';
 
 test('shipped synchronization schema and runtime accept the same channel, Git and timeout boundaries',async()=>{
  const manifest=JSON.parse(await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8'));
@@ -61,4 +61,13 @@ test('Git environment is copied without inventing an operator override',()=>{
  resolved.gitEnvironment.CUSTOM_SYNC_MARKER='changed';
  assert.equal(input.gitEnvironment.CUSTOM_SYNC_MARKER,'1');
  assert.deepEqual(resolveSync({gitEnvironment:{}}).gitEnvironment,{});
+});
+
+
+test('global knowledge namespace schema and runtime agree and do not mutate configuration',async()=>{
+ const manifest=JSON.parse(await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8')),validate=new Ajv({strict:false}).compile(manifest.configSchema);
+ for(const [knowledge,expected] of [[{metadataNamespace:'x_agent'},true],[{metadataNamespace:'x_xgj'},true],[{},false],[null,false],[{metadataNamespace:'agent'},false],[{metadataNamespace:'x_xgj',path:'/private'},false],[{metadataNamespace:3},false]]){
+  const input={knowledge},label=JSON.stringify(input);assert.equal(validate(input),expected,'schema '+label);let accepted=true;try{resolveConfiguration(input);}catch{accepted=false;}assert.equal(accepted,expected,'runtime '+label);
+ }
+ const input={knowledge:{metadataNamespace:'x_xgj'}},config=resolveConfiguration(input);config.knowledge.metadataNamespace='x_other';assert.equal(input.knowledge.metadataNamespace,'x_xgj');assert.deepEqual(resolveConfiguration({}),{agents:{}});
 });

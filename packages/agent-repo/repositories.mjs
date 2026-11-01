@@ -81,12 +81,12 @@ export async function inspectKnowledge(project) {
  }
  return {...result,kind,...(entrypoint?{entrypoint}:{})};
 }
-export async function inspectProject(project) {
+export async function inspectProject(project,knowledgeDefaults) {
  const {paths}=project;
  const result={projectId:project.projectId,name:project.name,repository:paths.repository,
   skills:await Promise.all(paths.skills.map(async path=>({path,available:await directory(path)}))),
   knowledge:await inspectKnowledge(project),
-  ...(await directory(paths.repository)?{projectMetadata:await readProjectContext(paths.repository,paths.knowledge)}:{}),
+  ...(await directory(paths.repository)?{projectMetadata:await readProjectContext(paths.repository,paths.knowledge,knowledgeDefaults)}:{}),
   expectedBranch:project.branch,available:await directory(paths.repository)};
  if(!result.available)return {...result,git:{state:'missing'}};
  try {

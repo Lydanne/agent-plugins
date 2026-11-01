@@ -53,6 +53,9 @@ importers:
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
+      markdown-it:
+        specifier: 15.0.3
+        version: 15.0.3
       smol-toml:
         specifier: ^1.9.1
         version: 1.9.1
@@ -66,9 +69,6 @@ importers:
       ajv:
         specifier: 8.20.0
         version: 8.20.0
-      markdown-it:
-        specifier: 15.0.3
-        version: 15.0.3
       openclaw:
         specifier: 2026.9.5
         version: 2026.9.5

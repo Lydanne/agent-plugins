@@ -102,6 +102,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   return result;
  }
  async function prepareScope(binding,options) {
+  options={...options,knowledgeDefaults:config.knowledge};
   if(!enabled(binding))return repositorySkills(binding,options);
   return serializePreparation(binding.repo,async()=>{
    await checkWorkspace(binding,options.agentId);
@@ -165,7 +166,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
     // defaultProject is an operator planning hint, never a task fallback.
     const project=ids.length===1?registry.projects[ids[0]]:undefined;
     if(project)await sync(binding,agentId,project,{root:false});
-    const catalog=project?await repositorySkills(binding,{agentId,hostConfig:getHostConfig(),projectId:project.projectId}):await agentSkills(binding,{agentId,hostConfig:getHostConfig()});
+    const catalog=project?await repositorySkills(binding,{agentId,hostConfig:getHostConfig(),projectId:project.projectId,knowledgeDefaults:config.knowledge}):await agentSkills(binding,{agentId,hostConfig:getHostConfig()});
     await assertRegistry(binding,registry);
     await validate({catalog});
    });

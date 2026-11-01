@@ -217,14 +217,14 @@ export function createProjectInspector(config,getHostConfig,now=()=>Date.now(),d
    if(repository!==project.repository)subagentSources.push(await subagentInventory(await containedPath(before.root,repository),before.root,'repository'));
    subagentSources.push(await subagentInventory(before.root,before.root,'agent'));
    const candidateSubagentCount=resolveSubagentCatalog(subagentSources);
-   const inspection=await inspectProject(project);await checkSourceVersions(before.root,[...sources,...subagentSources]);await checkRegistration(binding,before);
+   const inspection=await inspectProject(project,config.knowledge);await checkSourceVersions(before.root,[...sources,...subagentSources]);await checkRegistration(binding,before);
    return {agentId,projectId:project.projectId,name:project.name,root:before.root,repository,cwd:projectRoot,scopeDirectory:before.root+'/'+repository,registryRevision:before.registryRevision,registrationCommitted:!!before.registryRevision,scannedAt:now(),inspection,scopes:availableScopes,sources,subagentSources,candidateSubagentCount,effectiveSkillCount:effective.size,rules:Object.values(rules)};
   },
  };
- for(const [action,kind] of Object.entries({knowledgeList:'knowledge_list',knowledgeSearch:'knowledge_search',knowledgeRead:'knowledge_read',knowledgeValidate:'knowledge_validate'}))inspector[action]=async ctx=>{
+ for(const [action,kind] of Object.entries({knowledgeList:'knowledge_list',knowledgeSearch:'knowledge_search',knowledgeRead:'knowledge_read',knowledgeValidate:'knowledge_validate',knowledgeGraph:'knowledge_graph'}))inspector[action]=async ctx=>{
   const {agentId,binding}=await context(ctx),p=ctx.payload??{},before=await registration(binding),projects=await readProjects(binding.repo);
   if(typeof p.projectId!=='string'||!Object.hasOwn(projects,p.projectId))throw Error('Select a registered project');
-  const result=await queryKnowledge(projects[p.projectId],{...p,action:kind});await checkRegistration(binding,before);return {agentId,...result};
+  const result=await queryKnowledge(projects[p.projectId],{...p,action:kind},config.knowledge);await checkRegistration(binding,before);return {agentId,...result};
  };
  // Persist intent before invoking a mutation. An interrupted pending record is never silently declared successful.
  const mutations={workspacePoolSave:'workspace',maintenanceRun:'skills',syncPeople:'entities',updatePerson:'entities',deletePerson:'entities',clearRepositoryLogs:'logs',diagnosticClearHistory:'logs'};

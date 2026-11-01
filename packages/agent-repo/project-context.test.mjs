@@ -41,3 +41,9 @@ test('effective knowledge namespace is configurable and exposed without requirin
  const r=await readProjectContext(f.root);assert.equal(r.knowledge.metadataNamespace,'x_xgj');assert.equal(r.knowledge.namespaceSource,'project.json');
  await f.put('project.json',{knowledge:{metadata_namespace:'invalid/path'}});assert.equal((await readProjectContext(f.root)).knowledge.status,'invalid');
 });
+
+
+test('project context uses the same global namespace default as knowledge queries',async t=>{
+ const f=await fixture(t);const defaults={metadataNamespace:'x_xgj'};assert.equal((await readProjectContext(f.root,undefined,defaults)).knowledge.namespaceSource,'global');assert.equal((await readProjectContext(f.root,undefined,defaults)).knowledge.metadataNamespace,'x_xgj');
+ await f.put('project.json',{knowledge:{metadata_namespace:'x_agent'}});assert.equal((await readProjectContext(f.root,undefined,defaults)).knowledge.namespaceSource,'project.json');
+});

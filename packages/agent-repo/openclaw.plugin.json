@@ -151,6 +151,20 @@
             }
           }
         }
+      },
+      "knowledge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metadataNamespace"
+        ],
+        "properties": {
+          "metadataNamespace": {
+            "type": "string",
+            "pattern": "^x_[a-z][a-z0-9_]{0,61}$",
+            "description": "项目与 Bundle 未声明时使用的知识元数据命名空间，未配置时为 x_agent"
+          }
+        }
       }
     }
   },
@@ -205,9 +219,9 @@
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/7e84d1112de10015a2ca/index.js",
+    "entry": "dist/control-ui/5ec68a0fe45ac5051246/index.js",
     "styles": [
-      "dist/control-ui/7e84d1112de10015a2ca/index.css"
+      "dist/control-ui/5ec68a0fe45ac5051246/index.css"
     ]
   },
   "cliCommands": [
