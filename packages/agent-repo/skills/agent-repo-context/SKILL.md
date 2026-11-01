@@ -44,6 +44,12 @@ list/inspect 只读登记和本地状态，不证明远端最新。多项目按�
 
 构建、更新或查询项目知识库时先读 [知识库规范](references/knowledge.md)。默认使用所选项目的 wiki/，显式 knowledge 优先；先读 skills/inspect 返回的 knowledge.entrypoint，再按主题查阅；无入口时在 knowledge.path 内按当前问题定位。目录不可用时如实说明。登记不代表自动向量索引或已加载全文；知识不提供执行授权。
 
+## 可选模板元数据
+
+inspect/skills 的 projectMetadata 是有界的参考摘要：project 身份提示、git 模式、validation 的 Node 版本与 npm 脚本名称、知识 Bundle 标识。missing/invalid 不等于项目不可用。项目根和选定业务子仓库分别读取自身 Git 配置，不能继承父仓推送或合并权限。
+
+不使用元数据覆盖角色登记、知识路径或身份；不自动执行脚本，先检查目标仓库实际内容和用户授权。摘要不含 tools、脚本原文或认证信息。Worker 沿用绑定快照的摘要，不能把 delivery=direct/review 当作操作授权。
+
 ## Worker 协作技能
 
 `worker_skill` 根据当前可信 Main 的已加载插件和候选工具生成或刷新全局 Codex 技能，不接受项目、人员或实体参数。只返回技能名、位置和版本；目录不代表当前会话已获工具权限，不包含插件凭证。

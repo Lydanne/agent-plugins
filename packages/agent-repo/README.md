@@ -521,3 +521,16 @@ Git 同步失败会保留具体诊断码并传递到入站拦截提示：`AGENT_
 配套公开模板：[agent-project-temple](https://github.com/Lydanne/agent-project-temple)、[agent-wiki-temple](https://github.com/Lydanne/agent-wiki-temple)。项目元数据 project.json 与角色登记 projects.json 分工不同；完整说明见仓库 docs/agent-templates.md。
 
 项目可以是任意符合现有登记与安全准备合同的独立 Git 仓库，不要求采用模板或 project.json；skills 可为空。模板仅为推荐结构，Git 模式沿用各仓自身政策。模板的 read-only/local/direct/review 工作流见仓库 docs/agent-templates.md，不是插件自动执行的新能力。
+
+## 模板元数据的运行时支持
+
+agent_repo inspect 和 skills 返回可选 projectMetadata；skills 同时把该摘要绑定到当前任务快照，Worker 的任务上下文读取同一摘要。字段 authority=reference_only，不能用元数据声明替代真实身份、工具授权或 Git 门禁。
+
+- project：可选 project.json 的读取状态、schemaVersion、projectId、name；不会覆盖角色登记的项目 ID、仓库路径或选定范围。
+- git：优先当前目标仓库 project.json.git，其次根 git-policy.json；返回 source/status、delivery、autoMerge=false 和可用的分支前缀/快进约定。显式策略无效时不回退成其他可写策略。选择 repositories/<name> 时读取该业务仓库的策略，不继承父项目策略。
+- validation：package.json 的 Node engines 声明，以及存在的 check/test/build/typecheck/git:check 脚本名称；不返回脚本原文或 verification.commands，不自动运行命令。模板默认命令为 npm run check、npm test、npm run git:check。
+- bundle：所选范围内的知识 Bundle 标识、标题和 x_agent 命名空间提示。项目根按角色登记的知识目录读取；子仓库读取其自身 wiki Bundle，不因项目元数据更改路径授权。
+
+各部分 status 为 available/missing/invalid。读取仅限当前范围的普通文件，每个 JSON 最大 64 KiB；拒绝越界及软链接，不返回 tools、任意附加字段、认证配置或脚本内容。没有模板文件的任意仓库仍可使用；坏元数据只返回 invalid，不把项目当作不可接入，也不代表可执行默认策略。
+
+本功能是可选信息发现与 Main/Worker 交接，不是模板全量校验器、自动构建器或 Git 权限执行器。执行前仍读取目标仓库规范、核对实际脚本和当前用户授权；read-only 请求不因项目配置变成写入任务。

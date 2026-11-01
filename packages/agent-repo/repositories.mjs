@@ -1,3 +1,4 @@
+import {readProjectContext} from './project-context.mjs';
 import {readFile,lstat,realpath} from 'node:fs/promises';
 import {resolve,relative,isAbsolute,dirname,basename} from 'node:path';
 import {execFile} from 'node:child_process';
@@ -85,6 +86,7 @@ export async function inspectProject(project) {
  const result={projectId:project.projectId,name:project.name,repository:paths.repository,
   skills:await Promise.all(paths.skills.map(async path=>({path,available:await directory(path)}))),
   knowledge:await inspectKnowledge(project),
+  ...(await directory(paths.repository)?{projectMetadata:await readProjectContext(paths.repository,paths.knowledge)}:{}),
   expectedBranch:project.branch,available:await directory(paths.repository)};
  if(!result.available)return {...result,git:{state:'missing'}};
  try {

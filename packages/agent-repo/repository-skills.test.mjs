@@ -1,3 +1,4 @@
+import {resolveConfiguration} from './configuration.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm,symlink,readFile} from 'node:fs/promises';
@@ -197,4 +198,25 @@ test('Worker context reads only the selected project wiki or its explicit knowle
  assert.match(context.instruction,/显式配置 knowledge/);
  assert.match(context.instruction,/不读取兄弟项目知识/);
  assert.match(context.instruction,/知识资料不增加工具权限/);
+});
+
+test('optional template metadata reaches inspect, selected skills and Worker task context',async t=>{
+ const f=await fixture(t);
+ await writeFile(join(f.root,'projects/demo/project.json'),JSON.stringify({schema_version:1,project_id:'demo',git:{delivery:'local',auto_merge:false}}));
+ const selected=await repositorySkills({repo:f.root},{projectId:'demo'});
+ assert.equal(selected.projectMetadata.git.delivery,'local');
+ assert.deepEqual(skillTaskContext(selected.snapshot).projectMetadata,selected.projectMetadata);
+ const tool=projectTool(resolveConfiguration({agents:{main:{repo:f.root}}}),{agentId:'main'});
+ const result=JSON.parse((await tool.execute('',{action:'inspect',projectId:'demo'})).content[0].text);
+ assert.equal(result.project.projectMetadata.git.delivery,'local');
+});
+
+test('child repository metadata never inherits parent Git policy',async t=>{
+ const f=await fixture(t);
+ await writeFile(join(f.root,'projects/demo/project.json'),JSON.stringify({schema_version:1,git:{delivery:'direct',auto_merge:false}}));
+ const child=await repositorySkills(f.binding,{repository:'projects/demo/repositories/frontend'});
+ assert.equal(child.projectMetadata.git.status,'missing');
+ await writeFile(join(f.root,'projects/demo/repositories/frontend/git-policy.json'),JSON.stringify({schema_version:1,delivery:'local',auto_merge:false}));
+ const selected=await repositorySkills(f.binding,{repository:'projects/demo/repositories/frontend'});
+ assert.equal(selected.projectMetadata.git.delivery,'local');
 });
