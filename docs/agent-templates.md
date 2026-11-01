@@ -66,13 +66,13 @@ agent-repo 的 project 是角色仓库 projects.json 中登记的实际项目仓
 
 wiki 模板提供 knowledge-ingest、knowledge-build、skill-maintenance；项目模板提供 project-setup、project-knowledge-build、project-test-loop、skill-maintenance。项目知识技能优先读取 wiki 自身治理与技能，再衔接归档、逐结论比较、权威正文更新和导航维护。
 
-两个模板均可运行 `python3 scripts/check.py` 和 `python3 -m unittest discover -s tests`；项目模板还校验 wiki 种子。检查覆盖模板元数据、UID、关系目标、本地链接及关键策略反例，不检查远端链接可访问性、事实真实性或生产行为。GitHub Actions 执行同一组检查。
+两个模板均可运行 `npm run check` 和 `npm test`；项目模板还校验 wiki 种子。检查覆盖模板元数据、UID、关系目标、本地链接及关键策略反例，不检查远端链接可访问性、事实真实性或生产行为。GitHub Actions 执行同一组检查。
 
 agent-repo 不因模板接入而增加向量检索、自动材料采集、飞书发布或自动合并能力。新增或语义变化内容保持 draft，真实审核和外部发布分别记录。
 
 ## Git 工作模式与各仓交付
 
-两个模板均提供 `.agents/skills/git-workflow/SKILL.md`、场景引用和只读 `scripts/git-check.py`。项目模板在 project.json.git 配置，独立 wiki 在 git-policy.json 配置；同一仓库只维护一份模式来源。
+两个模板均提供 `.agents/skills/git-workflow/SKILL.md`、场景引用和只读 `scripts/git-check.mjs`。项目模板在 project.json.git 配置，独立 wiki 在 git-policy.json 配置；同一仓库只维护一份模式来源。
 
 | delivery | 工作模式 | 交付范围 |
 | --- | --- | --- |
@@ -86,3 +86,7 @@ agent-repo 不因模板接入而增加向量检索、自动材料采集、飞书
 工作流覆盖：现场/未推送提交/worktree 检查、安全快进、任务分支、适用验证、精确暂存、提交、推送回执核对、PR 去重与 head 门禁、失败/冲突保留以及逐仓交付结果。根项目、独立业务仓库和独立 wiki 分别判定模式；普通 wiki 归父仓，子模块先交付子仓再按授权更新 gitlink。不让单仓授权扩展为递归更新或跨仓推送，也不把 PR、合并和部署混为完成。
 
 只读检查脚本不访问远端、不判断授权、不修改 Git；其本地 ahead/behind 仅针对现有远端跟踪引用。远端新鲜度、CI 和平台审批需按实际工具另外核验。
+
+## 脚本运行时
+
+通用模板脚本优先 Node.js ESM，要求 Node.js 22+；默认命令为 npm run check、npm test、npm run git:check，对应 scripts/check.mjs、node:test 与 scripts/git-check.mjs。使用 Node 内置模块，无需安装依赖，GitHub Actions 使用 Node.js 22。Python 允许用于专项能力或已有实现，但应注明依赖和运行方式，不作为通用模板默认依赖。

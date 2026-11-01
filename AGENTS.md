@@ -49,3 +49,5 @@ Never commit credentials, environment configuration, SQLite state, or business d
 ## Agent Workflows
 
 Communicate in Chinese. Use `.agents/skills/openclaw-plugin-develop/SKILL.md` and `.agents/skills/openclaw-plugin-commit/SKILL.md`. Pull, commit, and push on `main` are standing authorization after each completed and validated change; no repeated confirmation is needed. Honor explicit requests to skip commit or push. Do not create PRs. Production changes still require explicit authorization.
+
+通用维护脚本优先使用 Node.js ESM；专项库或既有实现适合 Python 时仍可使用，需明确依赖与命令。不要仅为统一语言改写无关脚本。
