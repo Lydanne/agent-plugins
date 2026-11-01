@@ -37,7 +37,7 @@ const entity={id:'entity-1',typeId:'service',name:'测试工单服务',summary:'
 const entityTypes=[{id:'person',label:'人员资源',count:1,fields:{}},{id:'service',label:'系统服务',count:1,fields:{url:{label:'服务地址'}}}];
 let directoryRun=null,peopleRun=null;
 const knowledgeScope={knowledgePath:'/fixture/projects/demo/wiki',metadataNamespace:'x_xgj',namespaceSource:'project.json',normalized:true,available:true,complete:true,issues:[]};
-const knowledgeDocs=[{path:'guides/knowledge.md',title:'项目知识库使用指南',uid:'guides.knowledge',content:'# 项目知识库使用指南\n\n通过项目 wiki 保存来源明确、可以复核的知识。\n\n'+Array.from({length:120},(_,i)=>'第 '+(i+1)+' 条：报告的正文、来源与验证记录应当分别核对。').join('\n')},{path:'guides/report.md',title:'报告交付验收',uid:'guides.report',content:'# 报告交付验收\n\n搜索、读取和验证本地 Markdown 文档。\n\n<script>这段原文必须显示为文本。</script>'}];
+const knowledgeDocs=[{path:'guides/knowledge.md',title:'项目知识库使用指南',uid:'guides.knowledge',content:['---','title: 项目知识库使用指南','x_xgj:','  uid: guides.knowledge','---','# 项目知识库使用指南','','通过项目 wiki 保存**来源明确**、可以复核的知识。','','## 阅读与导航','','[交付验收](report.md#验收清单) · [跳到示例](#代码与表格) · [越界链接](../../outside.md)','','> 文档链接只读取当前项目知识库。','','## 代码与表格','','| 能力 | 状态 |','| --- | --- |','| Markdown 预览 | 支持 |','| 标题目录 | 支持 |','','\x60\x60\x60js','const namespace = "x_xgj";','\x60\x60\x60','','## 后续记录','',...Array.from({length:120},(_,i)=>'第 '+(i+1)+' 条：报告的正文、来源与验证记录应当分别核对。')].join('\n')},{path:'guides/report.md',title:'报告交付验收',uid:'guides.report',content:'# 报告交付验收\n\n[返回指南](knowledge.md#阅读与导航)\n\n## 验收清单\n\n1. 核对正文与来源。\n2. 验证持久文件。\n\n<script>这段原文必须显示为文本。</script>'}];
 async function resultFor(p){
  const v=p.payload??{};
  if(p.actionId==='projects-knowledgeCatalog')return {projects:[{projectId:'demo',name:'示例项目'},{projectId:'empty',name:'未创建知识库的项目'}]};

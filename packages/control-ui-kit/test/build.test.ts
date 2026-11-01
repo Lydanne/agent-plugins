@@ -1,8 +1,20 @@
 import {it,expect} from 'vitest';
-import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import path from 'node:path';
 // @ts-expect-error Build tooling is JavaScript, not browser application code.
 import {buildControlUi} from '../build.mjs';
+// @ts-expect-error Build tooling is JavaScript, not browser application code.
+import {bundledLicenses} from '../licenses.mjs';
+it('collects hyphenated license filenames from the actual graph and rejects missing licenses',async()=>{
+ const root=await mkdtemp(path.resolve('.tmp-license-')),dependency=path.join(root,'node_modules','fixture-dependency');
+ try{
+  await mkdir(dependency,{recursive:true});await writeFile(path.join(dependency,'package.json'),JSON.stringify({name:'fixture-dependency',version:'1.0.0',license:'MIT'}));
+  const outputs=[{type:'chunk',modules:{[path.join(dependency,'index.js')]:{}}}];
+  await expect(bundledLicenses(outputs)).rejects.toThrow('Missing bundled license: fixture-dependency@1.0.0');
+  await writeFile(path.join(dependency,'LICENSE-MIT.txt'),'fixture license text');
+  expect(await bundledLicenses(outputs)).toContain('fixture license text');
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 it('builds a standalone Vue entry and scopes Tailwind theme without global resets',async()=>{
  const root=await mkdtemp(path.resolve('.tmp-build-'));
  try{

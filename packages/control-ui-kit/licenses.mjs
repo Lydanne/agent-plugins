@@ -23,7 +23,7 @@ export async function bundledLicenses(outputs){
  const kit=path.dirname(fileURLToPath(import.meta.url));
  const sections=[await readFile(path.join(kit,'THIRD_PARTY_NOTICES.md'),'utf8'),await readFile(path.join(kit,'LICENSE.shadcn-vue'),'utf8')];
  for(const [name,{directory,manifest}] of [...packages].sort(([a],[b])=>a.localeCompare(b))){
-  const files=(await readdir(directory,{withFileTypes:true})).filter(file=>file.isFile()&&/^(licen[cs]e|copying|notice)(\.|$)/i.test(file.name));
+  const files=(await readdir(directory,{withFileTypes:true})).filter(file=>file.isFile()&&/^(licen[cs]e|copying|notice)([._-]|$)/i.test(file.name));
   if(!files.length)throw Error('Missing bundled license: '+name);
   sections.push('\n## '+name+' ('+String(manifest.license??'see license')+')\n'+(await Promise.all(files.map(file=>readFile(path.join(directory,file.name),'utf8')))).join('\n'));
  }

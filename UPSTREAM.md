@@ -131,3 +131,7 @@ upstream MIT license; it is not an installed-runtime patch or automatic deploy.
 - 主题区分辅助文字和浅底色，新增成对前景/背景、焦点与提醒变量，同步到实例弹层；仅针对明确 shadcn Button variant 保留前景对比度。知识库页面改用共享基础组件和通用组合，保留原权限、请求失效和文件版本检查。
 
 - 2026-11-01：AgentRepo 与 Worker 的其余正式管理页面统一接入共享标题、表单、表格、状态与卡片组件，补充语义标题焦点、受控多行输入与复选框半选适配。保留原 API、宿主权限、确认、请求失效和删除/恢复边界；不修改执行与调度协议。
+
+## AgentRepo 知识库 Markdown 预览（2026-11-01）
+
+使用 [markdown-it 15.0.3](https://github.com/markdown-it/markdown-it)（MIT，固定开发依赖并打包进管理 UI）。保持默认 HTML 禁用，限制解析嵌套深度；本地适配器不使用 HTML 字符串注入，仅通过 Vue 文本节点和标签/属性白名单渲染，额外约束知识库路径、链接协议和图片加载。未修改上游源码，构建产物的 THIRD_PARTY_LICENSES.txt 包含实际打包依赖的许可证。

@@ -118,9 +118,10 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "ajv": "8.20.0",
-    "openclaw": "2026.9.5",
     "@openclaw-plugins/control-ui-kit": "workspace:*",
+    "ajv": "8.20.0",
+    "markdown-it": "15.0.3",
+    "openclaw": "2026.9.5",
     "vue": "^3.5.0"
   },
   "peerDependencies": {
