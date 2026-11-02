@@ -42,6 +42,7 @@ const knowledgeDocs=[{path:'guides/knowledge.md',title:'项目知识库使用指
 if(params.get('knowledgeTree')==='true')knowledgeDocs.push({path:'guides/index.md',title:'知识使用索引',uid:'guides.index',content:'# 知识使用索引\n\n这是目录的索引正文。'},{path:'features/README.md',title:'业务功能索引',uid:'features.index',content:'# 业务功能索引'},{path:'features/one.md',title:'业务功能甲',uid:'features.one',content:'# 业务功能甲'});
 async function resultFor(p){
  const v=p.payload??{};
+ if(params.get('knowledgeDelay')==='true'&&['projects-knowledgeIndex','projects-knowledgeSnapshot','projects-knowledgeNodes','projects-knowledgeEdges','projects-knowledgeDiff'].includes(p.actionId)&&(v.revision||v.snapshotId?.startsWith('snapshot-frame')))await new Promise(resolve=>setTimeout(resolve,160));
  if(p.actionId==='projects-knowledgeCatalog')return {projects:[{projectId:'demo',name:'示例项目'},{projectId:'empty',name:'未创建知识库的项目'}]};
  if(p.actionId?.startsWith('projects-knowledge')){
   if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
@@ -55,8 +56,8 @@ async function resultFor(p){
    const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i}));
    if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',records,total:records.length,nextCursor:null,complete:true};
    if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'snapshot-'+v.revision,commit:params.get('knowledgeObservations')==='true'?undefined:v.revision,totalNodes:nodes.length,totalEdges:edges.length};
-   if(p.actionId==='projects-knowledgeDiff')return {afterSnapshotId:'snapshot-'+v.revision,changes:[],commit:v.revision};
-   if(p.actionId==='projects-knowledgeNodes')return {snapshotId:v.snapshotId,nodes:nodes.map((n,i)=>({...n,contentHash:i===0?v.snapshotId:'stable'})),nextCursor:null};
+   if(p.actionId==='projects-knowledgeDiff'){const target=nodes[v.revision==='frame-0'?0:80]??nodes[0];return {afterSnapshotId:'snapshot-'+v.revision,changes:params.get('knowledgeReplay')==='true'?[{kind:'modified',path:target.path,entry:target}]:[],commit:v.revision};}
+   if(p.actionId==='projects-knowledgeNodes')return {snapshotId:v.snapshotId,nodes:nodes.map((n,i)=>({...n,...(params.get('knowledgeReplay')==='true'&&i===0&&v.snapshotId==='snapshot-frame-1'?{inDegree:20}:{}),contentHash:i===0?v.snapshotId:'stable'})),nextCursor:null};
    if(p.actionId==='projects-knowledgeEdges')return {snapshotId:v.snapshotId,edges,nextCursor:null};
   }
   if(p.actionId==='projects-knowledgeIndex')return {...knowledgeScope,state:'ready',snapshotId:v.snapshotId??'fixture-snapshot',entrypoint:nodes[0].path,totalNodes:nodes.length,totalEdges:edges.length};
