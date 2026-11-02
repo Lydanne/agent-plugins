@@ -81,3 +81,32 @@ test('settlement exceptions are rate limited instead of retried on every schedul
  await until(()=>{jobs.tick();return jobs.status(j.jobId,'a').workspaceReleaseRetryAt>Date.now();});
  for(let i=0;i<10;i++)jobs.tick();await delay(30);assert.equal(calls,1);assert.equal(JSON.stringify(jobs.status(j.jobId,'a')).includes('private remote detail'),false);
 });
+
+test('scheduler persists parked checkpoint in both job and request before advertising settlement',async t=>{
+ const f=fixture(t);let checkpoint;
+ const jobs=f.start({prepareWorkspace:async(runtime,owner)=>({...runtime,workspace:{id:'xgj-0',assignmentId:owner,owner,path:f.root},cwd:f.root}),settleWorkspace:async runtime=>{
+  checkpoint={agentId:'agent',projectId:'xgj',jobId:runtime.workspace.owner,assignmentId:runtime.workspace.assignmentId,workspaceId:'xgj-0',workspacePath:f.root,checkpointId:'generation'};
+  return {status:'idle',checkpoint};
+ }});
+ const job=await jobs.run({...params,useWorkspace:true},'a');
+ await until(()=>{jobs.tick();return existsSync(join(f.root,job.jobId+'.input'));});f.finish(job.jobId);
+ await until(()=>{jobs.tick();return jobs.status(job.jobId,'a').workspaceSettled===true;});
+ assert.deepEqual(jobs.status(job.jobId,'a').workspaceCheckpoint,checkpoint);
+ assert.deepEqual(JSON.parse(readFileSync(join(f.root,job.jobId+'.request.json'))).runtime.workspaceCheckpoint,checkpoint);
+});
+test('checkpoint continuation waits for its original workspace and never spawns before restoration',async t=>{
+ const f=fixture(t);let available=false,restores=0;
+ const checkpoint={jobId:'original-owner',assignmentId:'original-assignment',workspaceId:'xgj-0',checkpointId:'generation'};
+ const runtime={workspacePool:{},workspace:{id:'xgj-0',owner:'original-owner',assignmentId:'original-assignment',path:f.root},workspaceCheckpoint:checkpoint,projectContext:{projectId:'xgj',repository:'projects/xgj'},cwd:f.root,executionScope:'original'};
+ const jobs=f.start({getRuntime:()=>runtime,prepareWorkspace:async(value,owner)=>{
+  assert.equal(owner,'original-owner');assert.deepEqual(value.workspaceCheckpoint,checkpoint);
+  if(!available)return null;
+  restores++;const prepared={...value};delete prepared.workspaceCheckpoint;return prepared;
+ }});
+ const job=await jobs.run({...params,useWorkspace:true},'a');
+ assert.equal(jobs.status(job.jobId,'a').waitingReason,'waiting_original_workspace');
+ assert.equal(existsSync(join(f.root,job.jobId+'.input')),false);
+ available=true;await until(()=>{jobs.tick();return existsSync(join(f.root,job.jobId+'.input'));});
+ const input=JSON.parse(readFileSync(join(f.root,job.jobId+'.input')));
+ assert.equal(restores,1);assert.equal(input.runtime.workspaceCheckpoint,undefined);assert.equal(input.runtime.cwd,f.root);assert.equal(input.runtime.executionScope,'original');
+});

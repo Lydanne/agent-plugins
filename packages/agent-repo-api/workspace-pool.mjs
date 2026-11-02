@@ -8,7 +8,7 @@ const exec=promisify(execFile),hash=s=>createHash('sha256').update(s).digest('he
 const exists=async p=>{try{await access(p);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}};
 export const processAlive=pid=>{if(!Number.isInteger(pid)||pid<1)return true;try{process.kill(pid,0);return true;}catch(e){return e.code!=='ESRCH';}};
 const environment=()=>Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_|^(FEISHU|LARK)_(APP_ID|APP_SECRET|ACCESS_TOKEN|ENCRYPT_KEY|VERIFICATION_TOKEN)$|^OPENCLAW_GATEWAY_(TOKEN|PASSWORD)$/.test(k)));
-export async function poolGit(cwd,args){return (await exec('git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C',cwd,...args],{env:{...environment(),GIT_TERMINAL_PROMPT:'0'},timeout:120000,maxBuffer:4*1024*1024})).stdout.trim();}
+export async function poolGit(cwd,args,{raw=false}={}){const output=(await exec('git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C',cwd,...args],{env:{...environment(),GIT_TERMINAL_PROMPT:'0'},timeout:120000,maxBuffer:4*1024*1024})).stdout;return raw?output:output.trim();}
 async function safePath(root,path){
  const full=resolve(root,path);if(!full.startsWith(root+'/'))throw Error('Workspace path escapes Agent Repo');
  let current=root;for(const part of path.split('/')){if(!part||part==='.'||part==='..')throw Error('Invalid workspace path');current=join(current,part);try{if((await lstat(current)).isSymbolicLink())throw Error('Workspace path must not be linked');}catch(e){if(e.code!=='ENOENT')throw e;}}
@@ -141,7 +141,18 @@ export async function prepareWorkspace(plan,lease,{install=installDependencies}=
     if(top!==dest){
      const {readdir}=await import('node:fs/promises');if((await readdir(dest)).length)throw Error('Workspace repository is not independent');
      await poolGit(dirname(dest),['clone','--no-hardlinks','--no-checkout','--',repo.source,dest]);await poolGit(dest,['remote','set-url','origin',repo.url]);
-    }else await cleanRepository(dest,{published:true,baseBranch:repo.baseBranch});
+    }else {
+     let checkpointProtected=false;
+     if(lease.preservedCheckpoint) {
+      const {readCheckpoint}=await import('./workspace-checkpoints.mjs');
+      const saved=await readCheckpoint(join(plan.root,'workspace'),lease.preservedCheckpoint);
+      const receipt=saved.repositories.find(r=>r.path===repo.path);
+      if(saved.status!=='parked'||saved.binding.workspaceId!==lease.id||saved.binding.workspacePath!==lease.path||receipt?.stage!=='released'||receipt.url!==repo.url)throw Error('Workspace preservation proof unavailable');
+      if(await poolGit(dest,['rev-parse','HEAD'])!==receipt.git.head||await poolGit(dest,['rev-parse',receipt.git.headRef])!==receipt.git.head)throw Error('Preserved workspace HEAD changed');
+      checkpointProtected=true;
+     }
+     await cleanRepository(dest,{published:!checkpointProtected,baseBranch:repo.baseBranch});
+    }
    }
    if(await poolGit(dest,['remote','get-url','origin'])!==repo.url)throw Error('Workspace remote changed');
    // The accepted source snapshot pins the base, not a mutable branch name.
@@ -160,7 +171,7 @@ export async function prepareWorkspace(plan,lease,{install=installDependencies}=
    if(hash(await readFile(manifest))!==digest)throw Error('package.json changed during dependency installation');
    lease=await update(plan,lease,s=>{s.dependencies[repo.path]={packageJsonHash:digest,installedAt:Date.now()};});
   }
-  return await update(plan,lease,s=>{s.status='ready';delete s.preparerPid;});
+  return await update(plan,lease,s=>{s.status='ready';delete s.preparerPid;delete s.preservedCheckpoint;});
  }catch(error){await update(plan,lease,s=>{s.status='blocked';s.error='Workspace initialization failed; directory preserved. Check clone, branch and dependencies.';});throw Error('Workspace initialization failed; directory preserved. Check clone, branch and dependencies.');}
 }
 export async function validateWorkspace(plan,lease,{settling=false}={}){
@@ -200,4 +211,94 @@ export function sameRegistryExceptPool(before,after){
   if(JSON.stringify(pools(before))===JSON.stringify(pools(after)))return before===after;
   return JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
  }catch{return false;}
+}
+
+// Host-only entry: caller must also fence task continuations and verify the
+// execution process group has exited. No model-supplied paths are accepted.
+export async function parkWorkspace(plan,lease,{agentId}={}) {
+ if(typeof agentId!=='string'||!agentId)throw Error('Checkpoint Agent identity required');
+ lease=await validateWorkspace(plan,lease,{settling:true});
+ if(lease.workerPid&&processAlive(lease.workerPid))throw Error('Workspace Worker is still alive');
+ if(lease.pendingCheckpoint)throw Error('Interrupted checkpoint requires recovery; original binding retained');
+ const binding={agentId,projectId:plan.projectId,jobId:lease.owner,assignmentId:lease.assignmentId,workspaceId:lease.id,workspacePath:lease.path,checkpointId:randomUUID()};
+ await update(plan,lease,s=>{if(!['ready','held','blocked','running'].includes(s.status))throw Error('Workspace checkpoint already claimed');s.status='saving';s.pendingCheckpoint={binding,lease:structuredClone(lease)};});
+ try {
+  const {saveWorkspaceCheckpoint,releaseCheckpointContents}=await import('./workspace-checkpoint-transaction.mjs');
+  await saveWorkspaceCheckpoint(join(plan.root,'workspace'),binding,lease.repositories);
+  await releaseCheckpointContents(join(plan.root,'workspace'),binding);
+  return await transaction(plan.root,state=>{
+   const slot=state.workspaces[lease.id];
+   if(slot?.assignmentId!==lease.assignmentId||slot.owner!==lease.owner||slot.status!=='saving')throw Error('Checkpoint assignment changed');
+   state.checkpoints??={};
+   const previous=state.checkpoints[lease.assignmentId];
+   if(previous){state.checkpointHistory??={};state.checkpointHistory[previous.binding.checkpointId??'initial-'+lease.assignmentId]=previous;}
+   state.checkpoints[lease.assignmentId]={binding,lease:structuredClone(lease),status:'parked'};
+   Object.assign(slot,{status:'idle',preservedCheckpoint:binding,dependencies:{},releasedAt:Date.now()});delete slot.error;delete slot.releaseFailure;delete slot.pendingCheckpoint;
+   return structuredClone(slot);
+  });
+ } catch(error) {
+  await update(plan,lease,s=>{s.status='blocked';s.error='Workspace checkpoint incomplete; saved objects and remaining files preserved';}).catch(()=>{});
+  throw error;
+ }
+}
+
+export async function restoreParkedWorkspace(plan,expected,{agentId,checkpointId}={}) {
+ const claimed=await transaction(plan.root,async state=>{
+  const checkpoint=state.checkpoints?.[expected.assignmentId];
+  if(!checkpoint||checkpoint.binding.agentId!==agentId||checkpoint.binding.projectId!==plan.projectId||checkpoint.binding.jobId!==expected.owner||checkpoint.binding.workspaceId!==expected.id)throw Error('Original checkpoint binding unavailable');
+  if(checkpointId!==undefined&&checkpoint.binding.checkpointId!==checkpointId)throw Error('Checkpoint generation changed');
+  const slot=state.workspaces[expected.id];
+  if(!slot||slot.path!==checkpoint.binding.workspacePath||slot.projectId!==plan.projectId)throw Error('Original workspace identity changed');
+  if(['restoring','restored'].includes(checkpoint.status)){
+   if(slot.assignmentId!==expected.assignmentId||slot.owner!==expected.owner||!['restoring','ready','blocked'].includes(slot.status))throw Error('Restored assignment is no longer available');
+   const {verifyRestoredWorkspaceCheckpoint}=await import('./workspace-checkpoint-transaction.mjs');
+   await verifyRestoredWorkspaceCheckpoint(join(plan.root,'workspace'),checkpoint.binding);
+   slot.status='ready';delete slot.error;checkpoint.status='restored';
+   return {acknowledged:structuredClone(slot)};
+  }
+  if(checkpoint.status!=='parked')throw Error('Checkpoint restoration already claimed or requires recovery');
+  if(slot.status!=='idle')return null;
+  checkpoint.status='restoring';
+  state.workspaces[expected.id]={...checkpoint.lease,status:'restoring'};
+  return structuredClone(checkpoint);
+ });
+ if(!claimed)return null;
+ if(claimed.acknowledged)return claimed.acknowledged;
+ try {
+  const {restoreWorkspaceCheckpoint}=await import('./workspace-checkpoint-transaction.mjs');
+  await restoreWorkspaceCheckpoint(join(plan.root,'workspace'),claimed.binding);
+  return await transaction(plan.root,state=>{
+   const slot=state.workspaces[expected.id],checkpoint=state.checkpoints[expected.assignmentId];
+   if(slot?.assignmentId!==expected.assignmentId||slot.status!=='restoring'||checkpoint.status!=='restoring')throw Error('Restore assignment changed');
+   slot.status='ready';checkpoint.status='restored';return structuredClone(slot);
+  });
+ }catch(error){
+  await update(plan,claimed.lease,s=>{s.status='blocked';s.error='Workspace restoration requires recovery; checkpoint retained';}).catch(()=>{});
+  throw error;
+ }
+}
+
+// Recover a lost scheduler acknowledgement without re-settling a new slot owner.
+export async function parkedWorkspaceReceipt(plan,expected,{agentId}={}) {
+ const {readCheckpoint}=await import('./workspace-checkpoints.mjs');
+ return transaction(plan.root,async state=>{
+  const slot=state.workspaces[expected.id];
+  const pending=slot?.assignmentId===expected.assignmentId&&slot.owner===expected.owner?slot.pendingCheckpoint:undefined;
+  const checkpoint=pending??state.checkpoints?.[expected.assignmentId];
+  if(!checkpoint||(!pending&&checkpoint.status!=='parked'))return null;
+  const b=checkpoint.binding;
+  if(b.agentId!==agentId||b.projectId!==plan.projectId||b.jobId!==expected.owner||b.assignmentId!==expected.assignmentId||b.workspaceId!==expected.id||b.workspacePath!==expected.path)throw Error('Checkpoint acknowledgement binding changed');
+  const record=await readCheckpoint(join(plan.root,'workspace'),b);
+  if(record.status!=='parked'||!record.repositories.length||record.repositories.some(r=>r.stage!=='released'))throw Error('Checkpoint acknowledgement is not parked; recovery required');
+  if(pending){
+   if(!['saving','blocked'].includes(slot.status))throw Error('Pending checkpoint slot changed');
+   state.checkpoints??={};
+   const previous=state.checkpoints[expected.assignmentId];
+   if(previous){state.checkpointHistory??={};state.checkpointHistory[previous.binding.checkpointId??'initial-'+expected.assignmentId]=previous;}
+   state.checkpoints[expected.assignmentId]={...pending,status:'parked'};
+   Object.assign(slot,{status:'idle',preservedCheckpoint:b,dependencies:{},releasedAt:Date.now()});
+   delete slot.pendingCheckpoint;delete slot.error;delete slot.releaseFailure;
+  }
+  return {status:'idle',checkpoint:b};
+ });
 }

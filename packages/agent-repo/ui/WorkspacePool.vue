@@ -8,7 +8,7 @@ const props=defineProps<{projectId:string;invoke:<T>(action:string,payload:Recor
 const context=useHostContext(),open=ref(false),audit=ref(false),data=ref<Snapshot>(),busy=ref(false),saving=ref(false),message=ref(''),enabled=ref(false),capacity=ref<string|number>(3);
 const writable=computed(()=>context.value.host.connection.canWrite&&props.canWrite());
 const safe=(value:unknown)=>props.safe?.(value)??String(value??'');
-const labels:Record<string,string>={idle:'空闲',preparing:'初始化中',ready:'待执行',running:'执行中',held:'等待补充',checking:'检查释放条件',blocked:'异常保留'};
+const labels:Record<string,string>={idle:'空闲',preparing:'初始化中',ready:'待执行',running:'执行中',held:'等待补充',checking:'检查释放条件',saving:'保存任务现场',restoring:'恢复任务现场',blocked:'异常保留'};
 let alive=true,epoch=0;
 function assign(next:Snapshot){data.value=next;enabled.value=next.config.enabled;capacity.value=next.config.maxSize;}
 async function load(){audit.value=false;const token=++epoch;busy.value=true;try{const next=await props.invoke<Snapshot>('workspacePool',{projectId:props.projectId});if(!alive||token!==epoch||!open.value)return;if(!next?.config||!Array.isArray(next.slots))throw Error('当前宿主暂不支持工作区管理');assign(next);message.value='';}catch(e){if(alive&&token===epoch)message.value=safe(e instanceof Error?e.message:e);}finally{if(alive&&token===epoch)busy.value=false;}}

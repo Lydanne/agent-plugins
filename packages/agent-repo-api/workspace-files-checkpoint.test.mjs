@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,readFile,rm,symlink,readlink,realpath} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {poolGit} from './workspace-pool.mjs';
+import {captureExtraFiles,restoreExtraFiles,clearExtraCheckpointSource} from './workspace-files-checkpoint.mjs';
+test('extra-file capture preserves ignored, untracked, unusual names and symlinks without deleting originals',async t=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'extra-files-')));t.after(()=>rm(root,{recursive:true,force:true}));
+ const repo=join(root,'repo');await mkdir(repo);await poolGit(repo,['init']);
+ await writeFile(join(repo,'.gitignore'),'private/\n');await poolGit(repo,['add','.gitignore']);
+ await mkdir(join(repo,'private'));await writeFile(join(repo,'private','result'),'private-result');
+ const name=' leading\nname ';await writeFile(join(repo,name),'untracked-result');await symlink('/outside/not-read',join(repo,'link'));
+ const destination=join(root,'saved'),receipts=await captureExtraFiles(repo,destination);
+ assert.deepEqual(receipts.map(r=>r.path),[name,'link','private/result']);
+ for(const path of [name,'private/result']) assert.equal(await readFile(join(repo,path),'utf8'),await readFile(join(destination,path),'utf8'));
+ assert.equal(await readlink(join(destination,'link')),'/outside/not-read');
+ await assert.rejects(captureExtraFiles(repo,destination),{code:'EEXIST'});
+ await assert.rejects(captureExtraFiles(repo,join(repo,'saved')),/outside/);
+});
+
+test('restore is bound to original repository, repeatable, and refuses conflicting files or corrupt backups',async t=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'restore-files-')));t.after(()=>rm(root,{recursive:true,force:true}));
+ const repo=join(root,'repo');await mkdir(repo);await poolGit(repo,['init']);
+ await mkdir(join(repo,'nested'));await writeFile(join(repo,'nested','one'),'saved');await writeFile(join(repo,'two'),'second');
+ const saved=join(root,'saved'),receipts=await captureExtraFiles(repo,saved);
+ await writeFile(join(repo,'two'),'late change');
+ await assert.rejects(clearExtraCheckpointSource(repo,saved,receipts),/verification/);
+ assert.equal(await readFile(join(repo,'nested','one'),'utf8'),'saved');
+ await writeFile(join(repo,'two'),'second');
+ await clearExtraCheckpointSource(repo,saved,receipts);
+ await assert.rejects(restoreExtraFiles(repo,saved,receipts,{expectedRoot:root}),/binding/);
+ await writeFile(join(repo,'two'),'another task');
+ await assert.rejects(restoreExtraFiles(repo,saved,receipts,{expectedRoot:repo}),/conflicts/);
+ await assert.rejects(readFile(join(repo,'nested','one')),{code:'ENOENT'});
+ assert.equal(await readFile(join(repo,'two'),'utf8'),'another task');await rm(join(repo,'two'));
+ assert.deepEqual(await restoreExtraFiles(repo,saved,receipts,{expectedRoot:repo}),{restored:2});
+ assert.deepEqual(await restoreExtraFiles(repo,saved,receipts,{expectedRoot:repo}),{restored:2});
+ await writeFile(join(saved,'two'),'corrupt');
+ await assert.rejects(restoreExtraFiles(repo,saved,receipts,{expectedRoot:repo}),/verification/);
+ assert.equal(await readFile(join(repo,'two'),'utf8'),'second');
+});

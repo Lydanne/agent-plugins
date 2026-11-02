@@ -53,7 +53,11 @@
     "worker-source.d.mts",
     "plugin-cli.mjs",
     "worker-cli.mjs",
-    "worker-cli.d.mts"
+    "worker-cli.d.mts",
+    "workspace-checkpoints.mjs",
+    "workspace-checkpoint-transaction.mjs",
+    "workspace-git-checkpoint.mjs",
+    "workspace-files-checkpoint.mjs"
   ],
   "scripts": {
     "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs && node --check worker-source.mjs && node --check plugin-cli.mjs && node --check worker-cli.mjs",

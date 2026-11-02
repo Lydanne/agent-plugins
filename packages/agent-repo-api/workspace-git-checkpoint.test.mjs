@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,readFile,rm,realpath} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {poolGit} from './workspace-pool.mjs';
+import {captureTrackedCheckpoint,restoreTrackedCheckpoint,clearTrackedCheckpointSource} from './workspace-git-checkpoint.mjs';
+test('capture preserves staged and unstaged edits and pins unpublished HEAD without cleaning files',async t=>{
+ const path=await realpath(await mkdtemp(join(tmpdir(),'git-checkpoint-')));t.after(()=>rm(path,{recursive:true,force:true}));
+ await poolGit(path,['init','-b','main']);await writeFile(join(path,'file'),'base');await poolGit(path,['add','file']);
+ await poolGit(path,['-c','user.name=Test','-c','user.email=test@localhost','-c','commit.gpgsign=false','commit','-m','base']);
+ await writeFile(join(path,'file'),'staged');await poolGit(path,['add','file']);await writeFile(join(path,'file'),'unstaged');await writeFile(join(path,'extra'),'untracked');
+ const before=await poolGit(path,['status','--porcelain']);
+ const saved=await captureTrackedCheckpoint(path,{agentId:'a',projectId:'p',jobId:'j',assignmentId:'lease',workspaceId:'p-0',repository:'.'});
+ assert.equal(await poolGit(path,['status','--porcelain']),before);
+ assert.equal(await readFile(join(path,'extra'),'utf8'),'untracked');
+ assert.equal(await poolGit(path,['show',saved.stash+':file']),'unstaged');
+ assert.equal(await poolGit(path,['show',saved.stash+'^2:file']),'staged');
+ assert.equal(await poolGit(path,['rev-parse',saved.headRef]),saved.head);
+ assert.equal(await poolGit(path,['rev-parse',saved.stashRef]),saved.stash);
+ await assert.rejects(restoreTrackedCheckpoint(path,saved),/clean/);
+ // Simulate the separate release transaction only in this disposable fixture.
+ await writeFile(join(path,'file'),'late edit');
+ await assert.rejects(clearTrackedCheckpointSource(path,saved),/changed after capture/);
+ assert.equal(await readFile(join(path,'file'),'utf8'),'late edit');
+ await writeFile(join(path,'file'),'unstaged');
+ await clearTrackedCheckpointSource(path,saved);await rm(join(path,'extra'));
+ await poolGit(path,['checkout','--detach',saved.head]);
+ assert.deepEqual(await restoreTrackedCheckpoint(path,saved),{status:'restored',head:saved.head});
+ assert.equal(await readFile(join(path,'file'),'utf8'),'unstaged');
+ assert.equal(await poolGit(path,['show',':file']),'staged');
+ assert.equal(await poolGit(path,['branch','--show-current']),'main');
+ assert.equal(await poolGit(path,['rev-parse',saved.stashRef]),saved.stash);
+ await assert.rejects(restoreTrackedCheckpoint(path,{...saved,repositoryPath:'/wrong'}),/binding/);
+});

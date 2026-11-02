@@ -38,6 +38,11 @@ const waitPolicy={optional:'可选补充未取得时注明缺失并继续。',re
 export function taskClassOf(job){return job.queueId??job.taskClass??'short';}
 const agentOf=job=>job.agentId??job.provenance?.agentId??job.project?.agentId??'__legacy__';
 const sameQueue=(a,b)=>(a.provenance?.automation&&b.provenance?.automation||agentOf(a)===agentOf(b))&&taskClassOf(a)===taskClassOf(b);
+function hasRestorableCheckpoint(job) {
+ const checkpoint=job.workspaceCheckpoint,slot=job.workspace;
+ return !!(checkpoint&&slot&&checkpoint.jobId===slot.owner&&checkpoint.assignmentId===slot.assignmentId&&checkpoint.workspaceId===slot.id&&checkpoint.workspacePath===slot.path&&checkpoint.projectId===job.projectId&&checkpoint.agentId===agentOf(job));
+}
+const steeringWorkspaceUnavailable=job=>job.useWorkspace&&(job.workspaceSettlement||((job.workspaceSettled||job.workspaceRelease==='idle')&&!hasRestorableCheckpoint(job)));
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
 export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,prepareWorker,logger}) {
@@ -203,10 +208,19 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    void Promise.resolve().then(()=>settleWorkspace(request.runtime)).then(async result=>{
     const release=await acquireLock(lock);try{
      const current=readJson(join(root,job.jobId+'.json'));if(current.workspaceSettlement?.token!==token)return;
+     if(result?.checkpoint) {
+      const latestRequest=readJson(join(root,job.jobId+'.request.json'));
+      latestRequest.runtime={...latestRequest.runtime,workspaceCheckpoint:result.checkpoint};
+      writeJson(join(root,job.jobId+'.request.json'),latestRequest);
+     }
      for(const related of files().filter(j=>sameWorkspace(j,job)&&['completed','failed','timed_out','cancelled'].includes(j.status))){
       delete related.workspaceSettlement;
+      if(result?.checkpoint) {
+       const relatedFile=join(root,related.jobId+'.request.json'),relatedRequest=readJson(relatedFile);
+       relatedRequest.runtime={...relatedRequest.runtime,workspaceCheckpoint:result.checkpoint};writeJson(relatedFile,relatedRequest);
+      }
       const settled=result?.status==='idle',attempts=(related.workspaceReleaseAttempts??0)+1;
-      const updated={...related,workspaceSettled:settled,workspaceRelease:result?.status??'preserved',workspaceReleaseAttempts:attempts};
+      const updated={...related,workspaceSettled:settled,workspaceRelease:result?.status??'preserved',...(result?.checkpoint?{workspaceCheckpoint:result.checkpoint}:{}),workspaceReleaseAttempts:attempts};
       if(settled){delete updated.workspaceReleaseRetryAt;delete updated.workspaceReleaseFailure;}
       else{updated.workspaceReleaseFailure=result?.releaseFailure??{code:'RELEASE_UNCONFIRMED',stage:'settlement'};updated.workspaceReleaseRetryAt=Date.now()+Math.min(300000,30000*2**Math.min(attempts-1,4));}
       writeJson(join(root,related.jobId+'.json'),updated);
@@ -233,7 +247,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    if(scopeKey(request.scope)!==job.scope||request.params?.topic!==job.topic)throw Error('Queued request binding mismatch; execution withheld');
    if(request.runtime?.workspacePool&&!job.workspaceReady){
     if(!prepareWorkspace){terminalJob({...job,status:'failed',error:'Workspace service unavailable',finishedAt:Date.now()});continue;}
-    job.workspaceWaiting='waiting_workspace';writeJson(file,job);
+    job.workspaceWaiting=request.runtime.workspaceCheckpoint?'waiting_original_workspace':'waiting_workspace';writeJson(file,job);
     if(!workspaceOperations.has(job.jobId)){
      workspaceOperations.add(job.jobId);
      workspaceAdmission=workspaceAdmission.catch(()=>{}).then(async()=>{
@@ -244,7 +258,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
        const release=await acquireLock(lock);
        try{
         const current=readJson(file);
-        if(prepared){request.runtime=prepared;writeJson(requestFile,request);Object.assign(current,projectFields(prepared),{workspaceReady:true});delete current.workspaceWaiting;writeJson(file,current);}
+        if(prepared){request.runtime=prepared;writeJson(requestFile,request);Object.assign(current,projectFields(prepared),{workspaceReady:true});delete current.workspaceWaiting;delete current.workspaceCheckpoint;delete current.workspaceSettled;delete current.workspaceRelease;writeJson(file,current);}
        }finally{release();}
       }catch(error){const release=await acquireLock(lock);try{const current=readJson(file);if(queued(current))terminalJob({...current,status:'failed',error:String(error.message),finishedAt:Date.now()});}finally{release();}}
       finally{workspaceOperations.delete(job.jobId);}
@@ -302,7 +316,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     const prior=job.steeringInputs?.find(r=>contributorSourceIdentity(r.source)===contributorSourceIdentity(bound));
     if(prior){if(prior.answer!==answer)throw Error('Steering input already saved differently');const receiptFile=join(root,'supplements',prior.questionId+'.json');if(existsSync(receiptFile)&&!['waiting','accepted'].includes(readJson(receiptFile).status))return prior;}
-    if(job.useWorkspace&&(job.workspaceSettled||job.workspaceRelease==='idle'||job.workspaceSettlement))throw Error('Steering workspace is settling or already released');
+    if(steeringWorkspaceUnavailable(job))throw Error('Steering workspace is settling or already released');
     if(prior)return prior;
     if(!['queued','running','awaiting_main','awaiting_user','completed'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     if((job.steeringInputs?.length??0)>=64)throw Error('Steering input limit reached');
@@ -320,8 +334,8 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(!owner&&!contributorPermission(job,input.source,request.requestId,input.questionId))throw Error('Steering requires requester approval');
     if(['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     const directory=join(root,'supplements'),file=join(directory,input.questionId+'.json');
-    if(existsSync(file)){const prior=readJson(file);if(prior.kind!=='steering'||prior.jobId!==jobId||prior.answer!==input.answer)throw Error('Steering binding mismatch');if(['waiting','accepted'].includes(prior.status)&&job.useWorkspace&&(job.workspaceSettled||job.workspaceRelease==='idle'||job.workspaceSettlement))throw Error('Steering workspace is settling or already released');return prior;}
-    if(job.useWorkspace&&(job.workspaceSettled||job.workspaceRelease==='idle'||job.workspaceSettlement))throw Error('Steering workspace is settling or already released');
+    if(existsSync(file)){const prior=readJson(file);if(prior.kind!=='steering'||prior.jobId!==jobId||prior.answer!==input.answer)throw Error('Steering binding mismatch');if(['waiting','accepted'].includes(prior.status)&&steeringWorkspaceUnavailable(job))throw Error('Steering workspace is settling or already released');return prior;}
+    if(steeringWorkspaceUnavailable(job))throw Error('Steering workspace is settling or already released');
     if(input.expiresAt<=Date.now()||!['queued','running','awaiting_main','awaiting_user','completed'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     mkdirSync(directory,{recursive:true,mode:0o700});
     // Admission is serialized by scheduler-lock. This sequence orders receipts

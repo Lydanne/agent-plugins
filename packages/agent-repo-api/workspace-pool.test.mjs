@@ -126,3 +126,61 @@ test('a rewritten remote cannot validate a stale containing branch',async t=>{
  await poolGit(f.source,['push','--force','origin','main:refs/heads/'+slot.branch]);
  assert.equal((await releaseWorkspace(f.plan,slot)).releaseFailure.code,'HEAD_NOT_ON_ORIGIN');
 });
+
+test('parked task restores only after its original slot becomes idle, retaining staged and extra contents',async t=>{
+ const {parkWorkspace,restoreParkedWorkspace}=await import('./workspace-pool.mjs');
+ const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await writeFile(join(slot.path,'code.txt'),'unpublished');const unpublished=await commit(slot.path);
+ await writeFile(join(slot.path,'code.txt'),'unfinished');await writeFile(join(slot.path,'artifact'),'saved output');
+ const parked=await parkWorkspace(f.plan,slot,{agentId:'agent'});assert.equal(parked.status,'idle');
+ const other=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});assert.equal(other.id,slot.id);
+ assert.equal(await readFile(join(other.path,'code.txt'),'utf8'),'base');
+ await writeFile(join(other.path,'code.txt'),'other task result');await commit(other.path);
+ assert.equal(await restoreParkedWorkspace(f.plan,slot,{agentId:'agent'}),null);
+ await parkWorkspace(f.plan,other,{agentId:'agent'});
+ const restored=await restoreParkedWorkspace(f.plan,slot,{agentId:'agent'});
+ assert.equal(restored.assignmentId,slot.assignmentId);assert.equal(restored.path,slot.path);assert.equal(await poolGit(slot.path,['rev-parse','HEAD']),unpublished);
+ assert.equal(await readFile(join(slot.path,'code.txt'),'utf8'),'unfinished');assert.equal(await readFile(join(slot.path,'artifact'),'utf8'),'saved output');
+ await validateWorkspace(f.plan,restored);
+ const firstGeneration=parked.preservedCheckpoint.checkpointId;
+ await writeFile(join(restored.path,'artifact'),'second round');
+ const again=await parkWorkspace(f.plan,restored,{agentId:'agent'});
+ assert.notEqual(again.preservedCheckpoint.checkpointId,firstGeneration);
+ await assert.rejects(restoreParkedWorkspace(f.plan,slot,{agentId:'agent',checkpointId:firstGeneration}),/generation/);
+ const second=await restoreParkedWorkspace(f.plan,slot,{agentId:'agent',checkpointId:again.preservedCheckpoint.checkpointId});
+ assert.equal(await readFile(join(second.path,'artifact'),'utf8'),'second round');
+ const state=JSON.parse(await readFile(join(f.root,'workspace/state.json')));
+ assert.equal(state.checkpointHistory[firstGeneration].status,'restored');
+});
+
+test('lost pool acknowledgement recovers the original journal without capturing the cleaned checkout',async t=>{
+ const {parkWorkspace,parkedWorkspaceReceipt,restoreParkedWorkspace}=await import('./workspace-pool.mjs');
+ const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await writeFile(join(slot.path,'code.txt'),'saved before interruption');
+ const parked=await parkWorkspace(f.plan,slot,{agentId:'agent'});
+ const file=join(f.root,'workspace/state.json'),state=JSON.parse(await readFile(file));
+ const saved=state.checkpoints[slot.assignmentId];delete state.checkpoints[slot.assignmentId];
+ state.workspaces[slot.id]={...slot,status:'saving',pendingCheckpoint:{binding:saved.binding,lease:saved.lease}};
+ await writeFile(file,JSON.stringify(state));
+ const receipt=await parkedWorkspaceReceipt(f.plan,slot,{agentId:'agent'});
+ assert.deepEqual(receipt.checkpoint,parked.preservedCheckpoint);
+ const restored=await restoreParkedWorkspace(f.plan,slot,{agentId:'agent',checkpointId:receipt.checkpoint.checkpointId});
+ assert.equal(await readFile(join(restored.path,'code.txt'),'utf8'),'saved before interruption');
+});
+
+test('completed restoration with lost acknowledgement verifies files instead of applying again',async t=>{
+ const {parkWorkspace,restoreParkedWorkspace}=await import('./workspace-pool.mjs');
+ const f=await fixture(t),slot=await prepareWorkspace(f.plan,await allocateWorkspace(f.plan,randomUUID()),{install:f.install});
+ await writeFile(join(slot.path,'code.txt'),'original unfinished');await writeFile(join(slot.path,'output'),'artifact');
+ const parked=await parkWorkspace(f.plan,slot,{agentId:'agent'});
+ const options={agentId:'agent',checkpointId:parked.preservedCheckpoint.checkpointId};
+ await restoreParkedWorkspace(f.plan,slot,options);
+ const file=join(f.root,'workspace/state.json'),state=JSON.parse(await readFile(file));
+ state.workspaces[slot.id].status='restoring';state.checkpoints[slot.assignmentId].status='restoring';await writeFile(file,JSON.stringify(state));
+ assert.equal((await restoreParkedWorkspace(f.plan,slot,options)).status,'ready');
+ assert.equal((await restoreParkedWorkspace(f.plan,slot,options)).status,'ready');
+ assert.equal(await readFile(join(slot.path,'code.txt'),'utf8'),'original unfinished');
+ await writeFile(join(slot.path,'output'),'unexpected edit');
+ await assert.rejects(restoreParkedWorkspace(f.plan,slot,options));
+ assert.equal(await readFile(join(slot.path,'output'),'utf8'),'unexpected edit');
+});

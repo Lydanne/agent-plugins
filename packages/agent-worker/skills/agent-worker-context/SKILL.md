@@ -32,7 +32,13 @@ CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机�
 
 ## 独立 workspace
 
-明确授权的代码修复任务可在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 保持原目录。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，提交推送只针对自己的任务分支。
+只读查询、日志与源码分析在登记的默认项目目录执行，省略 `useWorkspace` 或传 false，不占工作区池，也不触发现场保存与恢复。只有明确授权的写任务才在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 保持原目录。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，提交推送只针对自己的任务分支。
+
+写任务终止且执行进程组退出后，支持检查点的宿主会逐仓保存 HEAD、暂存区和工作树，另外保存未跟踪及忽略文件。完整核验后才释放池容量。保存记录绑定原 job/assignment、工作区、仓库和检查点轮次；工作区空闲不表示成果已提交、推送、合并或业务完成。
+
+已保存任务的原授权续接只能回原工作区。`waiting_original_workspace` 表示原槽位正在被使用，保持原任务等待；不得改用空闲槽位、默认目录或新 run 重做业务。仍须遵守来源有效性和已有任务状态限制；保存记录不能恢复已撤销的授权，也不会自动重跑失败、超时或取消任务。
+
+保存或恢复失败时保留回执及现存文件，`recovery_required` 需要核对具体阶段。Worker 和 Main 不得手工 `stash pop/drop`、删除保护引用、清理运行目录或改 state.json 强制释放。恢复采用明确 Git 对象的 apply 并保留保存引用；中断后不盲目重复 apply。只读任务不进入这一流程。
 
 ## 可配置任务队列
 

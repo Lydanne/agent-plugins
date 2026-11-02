@@ -107,7 +107,11 @@
     "dist/worker-cli.mjs",
     "project-context.mjs",
     "knowledge.mjs",
-    "knowledge-index.mjs"
+    "knowledge-index.mjs",
+    "dist/workspace-checkpoints.mjs",
+    "dist/workspace-checkpoint-transaction.mjs",
+    "dist/workspace-git-checkpoint.mjs",
+    "dist/workspace-files-checkpoint.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

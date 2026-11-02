@@ -80,7 +80,11 @@
     "THIRD_PARTY_NOTICES.md",
     "cli-capabilities.mjs",
     "dist/plugin-cli.mjs",
-    "dist/worker-cli.mjs"
+    "dist/worker-cli.mjs",
+    "dist/workspace-checkpoints.mjs",
+    "dist/workspace-checkpoint-transaction.mjs",
+    "dist/workspace-git-checkpoint.mjs",
+    "dist/workspace-files-checkpoint.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

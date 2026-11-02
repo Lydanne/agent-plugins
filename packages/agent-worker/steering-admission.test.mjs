@@ -52,3 +52,21 @@ for(const status of ['dispatched','blocked','suppressed'])test('read-only '+stat
   const retried=JSON.parse((await query(f.args,f.ctx)).content[0].text);assert.equal(retried.state,status);assert.equal(retried.accepted,status==='dispatched');
  }finally{f.close();}
 });
+
+test('a completed task with a bound parked checkpoint accepts steering for original-workspace recovery',async()=>{
+ const f=fixture();try{
+  const path=join(f.root,f.id+'.json'),job=readJson(path);
+  const workspace={id:'p-0',assignmentId:'assignment',owner:f.id,path:'/fixture/p-0'};
+  const workspaceCheckpoint={agentId:'main',projectId:'p',jobId:f.id,workspaceId:workspace.id,assignmentId:workspace.assignmentId,workspacePath:workspace.path};
+  writeJson(path,{...job,status:'completed',agentId:'main',projectId:'p',useWorkspace:true,workspace,workspaceCheckpoint,workspaceSettled:true,workspaceRelease:'idle'});
+  const result=JSON.parse((await query(f.args,f.ctx)).content[0].text);
+  assert.equal(result.accepted,true);
+ }finally{f.close();}
+});
+test('a mismatched checkpoint never authorizes steering into a released workspace',async()=>{
+ const f=fixture();try{
+  const path=join(f.root,f.id+'.json'),job=readJson(path);
+  writeJson(path,{...job,status:'completed',agentId:'main',projectId:'p',useWorkspace:true,workspace:{id:'p-0',owner:f.id,assignmentId:'new',path:'/fixture/p-0'},workspaceCheckpoint:{agentId:'main',projectId:'p',jobId:f.id,workspaceId:'p-0',assignmentId:'old',workspacePath:'/fixture/p-0'},workspaceSettled:true});
+  await assert.rejects(query(f.args,f.ctx),/STEERING_WORKSPACE_UNAVAILABLE/);
+ }finally{f.close();}
+});
