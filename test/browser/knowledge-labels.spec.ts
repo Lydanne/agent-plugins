@@ -1,0 +1,10 @@
+import {test,expect} from '@playwright/test';
+test('graph labels stay readable at overview and detail zoom, avoid collisions and clean up',async({page})=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.emulateMedia({reducedMotion:'reduce'});await page.goto('/?section=knowledge&knowledgeNodes=200&knowledgePlanets=true');await expect(page.locator('html')).toHaveAttribute('data-ready','true');await page.getByRole('tab',{name:'图谱',exact:true}).click();await expect(page.locator('.kb-network')).toHaveAttribute('data-render-state','ready');
+ const layer=page.locator('.kb-label-layer');await expect.poll(async()=>Number(await layer.getAttribute('data-visible-labels'))).toBeGreaterThan(0);await expect(layer.locator('.kb-group-label:visible').first()).toHaveCSS('font-size','14px');
+ for(let i=0;i<4;i++)await page.getByRole('button',{name:'缩小图谱',exact:true}).click();await expect(layer.locator('.kb-group-label:visible').first()).toHaveCSS('font-size','14px');
+ await expect.poll(()=>layer.locator('span:visible').evaluateAll(els=>{const rects=els.map(el=>el.getBoundingClientRect());return rects.every((r,i)=>rects.slice(i+1).every(s=>r.right<=s.left||s.right<=r.left||r.bottom<=s.top||s.bottom<=r.top));})).toBe(true);
+ await page.getByRole('textbox',{name:'查找图谱文档'}).fill('features/f0/0.md');await page.locator('.kb-matches button').first().click();await expect(layer.locator('.kb-selected-label')).toBeVisible();await expect(layer.locator('.kb-selected-label')).toHaveCSS('font-size','16px');await expect(layer.locator('.kb-selected-label')).toHaveText('知识节点 0');
+ for(let i=0;i<3;i++)await page.getByRole('button',{name:'放大图谱',exact:true}).click();await expect(layer.locator('.kb-selected-label')).toHaveCSS('font-size','16px');await page.screenshot({path:'.tmp/knowledge-delivery/readable-graph-labels.png',fullPage:true});await page.getByRole('button',{name:'关闭节点详情'}).click();await expect(layer.locator('.kb-selected-label')).toHaveCount(0);
+ await page.getByRole('tab',{name:'文档',exact:true}).click();await expect(layer).toHaveCount(0);expect(errors).toEqual([]);
+});
