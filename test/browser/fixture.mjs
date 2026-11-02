@@ -11,6 +11,7 @@ let currentView,context,mutationStatus='succeeded',deferredReads=false,pendingRe
 let trash=Array.from({length:26},(_,i)=>({id:'plan-'+i,name:'测试计划 '+i,kind:'group-schedule',provider:'group-schedules',revision:'rev-'+i,deletedAt:1000,expiresAt:Date.now()+86400000,preview:{task:'读取本群进展',group:'测试群'}}));
 const policy={retentionDays:30,revision:'policy-1'};
 const task={jobId:'11111111-1111-4111-8111-111111111111',topic:'检查项目与依赖',taskSummary:'只读检查测试项目',projectId:'demo',sessionKey:'agent:main:real-chat',status:'running',createdAt:Date.now()-20000};
+if(params.has('longManagedTasks'))Object.assign(task,{topic:'中文任务主题-'+ 'long-unbroken-id-'.repeat(12),taskSummary:'保留完整业务证据和原始记录，不应覆盖来源会话或时间列。'.repeat(30),sessionKey:'agent:main:automation:'+ 'very-long-source-'.repeat(15),projectId:'project-with-a-long-identifier'});
 const counts={running:1,queued:0,awaiting_main:0,awaiting_user:0,completed:0,failed:0,timed_out:0,unknown:1};
 let workerSessions=[
  {topic:'历史问题',projectId:'demo',executionScope:'a'.repeat(64),modelSessionScope:'b'.repeat(64),model:'fixture-quick',harness:'codex',status:'completed',tags:['客服','知识','第三个标签'],heat:3,taskCount:1,interactionCount:2,createdAt:Date.now()-30000,updatedAt:Date.now()-10000,jobCreatedAt:Date.now()-30000,finishedAt:Date.now()-10000,canDelete:true,deletionRevision:'c'.repeat(64),cwd:'/fixture/workspace/demo-0',directoryKind:'workspace',sessionId:'worker-quick'},
