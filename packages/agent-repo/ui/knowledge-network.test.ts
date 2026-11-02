@@ -23,3 +23,6 @@ test('organic placement reserves the complete drift envelope, with lighter small
  for(let t=0;t<60000;t+=1000){const moved={...network,points:network.points.map(p=>{const d=driftOffset(p.id,p.r,t);return {...p,x:p.x+d.x,y:p.y+d.y};})};expect(validateNetwork(moved)).toBe(true);}
  expect(new Set(network.groups.map(g=>g.y)).size).toBe(network.groups.length);
 });
+
+test('node sizes have strong stable contrast with a bounded maximum',()=>{const radius=(weight:number)=>nodeRadius({path:'a',title:'A',neighborDegree:weight});expect([0,1,4,16,64,100,10000].map(radius)).toEqual([6,9,12,18,30,36,36]);expect(radius(100)/radius(0)).toBe(6);});
+test('collision validation catches enlarged nodes across two old grid cells',()=>{const n=layoutNetwork([{path:'a',title:'A',neighborDegree:100},{path:'b',title:'B',neighborDegree:100}],[],new Set(['area:index']));n.groups[0]!.x=75;n.groups[0]!.y=0;n.groups[0]!.r=200;n.points[0]!.x=49;n.points[0]!.y=0;n.points[1]!.x=101;n.points[1]!.y=0;expect(validateNetwork(n)).toBe(false);});

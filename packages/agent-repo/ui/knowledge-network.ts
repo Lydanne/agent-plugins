@@ -3,7 +3,9 @@ export type SizeMode='total'|'in'|'out';
 export const areaColors:Record<string,string>={features:'#4f8a80',concepts:'#648bca',rules:'#ac7db3',processes:'#c88b54',architecture:'#678ab0',decisions:'#b78368',sources:'#8c9560',index:'#84929d'};
 export const groupId=(n:KnowledgeEntry)=>n.featureId?'feature:'+n.featureId:'area:'+(n.area??n.path.split('/').slice(0,-1)[0]??'index');
 export const nodeWeight=(n:KnowledgeEntry,mode:SizeMode='total')=>mode==='in'?n.inDegree??0:mode==='out'?n.outDegree??0:(n.neighborDegree??((n.inDegree??0)+(n.outDegree??0)));
-export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>8+Math.min(16,Math.log2(1+nodeWeight(n,mode))*2);
+// Fixed across projects and snapshots: 0 / 16 / 100+ neighbors => 12 / 36 / 72 diameter.
+export const radiusForWeight=(weight:number)=>6+Math.min(30,Math.sqrt(Math.max(0,weight))*3);
+export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>radiusForWeight(nodeWeight(n,mode));
 export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
 export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[]}
 // Each Feature is a planetary system: strongest node at the center, smaller satellites on concentric orbits.
@@ -40,7 +42,7 @@ export function validateNetwork(network:ReturnType<typeof layoutNetwork>){
  const groups=new Map(network.groups.map(g=>[g.id,g]));
  const ordered=[...network.groups].sort((a,b)=>a.x-a.r-(b.x-b.r));
  for(let i=0;i<ordered.length;i++){const a=ordered[i]!;for(let j=i+1;j<ordered.length;j++){const b=ordered[j]!;if(b.x-b.r>a.x+a.r)break;if(Math.hypot(a.x-b.x,a.y-b.y)<=a.r+b.r)return false;}}
- const cell=50,buckets=new Map<string,NetworkPoint[]>();
+ const cell=network.points.reduce((size,p)=>Math.max(size,p.r*2),50),buckets=new Map<string,NetworkPoint[]>();
  for(const p of network.points){const g=groups.get(p.group);if(!g||Math.hypot(p.x-g.x,p.y-g.y)+p.r>=g.r)return false;const x=Math.floor(p.x/cell),y=Math.floor(p.y/cell);for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(const q of buckets.get(`${x+dx}:${y+dy}`)??[])if(Math.hypot(p.x-q.x,p.y-q.y)<=p.r+q.r)return false;const key=`${x}:${y}`;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key)!.push(p);}
  return true;
 }
