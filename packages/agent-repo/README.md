@@ -616,3 +616,15 @@ CLI 也支持 `openclaw agent-repo knowledge-list --agent alice --params '{"proj
 AgentRepo 与 Worker 的目录、技能路径、工作区路径、运行目录等路径字段统一以当前已绑定 AgentRepo 根为基准展示（例如 `projects/agent-plugins/wiki`），根目录自身显示 `.`。同卷外部路径显示为 `../` 相对路径；跨 Windows 盘符或根目录尚不可用时保留原值。根目录来自已授权读取响应 `result` 数据块中的 `agentRepoRoot` 展示元数据，不额外请求目录、不推断宿主 HOME，也不提供路径访问授权。
 
 仅转换展示值。API 返回、原始正文/命令/诊断记录与操作参数保留原始路径；导航、导出和后端执行继续使用原数据，不能把界面相对路径当作新的工具范围。切换 Agent、隐藏页面或失去读取权限后清除旧根目录，延迟响应不能复用其他 Agent 的路径基准。
+
+### 完整知识浏览与版本回放
+
+知识库管理页使用 G6 5.1.1，默认按 Feature/知识区聚合；全部展开不会截断节点或关系。节点大小按去重入链/出链邻居数映射，分类颜色与 Feature 圆形边界分别表达知识区和归属。圈内采用确定性环形排布、圈外采用不相交打包；画布允许扩展，不将节点位置压缩回固定区域。缩放/拖动期间暂隐连线，停止后恢复全部关系。界面保留 Canvas 之外的目录树、分组和搜索按钮供键盘操作。
+
+新增只读管理动作 `knowledgeIndex/knowledgeNodes/knowledgeEdges/knowledgeChanges/knowledgeSnapshot/knowledgeDiff`。前三者使用固定 `snapshotId` 与绑定 Agent/项目/版本的游标，每页 500 节点或 2000 关系；失效游标重新获取快照，禁止跨版本合并。`knowledgeIndex` 返回 `building/ready/error`、进度与完整性；`refresh:true` 重建当前状态。`knowledgeRead/List/Search` 管理动作可传 `snapshotId`；旧模型工具和 CLI 摘要合同不变。异常文件和未解析关系仍明确报告。
+
+派生 SQLite 位于 Agent `.runtime/knowledge/index.sqlite`，独立于实体库。当前文件按指纹缓存、历史 blob 按 Git OID 缓存，解析结果按正文哈希、路径、命名空间及解析器版本复用，快照发布为原子事务。未完成构建重新进入时可以复用文件缓存；服务重启后旧游标过期，快照可重新读取。缓存不是业务资料或授权来源，不进入 Git。
+
+历史固定到本地 HEAD 的第一父链，合并相对第一父提交计算；只读取对象、不 checkout、不 fetch、不执行外部 diff/textconv。历史文档链接继续读取同一快照。无 Git 时仅提供观察记录；浅克隆明确提示历史边界。当前未提交内容单列为工作区状态。历史选择接口只接受服务端已列出的 revision，拒绝任意路径和命令选择器。
+
+全屏使用局部 OverlayScope，弹窗跟随图谱；不可用时回退页面内最大化。现有单包构建保持不变，仅延迟创建图谱实例。G6 使用固定版本的 preset-free ESM 入口和显式注册，所需适配封装在 `ui/knowledge-g6.ts`；升级时必须验证注册项、CircleCombo 几何接口及浏览器测试。

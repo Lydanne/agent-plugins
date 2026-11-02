@@ -12,7 +12,8 @@ export async function bundledLicenses(outputs){
    const parent=path.dirname(directory);return parent===directory?null:owner(parent);
   })();directories.set(directory,result);return result;
  }
- for(const file of outputs)if(file.type==='chunk')for(const id of Object.keys(file.modules)){
+ for(const file of outputs)if(file.type==='chunk')for(const [id,module] of Object.entries(file.modules)){
+  if(module.renderedLength===0)continue;
   const clean=id.split('?')[0];if(!path.isAbsolute(clean)||!clean.includes('/node_modules/'))continue;
   const found=await owner(path.dirname(clean));if(found)packages.set(found.manifest.name+'@'+found.manifest.version,found);
  }
@@ -24,7 +25,11 @@ export async function bundledLicenses(outputs){
  const sections=[await readFile(path.join(kit,'THIRD_PARTY_NOTICES.md'),'utf8'),await readFile(path.join(kit,'LICENSE.shadcn-vue'),'utf8')];
  for(const [name,{directory,manifest}] of [...packages].sort(([a],[b])=>a.localeCompare(b))){
   const files=(await readdir(directory,{withFileTypes:true})).filter(file=>file.isFile()&&/^(licen[cs]e|copying|notice)([._-]|$)/i.test(file.name));
-  if(!files.length)throw Error('Missing bundled license: '+name);
+  if(!files.length){
+   const supplied={'@antv/algorithm@0.1.26':['MIT','antv-algorithm-0.1.26.txt'],'@antv/event-emitter@0.1.3':['MIT','antv-event-emitter-0.1.3.txt'],'@antv/g-lite@2.7.2':['MIT','antv-g-lite-2.7.2.txt'],'@antv/util@2.0.17':['ISC','antv-util-2.0.17.txt']}[name];
+   if(supplied&&manifest.license===supplied[0]){sections.push(await readFile(path.join(kit,'licenses',supplied[1]),'utf8'));continue;}
+   throw Error('Missing bundled license: '+name);
+  }
   sections.push('\n## '+name+' ('+String(manifest.license??'see license')+')\n'+(await Promise.all(files.map(file=>readFile(path.join(directory,file.name),'utf8')))).join('\n'));
  }
  return sections.join('\n\n');

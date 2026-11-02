@@ -9,17 +9,17 @@ const listing={...scope,entries:[entry],total:1,offset:0,nextOffset:null};
 const doc={...scope,found:true,entry,content:'# 知识指南\n<script>SECRET</script>',startLine:1,endLine:2,totalLines:3,nextLine:3,sha256:'a',lineTruncated:false};
 async function fixture(handler){
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
- const ctx=uiContext(async(method,p)=>{calls.push(p);assert.equal(method,'plugins.sessionAction');assert.equal(p.sessionKey,'agent:'+p.agentId+':agent-repo-management');return {ok:true,result:{encoding:'json-chunks',transferId:'fixture',totalChunks:1,index:0,agentRepoRoot:p.agentId==='other'?'/other':'/project',chunk:JSON.stringify(await handler(p))}};},{section:'knowledge'});ctx.host.connection.canWrite=false;ctx.host.redact=value=>String(value).replaceAll('SECRET','[redacted]');
+ const ctx=uiContext(async(method,p)=>{calls.push(p);assert.equal(method,'plugins.sessionAction');assert.equal(p.sessionKey,'agent:'+p.agentId+':agent-repo-management');return {ok:true,result:{encoding:'json-chunks',transferId:'fixture',totalChunks:1,index:0,agentRepoRoot:p.agentId==='other'?'/other':'/project',chunk:JSON.stringify(await (async()=>{if(p.actionId==='projects-knowledgeIndex')return {...scope,state:'ready',snapshotId:'test-snapshot',totalNodes:1,totalEdges:0};if(p.actionId==='projects-knowledgeNodes')return {snapshotId:'test-snapshot',nodes:[entry],nextCursor:null};if(p.actionId==='projects-knowledgeEdges')return {snapshotId:'test-snapshot',edges:[],nextCursor:null};if(p.actionId==='projects-knowledgeChanges')return {head:'fixture',records:[],total:0,nextCursor:null,complete:true};return handler(p);})())}};},{section:'knowledge'});ctx.host.connection.canWrite=false;ctx.host.redact=value=>String(value).replaceAll('SECRET','[redacted]');
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();return {...f,ctx,calls};
 }
 const catalog={projects:[{projectId:'one',name:'项目一'}]};
 function submit(f,value){const input=f.container.querySelector('[aria-label="搜索知识库"]');input.value=value;input.dispatchEvent(new f.window.Event('input'));input.closest('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));}
 test('read-only management browses, searches, paginates, reads escaped redacted content and validates the configured namespace',async()=>{
  const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId==='projects-knowledgeRead'?{...doc,...(p.payload.startLine===3?{content:'第三行',startLine:3,endLine:3,nextLine:null}:{})}:p.actionId==='projects-knowledgeValidate'?{...scope,valid:true,errors:[],warnings:[]}:p.payload.offset===20?{...listing,offset:20,total:21}:{...listing,total:21,nextOffset:20});
- assert.equal(f.container.querySelector('.kb-location>span').textContent,'wiki');assert.ok(!f.container.querySelector('.kb-location').textContent.includes('x_xgj'));assert.match(f.container.textContent,/知识指南/);assert.equal(f.calls[1].actionId,'projects-knowledgeList');
+ assert.equal(f.container.querySelector('.kb-location>span').textContent,'wiki');assert.ok(!f.container.querySelector('.kb-location').textContent.includes('x_xgj'));assert.match(f.container.textContent,/知识指南/);assert.ok(f.calls.some(p=>p.actionId==='projects-knowledgeList'));submit(f,'附件');await settle();
  click(f.container,'下一页');await settle();assert.equal(f.calls.at(-1).payload.offset,20);click(f.container,'上一页');await settle();
  submit(f,'附件');await settle();assert.equal(f.calls.at(-1).actionId,'projects-knowledgeSearch');assert.equal(f.calls.at(-1).payload.query,'附件');
- f.ctx.host.redact=value=>String(value).replaceAll('SECRET','[redacted]');f.container.querySelector('.kb-entry').click();await settle();
+ f.ctx.host.redact=value=>String(value).replaceAll('SECRET','[redacted]');(f.container.querySelector('.kb-entry')??f.container.querySelector('.kb-tree button')).click();await settle();
  assert.ok(f.container.querySelector('[aria-label="Markdown 正文"]'),f.container.querySelector('.kb-reader')?.outerHTML);
  assert.match(f.container.querySelector('[aria-label="Markdown 正文"]').textContent,/<script>\[redacted\]<\/script>/);assert.equal(f.container.querySelector('.kb-reader script'),null);
  click(f.container,'加载后续内容');await settle();assert.match(f.container.querySelector('[aria-label="Markdown 正文"]').textContent,/第三行/);assert.equal(f.calls.at(-1).payload.startLine,3);
@@ -30,8 +30,8 @@ test('read-only management browses, searches, paginates, reads escaped redacted 
 test('requires a project selection and drops pending project or document results',async()=>{
  const pending=deferred(),read=deferred();let first=true;
  const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?{projects:[...catalog.projects,{projectId:'two',name:'项目二'}]}:p.actionId==='projects-knowledgeRead'?read.promise:p.payload.projectId==='one'&&first?(first=false,pending.promise):{...listing,entries:[{...entry,title:'项目二条目'}]});
- assert.equal(f.calls.length,1);select(f.window,f.container,'知识库项目','one');await settle();select(f.window,f.container,'知识库项目','two');await settle();pending.resolve({...listing,entries:[{...entry,title:'过期结果'}]});await settle();assert.ok(!f.container.textContent.includes('过期结果'));
- f.container.querySelector('.kb-entry').click();await settle();select(f.window,f.container,'知识库项目','');await settle();read.resolve(doc);await settle();assert.equal(f.container.querySelector('pre'),null);
+ assert.equal(f.container.querySelector('[aria-label="知识库项目"]').value,'one');select(f.window,f.container,'知识库项目','two');await settle();pending.resolve({...listing,entries:[{...entry,title:'过期结果'}]});await settle();assert.ok(!f.container.textContent.includes('过期结果'));
+ (f.container.querySelector('.kb-entry')??f.container.querySelector('.kb-tree button')).click();await settle();select(f.window,f.container,'知识库项目','');await settle();read.resolve(doc);await settle();assert.equal(f.container.querySelector('pre'),null);
  select(f.window,f.container,'知识库项目','two');await settle();f.ctx.host.connection.canRead=false;f.ctx.notify();await settle();assert.equal(f.container.querySelector('.ar-knowledge'),null);
 });
 test('exposes missing, partial, empty and retry states without silently presenting success',async()=>{
@@ -41,7 +41,7 @@ test('exposes missing, partial, empty and retry states without silently presenti
 });
 test('does not concatenate changed document revisions or paint a stale Agent response',async()=>{
  const pending=deferred();const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId==='projects-knowledgeRead'?{...doc,...(p.payload.startLine===3?{sha256:'b',content:'新版尾部'}:{})}:p.agentId==='other'?pending.promise:listing);
- f.container.querySelector('.kb-entry').click();await settle();click(f.container,'加载后续内容');await settle();assert.match(f.container.textContent,/条目已更新/);assert.ok(!f.container.querySelector('[aria-label="Markdown 正文"]').textContent.includes('新版尾部'));
+ (f.container.querySelector('.kb-entry')??f.container.querySelector('.kb-tree button')).click();await settle();click(f.container,'加载后续内容');await settle();assert.match(f.container.textContent,/条目已更新/);assert.ok(!f.container.querySelector('[aria-label="Markdown 正文"]').textContent.includes('新版尾部'));
  f.ctx.host.agents.selectedId='other';f.ctx.notify();await settle();f.ctx.host.connection.canRead=false;f.ctx.notify();pending.resolve({...listing,total:999});await settle();assert.equal(f.container.querySelector('.ar-knowledge'),null);assert.ok(!f.container.textContent.includes('999'));
 });
 
@@ -49,7 +49,7 @@ test('Markdown preview has a TOC, safe scoped document navigation, anchors, back
  const body='# 知识指南\n\n[同篇](#第二节) · [下一篇](nested/next.md#目标) · [无锚点下一篇](nested/next.md) · [越界](../outside.md) · [缺失](missing.md) · [未加载](#尾部)\n\n## 第二节\n\n**重点**\n\n| 字段 | 值 |\n| --- | --- |\n| UID | `guide` |';
  const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId!=='projects-knowledgeRead'?listing:p.payload.path==='missing.md'?{...scope,found:false}:p.payload.path==='nested/next.md'?{...doc,entry:{...entry,path:'nested/next.md',title:'下一篇'},content:'# 下一篇\n\n## 目标\n\n跳转成功',nextLine:null}:p.payload.startLine===11?{...doc,content:'\n## 尾部\n\n完整结尾',startLine:11,endLine:14,totalLines:14,nextLine:null}:{...doc,content:body,endLine:10,totalLines:14,nextLine:11});
  const link=text=>[...f.container.querySelectorAll('.kb-markdown a')].find(el=>el.textContent===text);
- f.container.querySelector('.kb-entry').click();await settle();assert.equal(f.container.querySelectorAll('.kb-toc a').length,2);assert.equal(f.container.querySelectorAll('.kb-markdown td').length,2);
+ (f.container.querySelector('.kb-entry')??f.container.querySelector('.kb-tree button')).click();await settle();assert.equal(f.container.querySelectorAll('.kb-toc a').length,2);assert.equal(f.container.querySelectorAll('.kb-markdown td').length,2);
  link('同篇').click();await settle();assert.equal(f.window.document.activeElement.textContent,'第二节');
  const count=f.calls.length;link('越界').click();await settle();assert.equal(f.calls.length,count);assert.match(f.container.textContent,/链接超出当前知识库目录/);
  link('下一篇').click();await settle();assert.equal(f.calls.at(-1).payload.path,'nested/next.md');assert.equal(f.calls.at(-1).payload.projectId,'one');assert.equal(f.window.document.activeElement.textContent,'目标');
@@ -76,30 +76,16 @@ test('validation is a closeable modal with loading, failure, retry and stale-res
 
 test('choosing another TOC heading cancels an earlier unloaded anchor destination',async()=>{
  const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId!=='projects-knowledgeRead'?listing:p.payload.startLine===3?{...doc,content:'## later',startLine:3,endLine:3,nextLine:null}:{...doc,content:'# start\n\n[稍后](#later)\n\n## current'});
- f.container.querySelector('.kb-entry').click();await settle();f.container.querySelector('.kb-markdown a').click();await settle();assert.match(f.container.textContent,/目标标题尚未加载/);
+ (f.container.querySelector('.kb-entry')??f.container.querySelector('.kb-tree button')).click();await settle();f.container.querySelector('.kb-markdown a').click();await settle();assert.match(f.container.textContent,/目标标题尚未加载/);
  [...f.container.querySelectorAll('.kb-toc a')].find(el=>el.textContent==='current').click();await settle();assert.equal(f.window.document.activeElement.textContent,'current');
  click(f.container,'加载后续内容');await settle();assert.notEqual(f.window.document.activeElement.textContent,'later');assert.ok(!f.container.textContent.includes('目标标题尚未加载'));
 });
 
-const graphData={...scope,nodes:[entry,{path:'other.md',title:'其他指南',uid:'other'}],edges:[{source:'guide.md',target:'other.md',kind:'link'},{source:'other.md',target:'guide.md',kind:'relation',relation:'depends_on'}],totalNodes:2,nodeLimit:100,edgeLimit:1000,scanComplete:true,truncated:false,unresolvedReferences:0,ignoredReferences:0,omittedEdges:0,invalidDocuments:0,referenceLimit:false};
-test('knowledge view lazily opens the graph Tab, searches and zooms, then opens a scoped document from its selected node',async()=>{
- const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId==='projects-knowledgeGraph'?graphData:p.actionId==='projects-knowledgeRead'?{...doc,nextLine:null}:listing);
- assert.equal(f.container.querySelector('[role=tab][data-state=active]').textContent,'文档');assert.ok(!f.calls.some(p=>p.actionId==='projects-knowledgeGraph'));
- click(f.container,'图谱');await settle();assert.equal(f.calls.at(-1).actionId,'projects-knowledgeGraph');assert.equal(f.calls.at(-1).payload.projectId,'one');assert.equal(f.container.querySelectorAll('.kb-graph-node').length,2);assert.equal(f.container.querySelector('.kb-graph-scope>span').textContent,'wiki');assert.ok(!f.container.querySelector('.kb-graph-scope').textContent.includes('x_xgj'));assert.equal(graphData.knowledgePath,'/project/wiki');assert.equal(f.container.querySelectorAll('.kb-graph-edges line').length,2);assert.equal(f.container.querySelectorAll('.kb-graph-edges .metadata').length,1);
- const svg=f.container.querySelector('.kb-network'),box=svg.getAttribute('viewBox');click(f.container,'放大');await settle();assert.notEqual(svg.getAttribute('viewBox'),box);click(f.container,'适应画布');await settle();assert.equal(svg.getAttribute('viewBox'),box);
- const input=f.container.querySelector('[aria-label="查找图谱文档"]');input.value='其他';input.dispatchEvent(new f.window.Event('input'));input.closest('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.match(f.container.querySelector('.kb-graph-detail').textContent,/其他指南/);assert.match(f.container.textContent,/1 项匹配/);
- f.container.querySelector('.kb-graph-node').dispatchEvent(new f.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));await settle();assert.match(f.container.querySelector('.kb-graph-detail').textContent,/知识指南/);click(f.container,'打开文档');await settle();assert.equal(f.container.querySelector('[role=tab][data-state=active]').textContent,'文档');assert.equal(f.calls.at(-1).actionId,'projects-knowledgeRead');assert.equal(f.calls.at(-1).payload.path,'guide.md');assert.equal(f.container.querySelector('.kb-graph'),null);assert.ok(f.container.querySelector('.kb-markdown'));
- assert.ok(f.calls.every(p=>p.agentId==='main'));assert.ok(f.calls.every(p=>!('metadataNamespace' in p.payload)));
-});
-
-test('graph error, retry, empty and partial states remain explicit and never paint old project or hidden Tab results',async()=>{
- const pending=deferred();let mode='pending';const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?{projects:[...catalog.projects,{projectId:'two',name:'项目二'}]}:p.actionId==='projects-knowledgeGraph'?mode==='pending'?pending.promise:mode==='error'?Promise.reject(Error('private details')):mode==='empty'?{...graphData,nodes:[],edges:[],totalNodes:0}:{...graphData,complete:false,truncated:true,unresolvedReferences:2}:listing);
- select(f.window,f.container,'知识库项目','one');await settle();click(f.container,'图谱');await settle();assert.match(f.container.textContent,/正在构建/);mode='error';select(f.window,f.container,'知识库项目','two');await settle();pending.resolve({...graphData,nodes:[{...entry,title:'过期节点'}]});await settle();assert.ok(!f.container.textContent.includes('过期节点'));assert.match(f.container.textContent,/图谱读取失败/);assert.ok(!f.container.textContent.includes('private details'));
- mode='empty';click(f.container,'重试图谱');await settle();assert.match(f.container.textContent,/暂无 Markdown 条目/);mode='partial';click(f.container,'刷新图谱');await settle();assert.match(f.container.textContent,/部分内容/);assert.match(f.container.textContent,/2 项引用未解析/);
- click(f.container,'文档');await settle();assert.equal(f.container.querySelector('.kb-graph'),null);click(f.container,'图谱');await settle();f.ctx.host.connection.canRead=false;f.ctx.notify();await settle();assert.equal(f.container.querySelector('.kb-graph'),null);
-});
-
-test('leaving the graph Tab discards its delayed response and reopening fetches current graph data',async()=>{
- const pending=deferred();let first=true;const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId==='projects-knowledgeGraph'?first?(first=false,pending.promise):graphData:listing);
- click(f.container,'图谱');await settle();click(f.container,'文档');await settle();pending.resolve({...graphData,nodes:[{...entry,title:'隐藏图谱旧节点'}]});await settle();assert.ok(!f.container.textContent.includes('隐藏图谱旧节点'));assert.equal(f.container.querySelector('.kb-graph'),null);click(f.container,'图谱');await settle();assert.equal(f.calls.filter(p=>p.actionId==='projects-knowledgeGraph').length,2);assert.equal(f.container.querySelectorAll('.kb-graph-node').length,2);
+test('G6 view uses complete snapshot data, exposes accessible group navigation and stops on permission loss',async()=>{
+ const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId==='projects-knowledgeRead'?{...doc,nextLine:null}:listing);
+ assert.equal(f.container.querySelector('[role=tab][data-state=active]').textContent,'文档');
+ click(f.container,'图谱');await settle();assert.ok(f.container.querySelector('[aria-label="知识图谱画布"]'));assert.match(f.container.textContent,/1 篇文档/);
+ click(f.container,'全部展开');await settle();assert.match(f.container.textContent,/收起 index/);click(f.container,'全部收起');await settle();
+ const input=f.container.querySelector('[aria-label="查找图谱文档"]');input.value='知识';input.dispatchEvent(new f.window.Event('input'));await settle();f.container.querySelector('.kb-matches button').click();await settle();click(f.container,'打开文档');await settle();assert.ok(f.container.querySelector('.kb-markdown'));assert.equal(f.calls.at(-1).payload.snapshotId,'test-snapshot');
+ click(f.container,'图谱');await settle();f.ctx.host.connection.canRead=false;f.ctx.notify();await settle();assert.equal(f.container.querySelector('.kb-graph'),null);
 });

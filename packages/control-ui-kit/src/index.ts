@@ -33,3 +33,5 @@ export {default as StatusNotice} from './components/StatusNotice.vue';
 export {cn} from './utils';
 export {themeVariables} from './theme-tokens';
 export {default as Textarea} from './components/Textarea.vue';
+
+export {default as OverlayScope} from './components/OverlayScope.vue';

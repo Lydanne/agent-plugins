@@ -12,7 +12,7 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 function fail(code){throw Object.assign(Error(code),{code});}
 const baseExcluded=['.git','.agents','.opencode','.codex','.tmp','node_modules','__pycache__'];
 const namespace=v=>typeof v==='string'&&/^x_[a-z][a-z0-9_]{0,61}$/.test(v);
-async function safeRead(root,path,max=262144) {
+export async function safeRead(root,path,max=262144) {
  const target=resolve(root,path);if(!inside(root,target))fail('KNOWLEDGE_PATH_DENIED');
  for(let cur=target;cur!==root;cur=dirname(cur)){const s=await lstat(cur);if(s.isSymbolicLink()||(cur===target&&!s.isFile()))fail('KNOWLEDGE_PATH_DENIED');}
  const f=await open(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
@@ -38,10 +38,10 @@ export async function resolveKnowledgeConfig(projectRoot,knowledgeRoot,defaults)
  if(configured!==undefined&&!namespace(configured)||declared!==undefined&&!namespace(declared)||global!==undefined&&!namespace(global))fail('KNOWLEDGE_NAMESPACE_INVALID');
  const excluded=new Set(baseExcluded);
  if(b?.exclude_directories!==undefined){if(!Array.isArray(b.exclude_directories)||b.exclude_directories.length>50||b.exclude_directories.some(v=>typeof v!=='string'||!v||v==='.'||v==='..'||/[\\/\u0000]/.test(v)))fail('KNOWLEDGE_CONFIG_INVALID');for(const v of b.exclude_directories)excluded.add(v);}
- return {root,metadataNamespace:configured??declared??global??'x_agent',namespaceSource:configured!==undefined?'project.json':declared!==undefined?'bundle.json':global!==undefined?'global':'default',normalized:b!==undefined,bundle:b,excluded:[...excluded]};
+ return {root,defaultMetadataNamespace:global??'x_agent',metadataNamespace:configured??declared??global??'x_agent',namespaceSource:configured!==undefined?'project.json':declared!==undefined?'bundle.json':global!==undefined?'global':'default',normalized:b!==undefined,bundle:b,excluded:[...excluded]};
 }
 function visible(text){let fence=null;return text.split(/\r?\n/).map(line=>{const m=/^\s{0,3}(`{3,}|~{3,})/.exec(line);if(m){if(!fence)fence=m[1];else if(m[1][0]===fence[0]&&m[1].length>=fence.length)fence=null;return '';}return fence?'':line.replace(/`[^`]*`/g,'');}).join('\n');}
-function document(path,text,ns) {
+export function document(path,text,ns) {
  let meta={},body=text,parseError=false;
  if(/^---\r?\n/.test(text)){
   const m=/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
@@ -75,7 +75,7 @@ async function scan(config) {
  if(visited>10000||dirs>4000||count>2000||bytes>16777216)issues.push({code:'scan_limit'});
  return {available:true,docs,issues:issues.slice(0,100),complete,revision:hash(JSON.stringify([config.metadataNamespace,config.excluded,docs.map(d=>[d.path,d.sha256])]))};
 }
-const summary=d=>({path:d.path,title:d.title,...(d.uid?{uid:d.uid}:{}),...(typeof d.meta.type==='string'?{type:d.meta.type.slice(0,80)}:{}),...(typeof d.meta.status==='string'?{status:d.meta.status.slice(0,40)}:{}),...(typeof d.x.feature_id==='string'?{featureId:d.x.feature_id.slice(0,160)}:{})});
+export const summary=d=>({path:d.path,title:d.title,...(d.uid?{uid:d.uid}:{}),...(typeof d.meta.type==='string'?{type:d.meta.type.slice(0,80)}:{}),...(typeof d.meta.status==='string'?{status:d.meta.status.slice(0,40)}:{}),...(typeof d.x.feature_id==='string'?{featureId:d.x.feature_id.slice(0,160)}:{})});
 const graphMarkdown=new MarkdownIt({html:false,linkify:false,maxNesting:32});
 const relationTypes=new Set(['references','part_of','depends_on','constrained_by','implements','supersedes']);
 function graphPath(config,source,href){
@@ -85,15 +85,15 @@ function graphPath(config,source,href){
  const path=resolve(config.root,dirname(source),decoded),rel=relative(config.root,path).split(sep).join('/');
  return inside(config.root,path)&&!rel.split('/').some(p=>config.excluded.includes(p))?rel:null;
 }
-function knowledgeGraph(config,result,limit){
+export function knowledgeGraph(config,result,limit,budget={edges:1000,references:10000}){
  const docs=result.docs.slice(0,limit),nodes=docs.map(summary),paths=new Set(nodes.map(n=>n.path)),allPaths=new Set(result.docs.map(d=>d.path)),uids=new Map(),edges=[],seen=new Set();
  let references=0,unresolvedReferences=0,ignoredReferences=0,omittedEdges=0,invalidDocuments=0,referenceLimit=false;
  for(const d of result.docs)if(d.uid)uids.set(d.uid,[...(uids.get(d.uid)??[]),d.path]);
- const consume=()=>{if(++references>10000){referenceLimit=true;return false;}return true;};
+ const consume=()=>{if(++references>budget.references){referenceLimit=true;return false;}return true;};
  const add=(source,target,kind,relation)=>{
   if(source===target)return;
   const key=JSON.stringify([source,target,kind,relation]);if(seen.has(key))return;seen.add(key);
-  if(!paths.has(target)||edges.length>=1000){omittedEdges++;return;}
+  if(!paths.has(target)||edges.length>=budget.edges){omittedEdges++;return;}
   edges.push({source,target,kind,...(relation?{relation}:{})});
  };
  function links(tokens,source){
@@ -121,7 +121,7 @@ function knowledgeGraph(config,result,limit){
   }
  }
  const truncated=result.docs.length>limit||omittedEdges>0||referenceLimit;
- return {nodes,edges,totalNodes:result.docs.length,nodeLimit:limit,edgeLimit:1000,scanComplete:result.complete,complete:result.complete&&!truncated&&!invalidDocuments,truncated,unresolvedReferences,ignoredReferences,omittedEdges,invalidDocuments,referenceLimit,scope:'local_document_references'};
+ return {nodes,edges,totalNodes:result.docs.length,nodeLimit:limit,edgeLimit:budget.edges,scanComplete:result.complete,complete:result.complete&&!truncated&&!invalidDocuments,truncated,unresolvedReferences,ignoredReferences,omittedEdges,invalidDocuments,referenceLimit,scope:'local_document_references'};
 }
 async function validate(config,result) {
  const errors=[],warnings=[],uids=new Map();let truncated=false,refs=0;

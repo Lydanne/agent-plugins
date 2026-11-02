@@ -43,6 +43,14 @@ async function resultFor(p){
  if(p.actionId==='projects-knowledgeCatalog')return {projects:[{projectId:'demo',name:'示例项目'},{projectId:'empty',name:'未创建知识库的项目'}]};
  if(p.actionId?.startsWith('projects-knowledge')){
   if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
+  const count=Number(params.get('knowledgeNodes')??0),nodes=count?Array.from({length:count},(_,i)=>({path:'features/f'+Math.floor(i/40)+'/'+i+'.md',title:'知识节点 '+i,featureId:'f'+Math.floor(i/40),featureSource:'metadata',area:'features',inDegree:10,outDegree:10})):knowledgeDocs.map(d=>({path:d.path,title:d.title,uid:d.uid,area:'guides',inDegree:1,outDegree:1}));
+  const edges=count?Array.from({length:count*10},(_,i)=>({source:nodes[Math.floor(i/10)].path,target:nodes[(Math.floor(i/10)+i%10+1)%count].path,kind:'link'})):[{source:nodes[0].path,target:nodes[1].path,kind:'link'}];
+  if(p.actionId==='projects-knowledgeIndex')return {...knowledgeScope,state:'ready',snapshotId:'fixture-snapshot',entrypoint:nodes[0].path,totalNodes:nodes.length,totalEdges:edges.length};
+  if(p.actionId==='projects-knowledgeNodes')return {snapshotId:'fixture-snapshot',nodes,nextCursor:null};
+  if(p.actionId==='projects-knowledgeEdges')return {snapshotId:'fixture-snapshot',edges,nextCursor:null};
+  if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-head',records:[{id:'fixture-old',at:'2026-10-01T00:00:00Z',title:'建立知识库'}],total:1,nextCursor:null,complete:true};
+  if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'fixture-snapshot',commit:'fixture-old',at:'2026-10-01T00:00:00Z',totalNodes:nodes.length,totalEdges:edges.length};
+  if(p.actionId==='projects-knowledgeDiff')return {afterSnapshotId:'fixture-snapshot',changes:[{kind:'added',path:nodes[0].path,entry:nodes[0]}],commit:'fixture-old'};
   if(p.actionId==='projects-knowledgeValidate')return {...knowledgeScope,valid:true,errors:[],warnings:[]};
   if(p.actionId==='projects-knowledgeRead'){const d=knowledgeDocs.find(d=>d.path===v.path);if(!d)return {...knowledgeScope,found:false};const lines=d.content.split('\n'),start=v.startLine??1,end=Math.min(lines.length,start+(v.maxLines??100)-1);return {...knowledgeScope,found:true,entry:d,content:lines.slice(start-1,end).join('\n'),startLine:start,endLine:end,totalLines:lines.length,nextLine:end<lines.length?end+1:null,sha256:'fixture-'+d.uid,lineTruncated:false};}
   const entries=knowledgeDocs.filter(d=>!v.query||v.query.toLowerCase().split(/\s+/).every(t=>(d.title+' '+d.uid+' '+d.content).toLowerCase().includes(t))).map(({content,...entry})=>({...entry,excerpt:content.split('\n')[2],line:1})),offset=v.offset??0,limit=v.limit??20;return {...knowledgeScope,entries:entries.slice(offset,offset+limit),offset,total:entries.length,nextOffset:offset+limit<entries.length?offset+limit:null};

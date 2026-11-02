@@ -3,7 +3,7 @@ import {createApp, computed, shallowRef, inject, type Component, type InjectionK
 import type {ControlUiViewContext, ControlUiView} from 'openclaw/plugin-sdk/control-ui';
 import {createRepositoryPaths,repositoryPathsKey,type RepositoryPaths} from './repository-paths';
 const contextKey:InjectionKey<ShallowRef<ControlUiViewContext>>=Symbol('control-ui-context');
-const overlayKey:InjectionKey<HTMLElement>=Symbol('control-ui-overlay');
+export const overlayKey:InjectionKey<HTMLElement>=Symbol('control-ui-overlay');
 export function useHostContext(){const context=inject(contextKey);if(!context)throw Error('Missing Control UI host');return context;}
 export function useOverlayTarget(){const target=inject(overlayKey);if(!target)throw Error('Missing Control UI overlay');return target;}
 export function useRepositoryPaths():RepositoryPaths{return inject(repositoryPathsKey,undefined)??{root:computed(()=>undefined),accept:()=>{},consume:()=>{},sync:()=>{},display:value=>String(value??'')};}

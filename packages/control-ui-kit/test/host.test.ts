@@ -99,3 +99,10 @@ it('keeps customized shadcn surface and contrast tokens synchronized to the owni
   root.style.removeProperty('--ocp-warning-background');f.notify();await nextTick();expect(overlay.style.getPropertyValue('--ocp-warning-background')).toBe('');
  }finally{view.dispose?.();f.container.remove();}
 });
+
+it('local overlay scopes keep portals inside their work surface and retire on abort',async()=>{
+ const {default:OverlayScope}=await import('../src/components/OverlayScope.vue');const f=fixture();
+ const child=defineComponent({setup(){const target=useOverlayTarget();return ()=>h('span',{'data-local-target':target.dataset.ocpOverlay!==undefined},'local');}});
+ const view=mountVueView(defineComponent({render:()=>h(OverlayScope,null,()=>[h(child),h(Dialog,{open:true,title:'Local scope',description:'Scoped portal'},()=> 'content')])}))(f.container,f.ctx)!;
+ await nextTick();expect(f.container.querySelector('.ocp-overlay-scope [data-ocp-overlay]')).not.toBeNull();expect(f.container.querySelector('[role=dialog]')).not.toBeNull();f.controller.abort();expect(f.container.querySelector('[role=dialog]')).toBeNull();view.dispose?.();f.container.remove();
+});

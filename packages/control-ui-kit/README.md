@@ -57,3 +57,7 @@ AgentRepo 与 Worker 的正式页面统一从本包导入表单、表格、标�
 - StatusNotice、EmptyState 支持 `compact`，供侧栏、表格提示和内嵌区域使用。
 - Textarea 支持受控 `v-model`、`defaultValue` 和原生 rows/maxlength/required/readonly 属性。输入事件同步更新模型，保证同一轮事件内提交取得最新草稿；默认不按内容无限增高。展示只读 JSON 时传 `:model-value` 和 readonly，保留原文字节。
 - Checkbox 的半选状态用 `model-value="indeterminate"`，业务事件以 `$event === true` 判断选中；Switch 用于设置开关。主题层保护两个控件的轨道、边框和选中前景，避免宿主旧 button 样式覆盖状态。
+
+`OverlayScope` 为全屏或局部工作区提供内部 portal 目标；放在其子树中的 Dialog、Popover 等弹层会挂载到该区域。作用域根保留主题变量继承，不移动其他视图的 body portal；卸载时自动清理。
+
+G6 的传递依赖有四个精确版本未在 npm 包内携带许可证文件。`licenses/` 保存其发布包的许可证声明、来源及相应标准文本，不推测版权主体/年份；构建仍拒绝其他缺失许可证的包。升级相关版本时须重新核对，不能泛化白名单。

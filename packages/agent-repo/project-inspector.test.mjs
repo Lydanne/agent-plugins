@@ -45,7 +45,7 @@ test('dirty inspection shows committed metadata without loading changes or follo
 });
 test('native actions require read scope and chunk ownership includes Agent and conversation',async()=>{
  let clock=0;const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},{list:async()=>({text:'x'.repeat(80000)}),detail:async()=>{throw Error('secret-path');}},{now:()=>clock});
- assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun','projects-directorySync','projects-recycleRestore','projects-recycleConfigure'].includes(a.id)).map(a=>a.requiredScopes),Array(26).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
+ assert.deepEqual(actions.filter(a=>!['projects-workspacePoolSave','projects-scheduleManage','projects-clearRepositoryLogs','projects-syncPeople','projects-updatePerson','projects-deletePerson','projects-maintenanceRun','projects-directorySync','projects-recycleRestore','projects-recycleConfigure'].includes(a.id)).map(a=>a.requiredScopes),Array(32).fill(['operator.read']));assert.deepEqual(actions.find(a=>a.id==='projects-clearRepositoryLogs').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-syncPeople').requiredScopes,['operator.write']);assert.deepEqual(actions.find(a=>a.id==='projects-maintenanceRun').requiredScopes,['operator.write']);const ctx={agentId:'main',sessionKey:'agent:main:test'};
  const actual=await readInspectionResponse((action,payload)=>actions.find(a=>a.id==='projects-'+action).handler({...ctx,payload}),'list',{});assert.equal(actual.text.length,80000);
  const first=await actions[0].handler(ctx),transferId=first.result.transferId;
  for(const extra of [{agentId:'other',sessionKey:'agent:other:test'},{sessionKey:'agent:main:other'},{payload:{transferId,index:-1}},{payload:{transferId,index:3}}])assert.equal((await actions[2].handler({...ctx,payload:{transferId,index:1},...extra})).ok,false);
@@ -182,7 +182,7 @@ test('knowledge management reads only registered project knowledge with configur
  for(const payload of [{projectId:'a',path:'/private'},{projectId:'unknown'},{projectId:'a',agentId:'other'},{}])await assert.rejects(f.inspector.knowledgeList({...f.ctx,payload}));
  await assert.rejects(f.inspector.knowledgeCatalog({...f.ctx,payload:{agentId:'other'}}));await assert.rejects(f.inspector.knowledgeList({...ctx,agentId:'other'}));
  assert.equal(await git(f.root,['status','--porcelain']),before);
- const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.equal(actions.filter(a=>a.id.startsWith('projects-knowledge')).length,6);assert.ok(actions.filter(a=>a.id.startsWith('projects-knowledge')).every(a=>JSON.stringify(a.requiredScopes)==='["operator.read"]'));
+ const actions=[];registerProjectInspector({registerSessionAction:a=>actions.push(a)},f.inspector);assert.equal(actions.filter(a=>a.id.startsWith('projects-knowledge')).length,12);assert.ok(actions.filter(a=>a.id.startsWith('projects-knowledge')).every(a=>JSON.stringify(a.requiredScopes)==='["operator.read"]'));
 });
 
 
@@ -200,4 +200,11 @@ test('management path metadata is in the scoped envelope and never rewrites cano
  assert.deepEqual(await readInspectionResponse((name,payload)=>actions.find(a=>a.id==='projects-'+name).handler({...context,payload}),'list',{}),raw);assert.equal(raw.cwd,'/agents/main/projects/demo');
  const denied=await action.handler({...context,sessionKey:'agent:other:management'});assert.equal(denied.ok,false);assert.equal(denied.agentRepoRoot,undefined);
  const fallback=[];registerProjectInspector({registerSessionAction:a=>fallback.push(a)},{list:async()=>raw},{getAgentRepoRoot:()=>{throw Error('path unavailable');}});const unchanged=await fallback.find(a=>a.id==='projects-list').handler(context);assert.equal(unchanged.ok,true);assert.equal(unchanged.result.agentRepoRoot,undefined);
+});
+
+test('full knowledge snapshots stay in their registered project and expose only read actions',async t=>{
+ const f=await fixture(t),wiki=join(f.root,'projects/a/wiki');await mkdir(wiki);await writeFile(join(wiki,'index.md'),'# Home');
+ const ctx={...f.ctx,payload:{projectId:'a'}};let result=await f.inspector.knowledgeIndex(ctx);while(result.state==='building'){await new Promise(r=>setTimeout(r,10));result=await f.inspector.knowledgeIndex(ctx);}assert.equal(result.state,'ready');
+ const nodes=await f.inspector.knowledgeNodes({...ctx,payload:{projectId:'a',snapshotId:result.snapshotId}});assert.equal(nodes.nodes[0].path,'index.md');
+ await assert.rejects(f.inspector.knowledgeNodes({...ctx,payload:{projectId:'b',snapshotId:result.snapshotId}}));await assert.rejects(f.inspector.knowledgeIndex({...ctx,payload:{projectId:'a',root:'/private'}}));await assert.rejects(f.inspector.knowledgeIndex({...ctx,agentId:'foreign'}));
 });

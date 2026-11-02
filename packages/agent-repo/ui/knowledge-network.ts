@@ -1,0 +1,31 @@
+import type {KnowledgeEntry,KnowledgeEdge} from './knowledge-model';
+export type SizeMode='total'|'in'|'out';
+export const areaColors:Record<string,string>={features:'#4f8a80',concepts:'#648bca',rules:'#ac7db3',processes:'#c88b54',architecture:'#678ab0',decisions:'#b78368',sources:'#8c9560',index:'#84929d'};
+export const groupId=(n:KnowledgeEntry)=>n.featureId?'feature:'+n.featureId:'area:'+(n.area??n.path.split('/').slice(0,-1)[0]??'index');
+export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>8+Math.min(16,Math.log2(1+(mode==='in'?n.inDegree??0:mode==='out'?n.outDegree??0:(n.neighborDegree??((n.inDegree??0)+(n.outDegree??0)))))*2);
+export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
+export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string}
+// Deterministic ring placement and disjoint group packing. No force timers or viewport compression.
+export function layoutNetwork(nodes:KnowledgeEntry[],edges:KnowledgeEdge[],expanded:Set<string>,mode:SizeMode='total',previous?:{groups:NetworkGroup[]}){
+ const buckets=new Map<string,KnowledgeEntry[]>();for(const n of nodes){const id=groupId(n);if(!buckets.has(id))buckets.set(id,[]);buckets.get(id)!.push(n);}
+ const points:NetworkPoint[]=[],groups:NetworkGroup[]=[];
+ for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){items.sort((a,b)=>a.path.localeCompare(b.path));let extent=36;const open=expanded.has(id);if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+18;let index=0,ring=0;while(index<items.length){const radius=ring*spacing,capacity=ring===0?1:Math.max(1,Math.floor(Math.PI/Math.asin(Math.min(1,spacing/(2*radius))))),count=Math.min(capacity,items.length-index);for(let j=0;j<count;j++){const n=items[index++]!,r=nodeRadius(n,mode),angle=j/capacity*Math.PI*2;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x:Math.cos(angle)*radius,y:Math.sin(angle)*radius,r});extent=Math.max(extent,radius+r+32);}ring++;}}
+ groups.push({id,label:id.slice(id.indexOf(':')+1),x:0,y:0,r:extent,count:items.length,expanded:open,area:items[0]?.area??'index'});}
+ // Shelves form a guaranteed collision-free fallback, retaining deterministic ordering.
+ const width=Math.max(500,Math.sqrt(groups.reduce((s,g)=>s+(g.r*2+50)**2,0))*1.3);let x=0,y=0,row=0;
+ for(const g of groups){const diameter=g.r*2+50;if(x&&x+diameter>width){x=0;y+=row;row=0;}g.x=x+g.r+25;g.y=y+g.r+25;x+=diameter;row=Math.max(row,diameter);}
+ if(previous){const old=new Map(previous.groups.map(g=>[g.id,g])),kept:NetworkGroup[]=[];for(const g of groups){const p=old.get(g.id);if(p&&p.expanded===g.expanded&&p.r>=g.r){g.x=p.x;g.y=p.y;g.r=p.r;kept.push(g);}}let bottom=kept.reduce((v,g)=>Math.max(v,g.y+g.r),0)+50;const stable=new Set(kept.map(g=>g.id));for(const g of groups)if(!stable.has(g.id)){g.x=g.r+25;g.y=bottom+g.r;bottom=g.y+g.r+50;}}
+ const byGroup=new Map(groups.map(g=>[g.id,g]));for(const n of points){const g=byGroup.get(n.group)!;n.x+=g.x;n.y+=g.y;}
+ const owners=new Map(nodes.map(n=>[n.path,groupId(n)])),links=new Map<string,{source:string;target:string;count:number}>();
+ for(const e of edges){const a=owners.get(e.source),b=owners.get(e.target);if(!a||!b)continue;const source=expanded.has(a)?'doc:'+e.source:'group:'+a,target=expanded.has(b)?'doc:'+e.target:'group:'+b;if(source===target)continue;const key=JSON.stringify([source,target]);const old=links.get(key);if(old)old.count++;else links.set(key,{source,target,count:1});}
+ return {points,groups,edges:[...links.values()]};
+}
+// Validate the rendered radii, not labels or nominal layout dimensions.
+export function validateNetwork(network:ReturnType<typeof layoutNetwork>){
+ const groups=new Map(network.groups.map(g=>[g.id,g]));
+ const ordered=[...network.groups].sort((a,b)=>a.x-a.r-(b.x-b.r));
+ for(let i=0;i<ordered.length;i++){const a=ordered[i]!;for(let j=i+1;j<ordered.length;j++){const b=ordered[j]!;if(b.x-b.r>a.x+a.r)break;if(Math.hypot(a.x-b.x,a.y-b.y)<=a.r+b.r)return false;}}
+ const cell=50,buckets=new Map<string,NetworkPoint[]>();
+ for(const p of network.points){const g=groups.get(p.group);if(!g||Math.hypot(p.x-g.x,p.y-g.y)+p.r>=g.r)return false;const x=Math.floor(p.x/cell),y=Math.floor(p.y/cell);for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(const q of buckets.get(`${x+dx}:${y+dy}`)??[])if(Math.hypot(p.x-q.x,p.y-q.y)<=p.r+q.r)return false;const key=`${x}:${y}`;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key)!.push(p);}
+ return true;
+}
