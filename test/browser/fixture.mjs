@@ -54,7 +54,7 @@ async function resultFor(p){
   if(params.get('knowledgeHistory')==='true'){
    const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i}));
    if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',records,total:records.length,nextCursor:null,complete:true};
-   if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'snapshot-'+v.revision,commit:v.revision,totalNodes:nodes.length,totalEdges:edges.length};
+   if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'snapshot-'+v.revision,commit:params.get('knowledgeObservations')==='true'?undefined:v.revision,totalNodes:nodes.length,totalEdges:edges.length};
    if(p.actionId==='projects-knowledgeDiff')return {afterSnapshotId:'snapshot-'+v.revision,changes:[],commit:v.revision};
    if(p.actionId==='projects-knowledgeNodes')return {snapshotId:v.snapshotId,nodes:nodes.map((n,i)=>({...n,contentHash:i===0?v.snapshotId:'stable'})),nextCursor:null};
    if(p.actionId==='projects-knowledgeEdges')return {snapshotId:v.snapshotId,edges,nextCursor:null};
