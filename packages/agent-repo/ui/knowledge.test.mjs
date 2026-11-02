@@ -85,7 +85,7 @@ test('G6 view uses complete snapshot data, exposes accessible group navigation a
  const f=await fixture(async p=>p.actionId==='projects-knowledgeCatalog'?catalog:p.actionId==='projects-knowledgeRead'?{...doc,nextLine:null}:listing);
  assert.equal(f.container.querySelector('[role=tab][data-state=active]').textContent,'文档');
  click(f.container,'图谱');await settle();assert.ok(f.container.querySelector('[aria-label="知识图谱画布"]'));assert.match(f.container.textContent,/1 篇文档/);
- click(f.container,'全部展开');await settle();assert.match(f.container.textContent,/收起 index/);click(f.container,'全部收起');await settle();
+ click(f.container,'全部展开');await settle();click(f.container,'分组导航');await settle();assert.match(f.container.textContent,/收起 index/);click(f.container,'全部收起');await settle();
  const input=f.container.querySelector('[aria-label="查找图谱文档"]');input.value='知识';input.dispatchEvent(new f.window.Event('input'));await settle();f.container.querySelector('.kb-matches button').click();await settle();click(f.container,'打开文档');await settle();assert.ok(f.container.querySelector('.kb-markdown'));assert.equal(f.calls.at(-1).payload.snapshotId,'test-snapshot');
  click(f.container,'图谱');await settle();f.ctx.host.connection.canRead=false;f.ctx.notify();await settle();assert.equal(f.container.querySelector('.kb-graph'),null);
 });

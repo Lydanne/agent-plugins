@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./theme.css": "./src/theme.css",
+    "./virtual-navigation-tree": "./src/virtual-navigation-tree.ts",
     "./build": "./build.mjs"
   },
   "scripts": {

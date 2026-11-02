@@ -61,3 +61,7 @@ AgentRepo 与 Worker 的正式页面统一从本包导入表单、表格、标�
 `OverlayScope` 为全屏或局部工作区提供内部 portal 目标；放在其子树中的 Dialog、Popover 等弹层会挂载到该区域。作用域根保留主题变量继承，不移动其他视图的 body portal；卸载时自动清理。
 
 G6 的传递依赖有四个精确版本未在 npm 包内携带许可证文件。`licenses/` 保存其发布包的许可证声明、来源及相应标准文本，不推测版权主体/年份；构建仍拒绝其他缺失许可证的包。升级相关版本时须重新核对，不能泛化白名单。
+
+### 虚拟目录导航
+
+`VirtualNavigationTree` 通过 `@openclaw-plugins/control-ui-kit/virtual-navigation-tree` 按需导入，是本地组合组件，使用共享的 shadcn-vue `Button` 和宿主主题；它不声称是上游 Sidebar 的源码副本。调用方提供已展开的扁平节点、脱敏后的展示文字和当前选中状态，组件只负责虚拟窗口、展开/选择事件与树形键盘导航。上下键、Home/End 和左右键可在可见层级中移动、展开或返回父项；Enter/空格激活当前条目。目录归属、索引文件、搜索和数据权限继续由业务层负责。组件不缓存正文或路径之外的业务数据。知识图谱的分组面板使用已有的 shadcn-vue Collapsible；关闭时不挂载分组按钮。
