@@ -2,10 +2,11 @@ import type {KnowledgeEntry,KnowledgeEdge} from './knowledge-model';
 export type SizeMode='total'|'in'|'out';
 export const areaColors:Record<string,string>={features:'#4f8a80',concepts:'#648bca',rules:'#ac7db3',processes:'#c88b54',architecture:'#678ab0',decisions:'#b78368',sources:'#8c9560',index:'#84929d'};
 export const groupId=(n:KnowledgeEntry)=>n.featureId?'feature:'+n.featureId:'area:'+(n.area??n.path.split('/').slice(0,-1)[0]??'index');
-export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>8+Math.min(16,Math.log2(1+(mode==='in'?n.inDegree??0:mode==='out'?n.outDegree??0:(n.neighborDegree??((n.inDegree??0)+(n.outDegree??0)))))*2);
+export const nodeWeight=(n:KnowledgeEntry,mode:SizeMode='total')=>mode==='in'?n.inDegree??0:mode==='out'?n.outDegree??0:(n.neighborDegree??((n.inDegree??0)+(n.outDegree??0)));
+export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>8+Math.min(16,Math.log2(1+nodeWeight(n,mode))*2);
 export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
-export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string}
-// Stable phyllotaxis avoids aligned rows/rings. Reserve space for bounded drift.
+export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[]}
+// Each Feature is a planetary system: strongest node at the center, smaller satellites on concentric orbits.
 export const driftAmplitude=(radius:number)=>Math.max(.6,4-(radius-8)*.2);
 export function phaseFor(id:string){let h=2166136261;for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);return (h>>>0)/4294967296*Math.PI*2;}
 export function driftOffset(id:string,radius:number,time:number){const phase=phaseFor(id),a=driftAmplitude(radius),t=time/(3500+radius*160);return {x:Math.sin(t+phase)*a*.65,y:Math.sin(t*.83+phase*2)*a};}
@@ -13,8 +14,17 @@ const goldenAngle=Math.PI*(3-Math.sqrt(5));
 export function layoutNetwork(nodes:KnowledgeEntry[],edges:KnowledgeEdge[],expanded:Set<string>,mode:SizeMode='total',previous?:{groups:NetworkGroup[]}){
  const buckets=new Map<string,KnowledgeEntry[]>();for(const n of nodes){const id=groupId(n);if(!buckets.has(id))buckets.set(id,[]);buckets.get(id)!.push(n);}
  const points:NetworkPoint[]=[],groups:NetworkGroup[]=[];
- for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){items.sort((a,b)=>a.path.localeCompare(b.path));let extent=36;const open=expanded.has(id);if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+28,phase=phaseFor(id);for(let i=0;i<items.length;i++){const n=items[i]!,r=nodeRadius(n,mode),angle=i*goldenAngle+phase,radius=spacing*Math.sqrt(i),jitter=phaseFor(n.path);const x=Math.cos(angle)*radius+Math.sin(jitter)*3,y=Math.sin(angle)*radius+Math.cos(jitter)*3;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x,y,r});extent=Math.max(extent,Math.hypot(x,y)+r+32);}}
- groups.push({id,label:id.slice(id.indexOf(':')+1),x:0,y:0,r:extent,count:items.length,expanded:open,area:items[0]?.area??'index'});}
+ for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){
+  items.sort((a,b)=>nodeWeight(b,mode)-nodeWeight(a,mode)||a.path.localeCompare(b.path));
+  let extent=36;const open=expanded.has(id),orbits:number[]=[];
+  if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+28;let index=0,ring=0;
+   while(index<items.length){const radius=ring*spacing,capacity=ring===0?1:Math.max(1,Math.floor(Math.PI/Math.asin(spacing/(2*radius)))),count=Math.min(capacity,items.length-index),phase=phaseFor(id)+ring*goldenAngle;
+    if(ring)orbits.push(radius);
+    for(let j=0;j<count;j++){const n=items[index++]!,r=nodeRadius(n,mode),angle=j/count*Math.PI*2+phase;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x:Math.cos(angle)*radius,y:Math.sin(angle)*radius,r});extent=Math.max(extent,radius+r+32);}ring++;
+   }
+  }
+  groups.push({id,label:id.slice(id.indexOf(':')+1),x:0,y:0,r:extent,count:items.length,expanded:open,area:items[0]?.area??'index',orbits});
+ }
  // A golden-angle spiral gives every group a disjoint envelope, without rows.
  const groupSpacing=Math.max(1,...groups.map(g=>g.r*2+50));
  for(let i=0;i<groups.length;i++){const g=groups[i]!,radius=groupSpacing*Math.sqrt(i),angle=i*goldenAngle;g.x=Math.cos(angle)*radius;g.y=Math.sin(angle)*radius;}

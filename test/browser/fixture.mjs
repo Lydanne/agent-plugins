@@ -45,6 +45,10 @@ async function resultFor(p){
   if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
   const count=Number(params.get('knowledgeNodes')??0),nodes=count?Array.from({length:count},(_,i)=>({path:'features/f'+Math.floor(i/40)+'/'+i+'.md',title:'知识节点 '+i,featureId:'f'+Math.floor(i/40),featureSource:'metadata',area:'features',inDegree:10,outDegree:10})):knowledgeDocs.map(d=>({path:d.path,title:d.title,uid:d.uid,area:'guides',inDegree:1,outDegree:1}));
   const edges=count?Array.from({length:count*10},(_,i)=>({source:nodes[Math.floor(i/10)].path,target:nodes[(Math.floor(i/10)+i%10+1)%count].path,kind:'link'})):[{source:nodes[0].path,target:nodes[1].path,kind:'link'}];
+  if(count&&params.get('knowledgePlanets')==='true'){
+   edges.splice(0,edges.length,...nodes.flatMap((n,i)=>i%40?[{source:n.path,target:nodes[i-i%40].path,kind:'link'}]:[]));
+   for(let i=0;i<nodes.length;i++){nodes[i].inDegree=i%40?0:Math.min(39,nodes.length-i-1);nodes[i].outDegree=i%40?1:0;}
+  }
   if(params.get('knowledgeHistory')==='true'){
    const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i}));
    if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',records,total:records.length,nextCursor:null,complete:true};
