@@ -53,7 +53,7 @@ async function resultFor(p){
    for(let i=0;i<nodes.length;i++){nodes[i].inDegree=i%40?0:Math.min(39,nodes.length-i-1);nodes[i].outDegree=i%40?1:0;}
   }
   if(params.get('knowledgeHistory')==='true'){
-   const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i}));
+   const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i,...(params.get('knowledgeDecisions')==='true'&&i!==1?{decisionCount:i+1,decisionPaths:['decisions/adr-'+i+'.md']}:{} )}));
    if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',records,total:records.length,nextCursor:null,complete:true};
    if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'snapshot-'+v.revision,commit:params.get('knowledgeObservations')==='true'?undefined:v.revision,totalNodes:nodes.length,totalEdges:edges.length};
    if(p.actionId==='projects-knowledgeDiff'){const target=nodes[v.revision==='frame-0'?0:80]??nodes[0];return {afterSnapshotId:'snapshot-'+v.revision,changes:params.get('knowledgeReplay')==='true'?[{kind:'modified',path:target.path,entry:target}]:[],commit:v.revision};}
