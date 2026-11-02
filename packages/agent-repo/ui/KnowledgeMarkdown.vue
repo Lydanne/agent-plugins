@@ -2,7 +2,7 @@
 import {computed,h,nextTick,ref,useId,watch} from 'vue';
 import {Button,StatusNotice} from '@openclaw-plugins/control-ui-kit';
 import {headingSlug,parseKnowledgeMarkdown,renderKnowledgeTokens,type KnowledgeLink} from './knowledge-markdown';
-const props=defineProps<{content:string;path:string;partial:boolean;fragment:string;navigationId:number}>();
+const props=withDefaults(defineProps<{content:string;path:string;partial:boolean;fragment:string;navigationId:number;focusOnLoad?:boolean}>(),{focusOnLoad:true});
 const emit=defineEmits<{navigate:[link:KnowledgeLink]}>();
 const parsed=computed(()=>parseKnowledgeMarkdown(props.content)),source=ref(false),root=ref<HTMLElement>(),notice=ref('');
 const prefix='kb-'+useId().replace(/[^a-z0-9-]/gi,'')+'-';
@@ -20,7 +20,7 @@ function navigate(link:KnowledgeLink){
 }
 let pendingFragment:string|undefined;
 function jump(fragment:string){pendingFragment=!scroll(fragment)&&props.partial?fragment:undefined;}
-watch(()=>[props.path,props.navigationId],async()=>{source.value=false;notice.value='';pendingFragment=undefined;await nextTick();jump(props.fragment);},{immediate:true});
+watch(()=>[props.path,props.navigationId],async()=>{source.value=false;notice.value='';pendingFragment=undefined;await nextTick();if(props.focusOnLoad||props.fragment)jump(props.fragment);},{immediate:true});
 watch(()=>props.content,async()=>{if(pendingFragment!==undefined&&!source.value){await nextTick();jump(pendingFragment);}});
 </script>
 <template>
