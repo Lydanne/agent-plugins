@@ -1,0 +1,29 @@
+<script setup lang="ts">
+import {computed,ref,watch} from 'vue';
+import {Button,Input,NativeSelect,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import type {KnowledgeEntry,KnowledgeEdge} from './knowledge-model';
+const props=defineProps<{entry:KnowledgeEntry;edges:KnowledgeEdge[];nodes:Map<string,KnowledgeEntry>;canBack:boolean;sizeLabel:string;weight:number;historical?:boolean}>();
+const emit=defineEmits<{close:[];back:[];select:[path:string];open:[path:string];locate:[path:string]}>();
+const context=useHostContext(),safe=(v:unknown)=>context.value.host.redact(String(v??''));
+const query=ref(''),direction=ref('all'),limit=ref(50);
+watch(()=>props.entry.path,()=>{query.value='';direction.value='all';limit.value=50;});
+watch([query,direction],()=>{limit.value=50;});
+const neighbors=computed(()=>{const result=new Map<string,{path:string;title:string;incoming:boolean;outgoing:boolean}>();for(const edge of props.edges){const outgoing=edge.source===props.entry.path,path=outgoing?edge.target:edge.source;const row=result.get(path)??{path,title:props.nodes.get(path)?.title??path,incoming:false,outgoing:false};row.outgoing ||= outgoing;row.incoming ||= edge.target===props.entry.path;result.set(path,row);}return [...result.values()].sort((a,b)=>a.title.localeCompare(b.title));});
+const filtered=computed(()=>neighbors.value.filter(row=>(direction.value==='all'||(direction.value==='in'?row.incoming:row.outgoing))&&safe(row.title+' '+row.path).toLowerCase().includes(query.value.trim().toLowerCase())));
+const incoming=computed(()=>neighbors.value.filter(n=>n.incoming).length),outgoing=computed(()=>neighbors.value.filter(n=>n.outgoing).length);
+</script>
+<template>
+ <aside class="kb-graph-detail" role="dialog" aria-label="节点详情" :aria-modal="false" @keydown.esc.stop.prevent="emit('close')">
+  <header class="detail-top"><span>{{historical?'历史知识':'知识详情'}}</span><div><Button v-if="canBack" variant="ghost" size="sm" aria-label="返回上个节点" @click="emit('back')">返回</Button><Button variant="ghost" size="sm" aria-label="关闭节点详情" @click="emit('close')">关闭</Button></div></header>
+  <div class="detail-body"><div class="detail-tags"><span>{{safe(entry.area??'索引')}}</span><span v-if="entry.status">{{safe(entry.status)}}</span></div><h3>{{safe(entry.title)}}</h3><p v-if="entry.excerpt" class="detail-excerpt">{{safe(entry.excerpt)}}</p><p v-if="entry.featureId" class="detail-feature">所属 Feature · {{safe(entry.featureId)}}</p>
+   <div class="detail-actions"><Button @click="emit('open',entry.path)">打开文档</Button><Button variant="outline" @click="emit('locate',entry.path)">定位节点</Button></div>
+   <div class="detail-metrics"><span><strong>{{neighbors.length}}</strong>关联知识</span><span><strong>{{incoming}}</strong>被引用</span><span><strong>{{outgoing}}</strong>引用</span></div><p class="detail-hint">大小依据：{{sizeLabel}} {{weight}} 篇</p>
+   <details class="detail-meta"><summary>文件信息</summary><p>{{safe(entry.path)}}</p><p v-if="entry.uid">UID · {{safe(entry.uid)}}</p><p v-if="entry.updatedAt">更新时间 · {{safe(entry.updatedAt)}}</p></details>
+   <h4>关联知识 <small>{{filtered.length}}</small></h4><div v-if="neighbors.length" class="detail-filter"><Input v-model="query" aria-label="搜索关联知识" placeholder="搜索关联知识"/><NativeSelect v-model="direction" aria-label="关联方向"><option value="all">全部</option><option value="in">被引用</option><option value="out">引用</option></NativeSelect></div>
+   <div class="kb-related"><Button v-for="row in filtered.slice(0,limit)" :key="row.path" variant="ghost" :title="safe(row.path)" @click="emit('select',row.path)"><span>{{safe(row.title)}}</span><small>{{row.incoming&&row.outgoing?'相互引用':row.incoming?'被引用':'引用'}} →</small></Button><p v-if="!filtered.length" class="detail-empty">{{neighbors.length?'没有匹配的关联知识，试试其他关键词或方向。':'暂时没有关联知识，可以打开文档继续阅读。'}}</p><Button v-if="filtered.length>limit" variant="outline" size="sm" @click="limit+=50">加载更多（剩余 {{filtered.length-limit}}）</Button></div>
+  </div>
+ </aside>
+</template>
+<style scoped>
+.kb-graph-detail{position:absolute;right:16px;top:16px;width:min(360px,calc(100% - 32px));max-height:calc(100% - 100px);display:flex;flex-direction:column;z-index:2;background:var(--ocp-background);color:var(--ocp-foreground);box-shadow:0 16px 48px #0004;border:1px solid var(--ocp-border);border-radius:16px;font-size:14px;overflow:hidden;overflow-wrap:anywhere}.detail-top{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--ocp-border);font-size:12px}.detail-top>div{display:flex}.detail-body{overflow:auto;padding:18px}.detail-tags{display:flex;gap:8px;font-size:12px}.detail-tags span{background:color-mix(in srgb,var(--ocp-foreground) 8%,var(--ocp-background));border-radius:6px;padding:3px 7px}h3{font-size:20px;line-height:1.4;margin:12px 0}h4{font-size:14px;margin:18px 0 10px}h4 small{font-weight:normal;margin-left:6px}.detail-excerpt{line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.detail-feature,.detail-hint,.detail-meta{font-size:12px;opacity:.8}.detail-actions{display:flex;gap:8px;margin:16px 0}.detail-metrics{display:grid;grid-template-columns:repeat(3,1fr);padding:12px 0;border-block:1px solid var(--ocp-border)}.detail-metrics span{display:grid;gap:3px;text-align:center;font-size:12px}.detail-metrics strong{font-size:20px}.detail-meta summary{cursor:pointer}.detail-filter{display:flex;gap:6px;margin-bottom:8px}.detail-filter input{min-width:0}.detail-filter select{width:100px;flex-shrink:0}.kb-related{display:grid;gap:4px}.kb-related button{height:auto;min-height:44px;white-space:normal;display:flex;justify-content:space-between;text-align:left;gap:12px;padding:10px}.kb-related small{font-size:11px;white-space:nowrap;opacity:.7}.detail-empty{font-size:13px;line-height:1.6;padding:12px 0}.detail-hint{line-height:1.5}
+</style>
