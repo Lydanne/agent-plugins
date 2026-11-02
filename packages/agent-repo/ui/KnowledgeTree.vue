@@ -17,4 +17,4 @@ function toggle(row:KnowledgeTreeRow){if(opened.value.has(row.path))opened.value
 function choose(row:KnowledgeTreeRow){if(row.entry){if(row.folder)opened.value.add(row.path);emit('select',row.entry.path);}else toggle(row);}
 </script>
 <template><Card as="aside" class="kb-tree"><nav aria-label="知识目录树"><Input v-model="filter" aria-label="筛选目录树" placeholder="查找知识标题或路径"/><VirtualNavigationTree ref="view" :items="items" label="知识文档" :searching="!!filter.trim()" @toggle="toggleId" @select="selectId"/><small>{{entries.length}} 篇文档<span v-if="filter&&!rows.length"> · 没有匹配的知识</span></small></nav></Card></template>
-<style scoped>.kb-tree{min-width:0;padding:12px;gap:0}small{color:var(--ocp-muted);font-size:12px}</style>
+<style scoped>.kb-tree{min-width:0;min-height:650px;padding:12px;gap:0}.kb-tree nav{display:flex;flex:1 1 auto;min-height:0;flex-direction:column}small{color:var(--ocp-muted);font-size:12px}</style>
