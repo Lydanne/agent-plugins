@@ -14,3 +14,12 @@ test('geometry validation rejects actual intersections',()=>{const data=layoutNe
 test('one huge feature and many singleton features both satisfy geometric validation',()=>{for(const single of [true,false]){const nodes=Array.from({length:10000},(_,i)=>({path:i+'.md',title:String(i),featureId:single?'huge':'f'+i,inDegree:100,outDegree:100}));const layout=layoutNetwork(nodes,[],new Set(nodes.map(groupId)));expect(layout.points).toHaveLength(10000);expect(validateNetwork(layout)).toBe(true);}});
 
 test('history reuses geometry only when all positions, groups and directed relationships agree',()=>{const nodes=[{path:'a',title:'A'},{path:'b',title:'B'}],edges=[{source:'a',target:'b',kind:'link' as const}],a=layoutNetwork(nodes,edges,new Set(nodes.map(groupId))),b=layoutNetwork(nodes.map(n=>({...n,title:'changed'})),edges,new Set(nodes.map(groupId)));expect(sameNetworkGeometry(a,b)).toBe(true);expect(sameNetworkGeometry(a,{...b,edges:[{...b.edges[0]!,count:2}]})).toBe(false);expect(sameNetworkGeometry(a,{...b,points:b.points.map(p=>({...p,x:p.x+1}))})).toBe(false);});
+
+test('organic placement reserves the complete drift envelope, with lighter small nodes',async()=>{
+ const {driftOffset,driftAmplitude}=await import('./knowledge-network');
+ expect(driftAmplitude(8)).toBeGreaterThan(driftAmplitude(24));
+ const nodes=Array.from({length:2000},(_,i)=>({path:i+'.md',title:String(i),featureId:'f'+Math.floor(i/100),inDegree:i%100}));
+ const network=layoutNetwork(nodes,[],new Set(nodes.map(groupId)));
+ for(let t=0;t<60000;t+=1000){const moved={...network,points:network.points.map(p=>{const d=driftOffset(p.id,p.r,t);return {...p,x:p.x+d.x,y:p.y+d.y};})};expect(validateNetwork(moved)).toBe(true);}
+ expect(new Set(network.groups.map(g=>g.y)).size).toBe(network.groups.length);
+});

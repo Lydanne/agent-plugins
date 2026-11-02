@@ -5,16 +5,21 @@ export const groupId=(n:KnowledgeEntry)=>n.featureId?'feature:'+n.featureId:'are
 export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>8+Math.min(16,Math.log2(1+(mode==='in'?n.inDegree??0:mode==='out'?n.outDegree??0:(n.neighborDegree??((n.inDegree??0)+(n.outDegree??0)))))*2);
 export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
 export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string}
-// Deterministic ring placement and disjoint group packing. No force timers or viewport compression.
+// Stable phyllotaxis avoids aligned rows/rings. Reserve space for bounded drift.
+export const driftAmplitude=(radius:number)=>Math.max(.6,4-(radius-8)*.2);
+export function phaseFor(id:string){let h=2166136261;for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);return (h>>>0)/4294967296*Math.PI*2;}
+export function driftOffset(id:string,radius:number,time:number){const phase=phaseFor(id),a=driftAmplitude(radius),t=time/(3500+radius*160);return {x:Math.sin(t+phase)*a*.65,y:Math.sin(t*.83+phase*2)*a};}
+const goldenAngle=Math.PI*(3-Math.sqrt(5));
 export function layoutNetwork(nodes:KnowledgeEntry[],edges:KnowledgeEdge[],expanded:Set<string>,mode:SizeMode='total',previous?:{groups:NetworkGroup[]}){
  const buckets=new Map<string,KnowledgeEntry[]>();for(const n of nodes){const id=groupId(n);if(!buckets.has(id))buckets.set(id,[]);buckets.get(id)!.push(n);}
  const points:NetworkPoint[]=[],groups:NetworkGroup[]=[];
- for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){items.sort((a,b)=>a.path.localeCompare(b.path));let extent=36;const open=expanded.has(id);if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+18;let index=0,ring=0;while(index<items.length){const radius=ring*spacing,capacity=ring===0?1:Math.max(1,Math.floor(Math.PI/Math.asin(Math.min(1,spacing/(2*radius))))),count=Math.min(capacity,items.length-index);for(let j=0;j<count;j++){const n=items[index++]!,r=nodeRadius(n,mode),angle=j/capacity*Math.PI*2;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x:Math.cos(angle)*radius,y:Math.sin(angle)*radius,r});extent=Math.max(extent,radius+r+32);}ring++;}}
+ for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){items.sort((a,b)=>a.path.localeCompare(b.path));let extent=36;const open=expanded.has(id);if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+28,phase=phaseFor(id);for(let i=0;i<items.length;i++){const n=items[i]!,r=nodeRadius(n,mode),angle=i*goldenAngle+phase,radius=spacing*Math.sqrt(i),jitter=phaseFor(n.path);const x=Math.cos(angle)*radius+Math.sin(jitter)*3,y=Math.sin(angle)*radius+Math.cos(jitter)*3;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x,y,r});extent=Math.max(extent,Math.hypot(x,y)+r+32);}}
  groups.push({id,label:id.slice(id.indexOf(':')+1),x:0,y:0,r:extent,count:items.length,expanded:open,area:items[0]?.area??'index'});}
- // Shelves form a guaranteed collision-free fallback, retaining deterministic ordering.
- const width=Math.max(500,Math.sqrt(groups.reduce((s,g)=>s+(g.r*2+50)**2,0))*1.3);let x=0,y=0,row=0;
- for(const g of groups){const diameter=g.r*2+50;if(x&&x+diameter>width){x=0;y+=row;row=0;}g.x=x+g.r+25;g.y=y+g.r+25;x+=diameter;row=Math.max(row,diameter);}
- if(previous){const old=new Map(previous.groups.map(g=>[g.id,g])),kept:NetworkGroup[]=[];for(const g of groups){const p=old.get(g.id);if(p&&p.expanded===g.expanded&&p.r>=g.r){g.x=p.x;g.y=p.y;g.r=p.r;kept.push(g);}}let bottom=kept.reduce((v,g)=>Math.max(v,g.y+g.r),0)+50;const stable=new Set(kept.map(g=>g.id));for(const g of groups)if(!stable.has(g.id)){g.x=g.r+25;g.y=bottom+g.r;bottom=g.y+g.r+50;}}
+ // A golden-angle spiral gives every group a disjoint envelope, without rows.
+ const groupSpacing=Math.max(1,...groups.map(g=>g.r*2+50));
+ for(let i=0;i<groups.length;i++){const g=groups[i]!,radius=groupSpacing*Math.sqrt(i),angle=i*goldenAngle;g.x=Math.cos(angle)*radius;g.y=Math.sin(angle)*radius;}
+ if(previous){const old=new Map(previous.groups.map(g=>[g.id,g])),kept:NetworkGroup[]=[];for(const g of groups){const p=old.get(g.id);if(p&&p.expanded===g.expanded&&p.r>=g.r){g.x=p.x;g.y=p.y;g.r=p.r;kept.push(g);}}const outer=kept.reduce((v,g)=>Math.max(v,Math.hypot(g.x,g.y)+g.r),0),stable=new Set(kept.map(g=>g.id));let i=0;for(const g of groups)if(!stable.has(g.id)){const radius=outer+groupSpacing*(Math.sqrt(i)+1),angle=i++*goldenAngle;g.x=Math.cos(angle)*radius;g.y=Math.sin(angle)*radius;}}
+
  const byGroup=new Map(groups.map(g=>[g.id,g]));for(const n of points){const g=byGroup.get(n.group)!;n.x+=g.x;n.y+=g.y;}
  const owners=new Map(nodes.map(n=>[n.path,groupId(n)])),links=new Map<string,{source:string;target:string;count:number}>();
  for(const e of edges){const a=owners.get(e.source),b=owners.get(e.target);if(!a||!b)continue;const source=expanded.has(a)?'doc:'+e.source:'group:'+a,target=expanded.has(b)?'doc:'+e.target:'group:'+b;if(source===target)continue;const key=JSON.stringify([source,target]);const old=links.get(key);if(old)old.count++;else links.set(key,{source,target,count:1});}

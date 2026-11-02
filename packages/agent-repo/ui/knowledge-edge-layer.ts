@@ -13,6 +13,10 @@ export class KnowledgeEdgeLayer {
  private neighbors=new Map<string,Network['edges']>();
  private positions=new Map<string,{x:number;y:number;r:number}>();
  private color='';
+ private selected='';
+ private motionKey:string|undefined;
+ private motionBase:Batch[]=[];
+ private motionEdges:Network['edges']=[];
  segments=0;
  relationships=0;
  constructor(private container:HTMLElement,private graph:Graph){
@@ -28,7 +32,7 @@ export class KnowledgeEdgeLayer {
   if(arrow){path.moveTo(x-dx*8-dy*4,y-dy*8+dx*4);path.lineTo(x,y);path.lineTo(x-dx*8+dy*4,y-dy*8-dx*4);}
  }
  update(network:Network,color:string,selected:string){
-  this.color=color;
+  this.color=color;this.selected=selected;this.motionKey=undefined;
   if(this.network!==network){
    this.network=undefined;this.positions=new Map<string,{x:number;y:number;r:number}>([...network.points.map(p=>[p.id,p] as const),...network.groups.filter(g=>!g.expanded).map(g=>['group:'+g.id,{...g,r:36}] as const)]);
    const base=new Map<number,Batch>();this.neighbors.clear();this.segments=0;this.relationships=0;
@@ -43,6 +47,22 @@ export class KnowledgeEdgeLayer {
   for(const edge of this.neighbors.get('doc:'+selected)??[]){const width=Math.min(3,1+Math.log2(edge.count)*.3);let batch=highlight.get(width);if(!batch){batch={path:new Path2D(),width,opacity:1};highlight.set(width,batch);}this.append(batch.path,edge,true);}
   this.batches.push(...highlight.values());this.canvas.dataset.segments=String(this.segments);this.canvas.dataset.relationships=String(this.relationships);this.draw();
  }
+ // Rebuild only incident paths during local drift; all other relations stay batched.
+ updateMotion(positions:Map<string,{x:number;y:number}>){
+  if(!this.network)return;
+  const key=[...positions.keys()].join('\n');
+  if(key!==this.motionKey){
+   this.motionKey=key;const ids=new Set(positions.keys());this.motionEdges=[];const batches=new Map<number,Batch>();
+   for(const p of this.network.points)this.positions.set(p.id,p);
+   for(const g of this.network.groups)if(!g.expanded)this.positions.set('group:'+g.id,{...g,r:36});
+   for(const e of this.network.edges){if(ids.has(e.source)||ids.has(e.target)){this.motionEdges.push(e);continue;}const width=Math.min(3,1+Math.log2(e.count)*.3);let b=batches.get(width);if(!b){b={path:new Path2D(),width,opacity:this.selected?.08:.2};batches.set(width,b);}this.append(b.path,e);}
+   this.motionBase=[...batches.values()];
+  }
+  for(const [id,p] of positions){const old=this.positions.get(id);if(old)this.positions.set(id,{...p,r:old.r});}
+  const moving=new Map<number,Batch>();for(const e of this.motionEdges){const width=Math.min(3,1+Math.log2(e.count)*.3);let b=moving.get(width);if(!b){b={path:new Path2D(),width,opacity:this.selected?.08:.2};moving.set(width,b);}this.append(b.path,e);}
+  const highlight:Batch={path:new Path2D(),width:1.5,opacity:1};for(const e of this.neighbors.get('doc:'+this.selected)??[])this.append(highlight.path,e,true);
+  this.batches=[...this.motionBase,...moving.values(),highlight];this.draw();
+ }
  schedule=()=>{if(!this.frame)this.frame=requestAnimationFrame(()=>{this.frame=0;this.draw();});};
  draw(){
   const {width,height}=this.container.getBoundingClientRect(),ratio=devicePixelRatio||1;
@@ -56,5 +76,5 @@ export class KnowledgeEdgeLayer {
   ctx.setTransform(zoom*ratio,0,0,zoom*ratio,origin[0]*ratio,origin[1]*ratio);ctx.strokeStyle=this.color;
   for(const batch of this.batches){ctx.globalAlpha=batch.opacity;ctx.lineWidth=batch.width;ctx.stroke(batch.path);}
  }
- destroy(){cancelAnimationFrame(this.frame);this.graph.off('aftertransform',this.schedule);this.canvas.remove();this.batches=[];this.base=[];this.network=undefined;this.positions.clear();this.neighbors.clear();}
+ destroy(){cancelAnimationFrame(this.frame);this.graph.off('aftertransform',this.schedule);this.canvas.remove();this.batches=[];this.base=[];this.network=undefined;this.positions.clear();this.neighbors.clear();this.motionBase=[];this.motionEdges=[];this.motionKey=undefined;}
 }
