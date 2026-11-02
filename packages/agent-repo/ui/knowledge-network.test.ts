@@ -1,5 +1,5 @@
 import {test,expect} from 'vitest';
-import {layoutNetwork,validateNetwork,groupId,nodeRadius} from './knowledge-network';
+import {layoutNetwork,validateNetwork,sameNetworkGeometry,groupId,nodeRadius} from './knowledge-network';
 import type {KnowledgeEntry} from './knowledge-model';
 for(const count of [1,200,2000,10000])test(`deterministic grouping keeps ${count} documents disjoint`,()=>{
  const nodes:KnowledgeEntry[]=Array.from({length:count},(_,i)=>({path:i+'.md',title:String(i),featureId:'f'+Math.floor(i/80),inDegree:i%40,outDegree:i%20}));
@@ -12,3 +12,5 @@ test('unchanged groups retain their positions as history adds another feature',(
 
 test('geometry validation rejects actual intersections',()=>{const data=layoutNetwork([{path:'a',title:'A'},{path:'b',title:'B'}],[],new Set(['area:index']));data.points[1]!.x=data.points[0]!.x;data.points[1]!.y=data.points[0]!.y;expect(validateNetwork(data)).toBe(false);});
 test('one huge feature and many singleton features both satisfy geometric validation',()=>{for(const single of [true,false]){const nodes=Array.from({length:10000},(_,i)=>({path:i+'.md',title:String(i),featureId:single?'huge':'f'+i,inDegree:100,outDegree:100}));const layout=layoutNetwork(nodes,[],new Set(nodes.map(groupId)));expect(layout.points).toHaveLength(10000);expect(validateNetwork(layout)).toBe(true);}});
+
+test('history reuses geometry only when all positions, groups and directed relationships agree',()=>{const nodes=[{path:'a',title:'A'},{path:'b',title:'B'}],edges=[{source:'a',target:'b',kind:'link' as const}],a=layoutNetwork(nodes,edges,new Set(nodes.map(groupId))),b=layoutNetwork(nodes.map(n=>({...n,title:'changed'})),edges,new Set(nodes.map(groupId)));expect(sameNetworkGeometry(a,b)).toBe(true);expect(sameNetworkGeometry(a,{...b,edges:[{...b.edges[0]!,count:2}]})).toBe(false);expect(sameNetworkGeometry(a,{...b,points:b.points.map(p=>({...p,x:p.x+1}))})).toBe(false);});

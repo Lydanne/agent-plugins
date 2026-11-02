@@ -45,7 +45,15 @@ async function resultFor(p){
   if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
   const count=Number(params.get('knowledgeNodes')??0),nodes=count?Array.from({length:count},(_,i)=>({path:'features/f'+Math.floor(i/40)+'/'+i+'.md',title:'知识节点 '+i,featureId:'f'+Math.floor(i/40),featureSource:'metadata',area:'features',inDegree:10,outDegree:10})):knowledgeDocs.map(d=>({path:d.path,title:d.title,uid:d.uid,area:'guides',inDegree:1,outDegree:1}));
   const edges=count?Array.from({length:count*10},(_,i)=>({source:nodes[Math.floor(i/10)].path,target:nodes[(Math.floor(i/10)+i%10+1)%count].path,kind:'link'})):[{source:nodes[0].path,target:nodes[1].path,kind:'link'}];
-  if(p.actionId==='projects-knowledgeIndex')return {...knowledgeScope,state:'ready',snapshotId:'fixture-snapshot',entrypoint:nodes[0].path,totalNodes:nodes.length,totalEdges:edges.length};
+  if(params.get('knowledgeHistory')==='true'){
+   const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i}));
+   if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',records,total:records.length,nextCursor:null,complete:true};
+   if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'snapshot-'+v.revision,commit:v.revision,totalNodes:nodes.length,totalEdges:edges.length};
+   if(p.actionId==='projects-knowledgeDiff')return {afterSnapshotId:'snapshot-'+v.revision,changes:[],commit:v.revision};
+   if(p.actionId==='projects-knowledgeNodes')return {snapshotId:v.snapshotId,nodes:nodes.map((n,i)=>({...n,contentHash:i===0?v.snapshotId:'stable'})),nextCursor:null};
+   if(p.actionId==='projects-knowledgeEdges')return {snapshotId:v.snapshotId,edges,nextCursor:null};
+  }
+  if(p.actionId==='projects-knowledgeIndex')return {...knowledgeScope,state:'ready',snapshotId:v.snapshotId??'fixture-snapshot',entrypoint:nodes[0].path,totalNodes:nodes.length,totalEdges:edges.length};
   if(p.actionId==='projects-knowledgeNodes')return {snapshotId:'fixture-snapshot',nodes,nextCursor:null};
   if(p.actionId==='projects-knowledgeEdges')return {snapshotId:'fixture-snapshot',edges,nextCursor:null};
   if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-head',records:[{id:'fixture-old',at:'2026-10-01T00:00:00Z',title:'建立知识库'}],total:1,nextCursor:null,complete:true};

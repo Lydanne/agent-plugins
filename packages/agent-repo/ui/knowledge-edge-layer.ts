@@ -8,6 +8,10 @@ export class KnowledgeEdgeLayer {
  readonly canvas=document.createElement('canvas');
  private batches:Batch[]=[];
  private frame=0;
+ private network?:Network;
+ private base:Batch[]=[];
+ private neighbors=new Map<string,Network['edges']>();
+ private positions=new Map<string,{x:number;y:number;r:number}>();
  private color='';
  segments=0;
  relationships=0;
@@ -17,22 +21,27 @@ export class KnowledgeEdgeLayer {
   container.prepend(this.canvas);
   graph.on('aftertransform',this.schedule);
  }
+ private append(path:Path2D,edge:Network['edges'][number],arrow=false){
+  const a=this.positions.get(edge.source),b=this.positions.get(edge.target);if(!a||!b)throw Error('missing_edge_endpoint');
+  const distance=Math.hypot(b.x-a.x,b.y-a.y),dx=distance?(b.x-a.x)/distance:0,dy=distance?(b.y-a.y)/distance:0,x=b.x-dx*b.r,y=b.y-dy*b.r;
+  path.moveTo(a.x+dx*a.r,a.y+dy*a.r);path.lineTo(x,y);
+  if(arrow){path.moveTo(x-dx*8-dy*4,y-dy*8+dx*4);path.lineTo(x,y);path.lineTo(x-dx*8+dy*4,y-dy*8-dx*4);}
+ }
  update(network:Network,color:string,selected:string){
-  const positions=new Map<string,{x:number;y:number;r:number}>([...network.points.map(p=>[p.id,p] as const),...network.groups.filter(g=>!g.expanded).map(g=>['group:'+g.id,{...g,r:36}] as const)]);
-  const batches=new Map<string,Batch>();this.segments=0;this.relationships=0;this.color=color;
-  for(const edge of network.edges){
-   const a=positions.get(edge.source),b=positions.get(edge.target);
-   if(!a||!b)throw Error('missing_edge_endpoint');
-   const adjacent=edge.source==='doc:'+selected||edge.target==='doc:'+selected;
-   const width=Math.min(3,1+Math.log2(edge.count)*.3),opacity=selected?(adjacent?1:.08):.2,key=width+':'+opacity;
-   let batch=batches.get(key);if(!batch){batch={path:new Path2D(),width,opacity};batches.set(key,batch);}
-   const distance=Math.hypot(b.x-a.x,b.y-a.y),dx=distance?(b.x-a.x)/distance:0,dy=distance?(b.y-a.y)/distance:0;
-   const x=b.x-dx*b.r,y=b.y-dy*b.r;
-   batch.path.moveTo(a.x+dx*a.r,a.y+dy*a.r);batch.path.lineTo(x,y);
-   if(adjacent){batch.path.moveTo(x-dx*8-dy*4,y-dy*8+dx*4);batch.path.lineTo(x,y);batch.path.lineTo(x-dx*8+dy*4,y-dy*8-dx*4);}
-   this.segments++;this.relationships+=edge.count;
+  this.color=color;
+  if(this.network!==network){
+   this.network=undefined;this.positions=new Map<string,{x:number;y:number;r:number}>([...network.points.map(p=>[p.id,p] as const),...network.groups.filter(g=>!g.expanded).map(g=>['group:'+g.id,{...g,r:36}] as const)]);
+   const base=new Map<number,Batch>();this.neighbors.clear();this.segments=0;this.relationships=0;
+   for(const edge of network.edges){const width=Math.min(3,1+Math.log2(edge.count)*.3);let batch=base.get(width);if(!batch){batch={path:new Path2D(),width,opacity:.2};base.set(width,batch);}this.append(batch.path,edge);
+    for(const id of new Set([edge.source,edge.target])){if(!this.neighbors.has(id))this.neighbors.set(id,[]);this.neighbors.get(id)!.push(edge);}
+    this.segments++;this.relationships+=edge.count;
+   }
+   this.base=[...base.values()];this.network=network;
   }
-  this.batches=[...batches.values()];this.canvas.dataset.segments=String(this.segments);this.canvas.dataset.relationships=String(this.relationships);this.draw();
+  // Reuse complete geometry; selection only adds an adjacency overlay.
+  this.batches=this.base.map(batch=>({...batch,opacity:selected?.08:.2}));const highlight=new Map<number,Batch>();
+  for(const edge of this.neighbors.get('doc:'+selected)??[]){const width=Math.min(3,1+Math.log2(edge.count)*.3);let batch=highlight.get(width);if(!batch){batch={path:new Path2D(),width,opacity:1};highlight.set(width,batch);}this.append(batch.path,edge,true);}
+  this.batches.push(...highlight.values());this.canvas.dataset.segments=String(this.segments);this.canvas.dataset.relationships=String(this.relationships);this.draw();
  }
  schedule=()=>{if(!this.frame)this.frame=requestAnimationFrame(()=>{this.frame=0;this.draw();});};
  draw(){
@@ -47,5 +56,5 @@ export class KnowledgeEdgeLayer {
   ctx.setTransform(zoom*ratio,0,0,zoom*ratio,origin[0]*ratio,origin[1]*ratio);ctx.strokeStyle=this.color;
   for(const batch of this.batches){ctx.globalAlpha=batch.opacity;ctx.lineWidth=batch.width;ctx.stroke(batch.path);}
  }
- destroy(){cancelAnimationFrame(this.frame);this.graph.off('aftertransform',this.schedule);this.canvas.remove();this.batches=[];}
+ destroy(){cancelAnimationFrame(this.frame);this.graph.off('aftertransform',this.schedule);this.canvas.remove();this.batches=[];this.base=[];this.network=undefined;this.positions.clear();this.neighbors.clear();}
 }

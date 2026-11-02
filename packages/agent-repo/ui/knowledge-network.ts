@@ -29,3 +29,11 @@ export function validateNetwork(network:ReturnType<typeof layoutNetwork>){
  for(const p of network.points){const g=groups.get(p.group);if(!g||Math.hypot(p.x-g.x,p.y-g.y)+p.r>=g.r)return false;const x=Math.floor(p.x/cell),y=Math.floor(p.y/cell);for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(const q of buckets.get(`${x+dx}:${y+dy}`)??[])if(Math.hypot(p.x-q.x,p.y-q.y)<=p.r+q.r)return false;const key=`${x}:${y}`;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key)!.push(p);}
  return true;
 }
+// Metadata-only history frames can retain the complete drawn geometry.
+export function sameNetworkGeometry(a:ReturnType<typeof layoutNetwork>|undefined,b:ReturnType<typeof layoutNetwork>){
+ if(!a||a.points.length!==b.points.length||a.groups.length!==b.groups.length||a.edges.length!==b.edges.length)return false;
+ for(let i=0;i<a.points.length;i++){const p=a.points[i]!,q=b.points[i]!;if(p.id!==q.id||p.group!==q.group||p.x!==q.x||p.y!==q.y||p.r!==q.r||p.entry.area!==q.entry.area)return false;}
+ for(let i=0;i<a.groups.length;i++){const p=a.groups[i]!,q=b.groups[i]!;if(p.id!==q.id||p.label!==q.label||p.x!==q.x||p.y!==q.y||p.r!==q.r||p.expanded!==q.expanded||p.count!==q.count||p.area!==q.area)return false;}
+ for(let i=0;i<a.edges.length;i++){const p=a.edges[i]!,q=b.edges[i]!;if(p.source!==q.source||p.target!==q.target||p.count!==q.count)return false;}
+ return true;
+}
