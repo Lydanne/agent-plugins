@@ -7,7 +7,7 @@ export const nodeWeight=(n:KnowledgeEntry,mode:SizeMode='total')=>mode==='in'?n.
 export const radiusForWeight=(weight:number)=>6+Math.min(30,Math.sqrt(Math.max(0,weight))*3);
 export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>radiusForWeight(nodeWeight(n,mode));
 export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
-export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[];systemOrbit?:number}
+export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[];systemOrbit?:number;logicalId?:string}
 // Each Feature is a planetary system: strongest node at the center, smaller satellites on concentric orbits.
 export const driftAmplitude=(radius:number)=>Math.max(.6,4-(radius-8)*.2);
 export function phaseFor(id:string){let h=2166136261;for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);return (h>>>0)/4294967296*Math.PI*2;}

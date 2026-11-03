@@ -4,6 +4,7 @@ export class KnowledgeCamera {
  private generation=0;private frame=0;private finish:(()=>void)|undefined;
  constructor(private graph:Graph,private host:HTMLElement){}
  cancel(){this.generation++;cancelAnimationFrame(this.frame);this.finish?.();this.finish=undefined;}
+ async restore(view:{x:number;y:number;zoom:number},valid:()=>boolean){return this.move(view,view.zoom,valid);}
  async focus(point:{x:number;y:number;r:number},valid:()=>boolean){
   return this.move(point,Math.min(4,Math.max(.8,64/(point.r*2))),valid);
  }
