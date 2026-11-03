@@ -26,3 +26,12 @@ test('organic placement reserves the complete drift envelope, with lighter small
 
 test('node sizes have strong stable contrast with a bounded maximum',()=>{const radius=(weight:number)=>nodeRadius({path:'a',title:'A',neighborDegree:weight});expect([0,1,4,16,64,100,10000].map(radius)).toEqual([6,9,12,18,30,36,36]);expect(radius(100)/radius(0)).toBe(6);});
 test('collision validation catches enlarged nodes across two old grid cells',()=>{const n=layoutNetwork([{path:'a',title:'A',neighborDegree:100},{path:'b',title:'B',neighborDegree:100}],[],new Set(['area:index']));n.groups[0]!.x=75;n.groups[0]!.y=0;n.groups[0]!.r=200;n.points[0]!.x=49;n.points[0]!.y=0;n.points[1]!.x=101;n.points[1]!.y=0;expect(validateNetwork(n)).toBe(false);});
+
+test('outer planetary shells have a central large system and preserve mixed-size collision envelopes',()=>{
+ const nodes=Array.from({length:1500},(_,i)=>({path:i+'.md',title:String(i),featureId:i<900?'core':'f'+Math.floor((i-900)/12),neighborDegree:i%50}));
+ const layout=layoutNetwork(nodes,[],new Set(nodes.map(groupId))),core=layout.groups.find(g=>g.id==='feature:core')!;
+ expect([core.x,core.y,core.systemOrbit]).toEqual([0,0,0]);const rings=new Set(layout.groups.filter(g=>g!==core).map(g=>g.systemOrbit));expect(rings.size).toBeLessThan(layout.groups.length/2);for(const group of layout.groups)expect(Math.hypot(group.x,group.y)).toBeCloseTo(group.systemOrbit!,7);expect(validateNetwork(layout)).toBe(true);
+ const folded=layoutNetwork(nodes,[],new Set());expect(folded.groups.find(g=>g.id===core.id)!.r).toBeGreaterThan(folded.groups.find(g=>g.id!==core.id)!.r);
+ const grown=[...nodes,...Array.from({length:900},(_,i)=>({path:'new'+i+'.md',title:'New',featureId:'f0',neighborDegree:100}))];const next=layoutNetwork(grown,[],new Set(grown.map(groupId)),'total',layout);expect(validateNetwork(next)).toBe(true);expect(next.groups.find(g=>g.id===core.id)!.x).toBe(core.x);
+ const removed=grown.filter(n=>n.featureId!=='core'),last=layoutNetwork(removed,[],new Set(removed.map(groupId)),'total',next);expect(validateNetwork(last)).toBe(true);expect(last.groups.filter(g=>g.systemOrbit===0)).toHaveLength(1);
+});

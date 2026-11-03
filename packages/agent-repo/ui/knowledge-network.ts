@@ -7,7 +7,7 @@ export const nodeWeight=(n:KnowledgeEntry,mode:SizeMode='total')=>mode==='in'?n.
 export const radiusForWeight=(weight:number)=>6+Math.min(30,Math.sqrt(Math.max(0,weight))*3);
 export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>radiusForWeight(nodeWeight(n,mode));
 export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
-export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[]}
+export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[];systemOrbit?:number}
 // Each Feature is a planetary system: strongest node at the center, smaller satellites on concentric orbits.
 export const driftAmplitude=(radius:number)=>Math.max(.6,4-(radius-8)*.2);
 export function phaseFor(id:string){let h=2166136261;for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);return (h>>>0)/4294967296*Math.PI*2;}
@@ -18,7 +18,7 @@ export function layoutNetwork(nodes:KnowledgeEntry[],edges:KnowledgeEdge[],expan
  const points:NetworkPoint[]=[],groups:NetworkGroup[]=[];
  for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){
   items.sort((a,b)=>nodeWeight(b,mode)-nodeWeight(a,mode)||a.path.localeCompare(b.path));
-  let extent=36;const open=expanded.has(id),orbits:number[]=[];
+  const open=expanded.has(id),orbits:number[]=[];let extent=open?36:36+Math.min(44,Math.sqrt(items.length)*3);
   if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+28;let index=0,ring=0;
    while(index<items.length){const radius=ring*spacing,capacity=ring===0?1:Math.max(1,Math.floor(Math.PI/Math.asin(spacing/(2*radius)))),count=Math.min(capacity,items.length-index),phase=phaseFor(id)+ring*goldenAngle;
     if(ring)orbits.push(radius);
@@ -27,10 +27,20 @@ export function layoutNetwork(nodes:KnowledgeEntry[],edges:KnowledgeEdge[],expan
   }
   groups.push({id,label:id.slice(id.indexOf(':')+1),x:0,y:0,r:extent,count:items.length,expanded:open,area:items[0]?.area??'index',orbits});
  }
- // A golden-angle spiral gives every group a disjoint envelope, without rows.
- const groupSpacing=Math.max(1,...groups.map(g=>g.r*2+50));
- for(let i=0;i<groups.length;i++){const g=groups[i]!,radius=groupSpacing*Math.sqrt(i),angle=i*goldenAngle;g.x=Math.cos(angle)*radius;g.y=Math.sin(angle)*radius;}
- if(previous){const old=new Map(previous.groups.map(g=>[g.id,g])),kept:NetworkGroup[]=[];for(const g of groups){const p=old.get(g.id);if(p&&p.expanded===g.expanded&&p.r>=g.r){g.x=p.x;g.y=p.y;g.r=p.r;kept.push(g);}}const outer=kept.reduce((v,g)=>Math.max(v,Math.hypot(g.x,g.y)+g.r),0),stable=new Set(kept.map(g=>g.id));let i=0;for(const g of groups)if(!stable.has(g.id)){const radius=outer+groupSpacing*(Math.sqrt(i)+1),angle=i++*goldenAngle;g.x=Math.cos(angle)*radius;g.y=Math.sin(angle)*radius;}}
+ // Nested solar systems: a central group, then disjoint radial shells.
+ // Sort a copy so metadata and edge ordering stay stable across snapshots.
+ const weights=new Map([...buckets].map(([id,items])=>[id,items.reduce((sum,n)=>sum+nodeWeight(n,mode),0)]));
+ const ranked=[...groups].sort((a,b)=>b.r-a.r||(weights.get(b.id)??0)-(weights.get(a.id)??0)||b.count-a.count||a.id.localeCompare(b.id));
+ const old=new Map(previous?.groups.map(g=>[g.id,g])??[]),core=previous?.groups.find(g=>g.systemOrbit===0),currentCore=core?groups.find(g=>g.id===core.id):undefined;
+ const canKeep=!!currentCore&&currentCore.expanded===core!.expanded&&currentCore.r<=core!.r,kept=new Set<string>();
+ if(canKeep)for(const g of groups){const p=old.get(g.id);if(p&&p.expanded===g.expanded&&p.r>=g.r){g.x=p.x;g.y=p.y;g.r=p.r;g.systemOrbit=p.systemOrbit;kept.add(g.id);}}
+ let remaining=ranked.filter(g=>!kept.has(g.id)),outer=groups.filter(g=>kept.has(g.id)).reduce((r,g)=>Math.max(r,Math.hypot(g.x,g.y)+g.r),0),ring=0;
+ if(!kept.size&&remaining.length){const center=remaining[0]!;center.x=0;center.y=0;center.systemOrbit=0;outer=center.r;remaining=remaining.slice(1);}
+ let index=0;while(index<remaining.length){
+  const max=remaining[index]!.r,radius=outer+max+64,spacing=max*2+64,capacity=Math.max(1,Math.floor(Math.PI/Math.asin(Math.min(1,spacing/(2*radius))))),count=Math.min(capacity,remaining.length-index),phase=phaseFor('knowledge-universe')+(ring++)*goldenAngle;
+  for(let j=0;j<count;j++){const g=remaining[index++]!,angle=phase+j/count*Math.PI*2;g.x=Math.cos(angle)*radius;g.y=Math.sin(angle)*radius;g.systemOrbit=radius;}
+  outer=radius+max;
+ }
 
  const byGroup=new Map(groups.map(g=>[g.id,g]));for(const n of points){const g=byGroup.get(n.group)!;n.x+=g.x;n.y+=g.y;}
  const owners=new Map(nodes.map(n=>[n.path,groupId(n)])),links=new Map<string,{source:string;target:string;count:number}>();
@@ -50,7 +60,7 @@ export function validateNetwork(network:ReturnType<typeof layoutNetwork>){
 export function sameNetworkGeometry(a:ReturnType<typeof layoutNetwork>|undefined,b:ReturnType<typeof layoutNetwork>){
  if(!a||a.points.length!==b.points.length||a.groups.length!==b.groups.length||a.edges.length!==b.edges.length)return false;
  for(let i=0;i<a.points.length;i++){const p=a.points[i]!,q=b.points[i]!;if(p.id!==q.id||p.group!==q.group||p.x!==q.x||p.y!==q.y||p.r!==q.r||p.entry.area!==q.entry.area)return false;}
- for(let i=0;i<a.groups.length;i++){const p=a.groups[i]!,q=b.groups[i]!;if(p.id!==q.id||p.label!==q.label||p.x!==q.x||p.y!==q.y||p.r!==q.r||p.expanded!==q.expanded||p.count!==q.count||p.area!==q.area)return false;}
+ for(let i=0;i<a.groups.length;i++){const p=a.groups[i]!,q=b.groups[i]!;if(p.id!==q.id||p.label!==q.label||p.x!==q.x||p.y!==q.y||p.r!==q.r||p.expanded!==q.expanded||p.count!==q.count||p.area!==q.area||p.systemOrbit!==q.systemOrbit)return false;}
  for(let i=0;i<a.edges.length;i++){const p=a.edges[i]!,q=b.edges[i]!;if(p.source!==q.source||p.target!==q.target||p.count!==q.count)return false;}
  return true;
 }
