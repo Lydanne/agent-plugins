@@ -70,3 +70,51 @@ test('a mismatched checkpoint never authorizes steering into a released workspac
   await assert.rejects(query(f.args,f.ctx),/STEERING_WORKSPACE_UNAVAILABLE/);
  }finally{f.close();}
 });
+
+test('steering accepts context alias and deduplicates a retry using answer',async()=>{
+ const f=fixture();try{
+  const answer='  complete evidence\nsecond line  ';
+  const initial=JSON.parse((await query({action:'steer',jobId:f.id,context:answer},f.ctx)).content[0].text);
+  assert.equal(initial.accepted,true);
+  assert.equal(readJson(join(f.root,'supplements',initial.steeringId+'.json')).answer,answer);
+  for(const fields of [{answer},{answer,context:answer}]){
+   const retry=JSON.parse((await query({action:'steer',jobId:f.id,...fields},f.ctx)).content[0].text);
+   assert.equal(retry.steeringId,initial.steeringId);
+  }
+  assert.equal(readJson(join(f.root,f.id+'.json')).steeringInputs.length,1);
+ }finally{f.close();}
+});
+for(const fields of [{},{context:''},{context:' \n '},{context:123},{context:'x'.repeat(16001)},{answer:null},{answer:''},{answer:'x'.repeat(16001)}])test('steering rejects invalid content with actionable error: '+JSON.stringify(fields).slice(0,75),async()=>{
+ const f=fixture();try{
+  await assert.rejects(query({action:'steer',jobId:f.id,...fields},f.ctx),/STEERING_INPUT_INVALID.*answer.*原 jobId/);
+  assert.equal(readJson(join(f.root,f.id+'.json')).steeringInputs,undefined);
+ }finally{f.close();}
+});
+for(const answer of ['different','',null])test('steering refuses conflicting fields instead of dropping supplied content: '+JSON.stringify(answer),async()=>{
+ const f=fixture();try{
+  await assert.rejects(query({...f.args,answer,context:'evidence'},f.ctx),/STEERING_INPUT_CONFLICT/);
+  assert.equal(readJson(join(f.root,f.id+'.json')).steeringInputs,undefined);
+ }finally{f.close();}
+});
+test('context alias preserves source admission and original authorization',async()=>{
+ const f=fixture();try{
+  const args={action:'steer',jobId:f.id,context:'new evidence'};
+  f.lease.scheduledRequest=true;
+  await assert.rejects(query(args,f.ctx),/SOURCE_INVALID/);
+  delete f.lease.scheduledRequest;
+  completionBridge.authorizeReply=()=>false;
+  await assert.rejects(query(args,f.ctx));
+  assert.equal(readJson(join(f.root,f.id+'.json')).steeringInputs,undefined);
+ }finally{f.close();}
+});
+test('context alias from another member still requires contributor approval',async()=>{
+ const f=fixture();try{
+  f.lease.senderId='bob';
+  const result=JSON.parse((await query({action:'steer',jobId:f.id,context:'member evidence'},{...f.ctx,requesterSenderId:'bob'})).content[0].text);
+  assert.equal(result.accepted,false);
+  assert.equal(result.permissionPending,true);
+  const stored=readJson(join(f.root,f.id+'.json'));
+  assert.equal(stored.steeringInputs[0].answer,'member evidence');
+  assert.equal(stored.contributorApprovals[0].status,'pending');
+ }finally{f.close();}
+});

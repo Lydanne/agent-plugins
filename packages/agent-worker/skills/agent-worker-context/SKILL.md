@@ -46,6 +46,6 @@ run.queueId 选择已配置队列，省略使用管理员 defaultQueueId；可�
 
 ## Main 选择排队或引导
 
-用户明确要求优先。同一任务的新证据、纠正、方向用 `agent_worker action=steer,jobId=原job,answer=完整引导`，不要求 questionId。新的独立目标用 run 沿原 topic 新建排队 job。不能把新目标、额外业务写入或扩大查询权限包装成引导。
+用户明确要求优先。同一任务的新证据、纠正、方向用 `agent_worker action=steer,jobId=原job,answer=完整引导`，不要求 questionId。正文放 `answer`，不要沿用 run 的 `context`；为兼容误用，steer 接受仅传 context（最多 16000 字符），双字段同时存在时必须完全一致，否则未保存并返回明确参数错误。参数错误仅修正原 jobId 的补充调用，不创建新 run。新的独立目标用 run 沿原 topic 新建排队 job。不能把新目标、额外业务写入或扩大查询权限包装成引导。
 
 steer 仅在当前可信真人轮次受理；A 直接保存并入队，B 按一次/Worker/长期许可校验，permissionPending 不代表已进入执行。返回 accepted 后说明“已保存，将在当前轮次结束后处理”，不是已生效。引导在原会话的下一执行边界交给 Worker，不中断当前 CLI、不重跑已完成操作；独立的决策/授权/插件问题仍需原流程处理。结束 Main 轮次，不轮询；不要用新 run 代替引导或伪造问题 ID。

@@ -52,6 +52,8 @@ Worker uses task-bound OpenClaw plugin CLI calls directly within the original ta
 
 此例要求已配置 Agent Repo 路由和飞书异步适配。固定目录模式 projectRouting=legacy 时删除项目选择器；没有异步交付时使用 wait 模式，asyncCompletion=false 的原协议允许每次最多等 30 秒，继续查询同一 jobId。
 
+同一任务追加证据使用 `{"action":"steer","jobId":"原任务ID","answer":"完整补充"}`，无需 questionId。`context` 是 run 的背景字段；steer 为兼容误用接受仅传 context，仍限 1–16000 字符的非空正文。双字段同时传入必须完全一致，否则返回 `STEERING_INPUT_CONFLICT` 且不保存本次补充；缺失、空白或超长返回 `STEERING_INPUT_INVALID`。修正后沿用原 jobId，来源校验、贡献者审批及幂等规则不变，不新建 run。
+
 | action | 何时使用 | 必要输入 |
 | --- | --- | --- |
 | projects | 读取当前 Agent 的已提交项目登记 | 无项目选择器，不创建 job |
