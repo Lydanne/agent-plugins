@@ -648,3 +648,15 @@ A 可直接引导；B 使用原三档许可，未经确认只保存，不入执�
 会话侧栏和项目任务页使用 Vue 3、TypeScript SFC 及共享的 shadcn-vue / Reka UI 组件，保留原有宿主注册 ID 和 RPC 参数。独立浏览器产物已包含 Vue 和共享组件，不在运行时加载私有 workspace 包。生产直接加载源码目录时，须在独立 checkout 构建。
 
 界面行为测试通过 `pnpm run test:ui` 在 Vitest 中运行，后台测试继续使用 Node。仓库根目录的 `pnpm test:ui:e2e` 使用模拟公开宿主，在 Chromium 中加载实际构建的浏览器资源；本地验证不等于生产部署或真实飞书交付验收。
+
+### 运行中补充与实时引导
+
+用户回复运行中的任务提供同一问题的材料时，Main 应先用原 `jobId` 调用 `steer` 交接，再确认受理，不停在解释材料上。明确的参数拒绝（本次未保存）可以核对合同并修正重试；送达状态不明、超时或来源失效不得盲目重投或新建 run。
+
+新增内置 Hermes 模板 `codex-live`（adapter=`codex-app-server`）。将目标队列的 `hermesTemplateId` 设置为 `codex-live`；若部署显式维护 `hermesTemplates`，同时加入该模板。模型、推理强度、速度和权限仍来自原队列及执行快照。它使用私有受监管的 `codex app-server --stdio`，通过原生 `turn/steer` 的 threadId/expectedTurnId 将补充送入原活动轮次，不发送 interrupt、不启动第二个业务 turn。需要支持这些协议的 Codex 版本；安装/认证不由插件自动进行。
+
+保留 `codex` / `codex-jsonl` 兼容模板。已有任务不会因配置变化切换执行器或重放；旧 exec 任务仍在下一执行边界接续。部署时应显式选择 live 模板供后续任务使用，不将旧任务排队回执称为实时送达。
+
+`effectiveAt=current_turn_pending` 表示等待送入当前执行；`current_turn` 表示该轮次已接纳，不证明模型已使用材料；`next_execution_boundary` 表示兼容排队。发送前持久化 sending，断线或进程失联导致回执不确定时记录 `live_delivery_unknown`，不自动重投。明确 RPC 拒绝才允许在正常执行边界接续。补充继续受原来源、撤回、贡献者审批、会话、任务取消及幂等限制。
+
+飞书原任务工作卡在接纳补充后更新为“已补充”，展示补充人、北京时间、补充内容及待送达/当前执行已接纳等状态。多次补充保留记录；长内容明确标记节选，完整内容留在原消息和任务记录。不显示未授权的贡献，不以补充状态覆盖终态结果，不为补充另发消息。

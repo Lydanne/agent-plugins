@@ -164,3 +164,33 @@ test('a guided late-answer marker retains cumulative policy after its initiating
   assert.equal(f.read(next.supplementId).continuationKind,'late_answer');assert.deepEqual(f.read(next.supplementId).executionRounds,[...f.read().executionRounds,r1]);
  }finally{f.close();}
 });
+
+test('running Worker consumes admitted live steering in the original execution before completing',async()=>{
+ const f=fixture();try{
+  f.save({...f.read(),workerId:'live-worker'});
+  let received,finish,started;
+  const ready=new Promise(resolve=>{started=resolve;});
+  const running=runWorker({root:f.root,id:f.id,params:f.params,scope:f.scope,runtime:f.runtime,pollMs:5,execute:async(_params,ctx)=>{
+   const turn={threadId:f.session,turnId:'active-turn'};
+   ctx.onProgress({liveTurn:turn});
+   ctx.onLiveSteering({...turn,send:async input=>{received=JSON.parse(input.text);finish();return {turnId:'active-turn'};}});
+   started();await new Promise(resolve=>{finish=resolve;});
+   ctx.onLiveSteering(null);ctx.onProgress({liveTurn:null});
+   return {content:[{type:'text',text:JSON.stringify({sessionId:f.session,result:'Includes new evidence'})}]};
+  }});
+  await ready;const sid=await f.steer(f.id,'please use the new evidence');
+  assert.equal(f.records().find(r=>r.supplementId===sid).liveDelivery.state,'ready');
+  const done=await running;assert.equal(done.status,'completed');assert.equal(received.answer,'please use the new evidence');
+  assert.equal(f.records().find(r=>r.supplementId===sid).liveDelivery.state,'delivered');
+  await f.dispatch();assert.equal(existsSync(join(f.root,sid+'.json')),false);
+  assert.equal(f.read().provenance.attachmentSources.length,1);
+ }finally{f.close();}
+});
+test('uncertain live dispatch cannot be replayed as a boundary continuation',async()=>{
+ const f=fixture();try{
+  const sid=await f.steer(),path=join(f.root,'supplements',sid+'.json');
+  writeJson(path,{...readJson(path),liveDelivery:{state:'sending',workerId:'lost',threadId:f.session,turnId:'old-turn'}});
+  f.save({...f.read(),status:'completed'});await f.dispatch();
+  assert.equal(readJson(path).status,'blocked');assert.equal(readJson(path).reason,'live_delivery_unknown');assert.equal(existsSync(join(f.root,sid+'.json')),false);
+ }finally{f.close();}
+});

@@ -9,9 +9,9 @@ export const defaultHermesTemplates={codex:{
  name:'Codex CLI',description:'Codex exec JSONL，支持新建、恢复会话和只读技能刷新',adapter:'codex-jsonl',command:'{{cli}}',
  args:['exec','--cd','{{cwd}}','{{policyArgs}}','-c','developer_instructions={{json:instructions}}','-c','model_reasoning_effort={{json:reasoningEffort}}','{{speedArgs}}','--model','{{model}}','{{resumeArgs}}','{{schemaArgs}}','--json','-'],
  resumeArgs:['resume','{{sessionId}}'],stdin:'{{prompt}}',variables:{},
-}};
+},'codex-live':{name:'Codex 实时引导',description:'Private app-server with turn/steer',adapter:'codex-app-server',command:'{{cli}}',args:['app-server','--stdio'],resumeArgs:['{{sessionId}}'],stdin:'{{prompt}}',variables:{}}};
 const argsSchema={type:'array',maxItems:200,items:stringSchema};
-export const hermesTemplatesSchema={type:'object',propertyNames:{type:'string',pattern:hermesIdPattern},additionalProperties:{type:'object',additionalProperties:false,required:['name','adapter','command','args','resumeArgs','stdin','variables'],default:defaultHermesTemplates.codex,properties:{name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},adapter:{type:'string',enum:['codex-jsonl']},command:{type:'string',pattern:'\\S',maxLength:40000},args:argsSchema,resumeArgs:argsSchema,stdin:stringSchema,variables:{...hermesVariablesSchema,propertyNames:{type:'string',pattern:'^(?!(?:model|reasoningEffort|speed)$)[A-Za-z][A-Za-z0-9_]{0,63}$'}}}}};
+export const hermesTemplatesSchema={type:'object',propertyNames:{type:'string',pattern:hermesIdPattern},additionalProperties:{type:'object',additionalProperties:false,required:['name','adapter','command','args','resumeArgs','stdin','variables'],default:defaultHermesTemplates.codex,properties:{name:{type:'string',pattern:'\\S',maxLength:160},description:{type:'string',maxLength:2000},adapter:{type:'string',enum:['codex-jsonl','codex-app-server']},command:{type:'string',pattern:'\\S',maxLength:40000},args:argsSchema,resumeArgs:argsSchema,stdin:stringSchema,variables:{...hermesVariablesSchema,propertyNames:{type:'string',pattern:'^(?!(?:model|reasoningEffort|speed)$)[A-Za-z][A-Za-z0-9_]{0,63}$'}}}}};
 const reserved=new Set(['cwd','prompt','instructions','sessionId','schemaPath','policyArgs','speedArgs','resumeArgs','schemaArgs']);
 const scalars=['cli','model','reasoningEffort','speed','codexHome','cwd','prompt','instructions','sessionId','schemaPath'];
 const arrays=['policyArgs','speedArgs','resumeArgs','schemaArgs'];
@@ -36,11 +36,11 @@ function expandArgs(args,values){return args.flatMap(arg=>{
 export function validateHermesTemplates(templates,queues){
  if(!templates||typeof templates!=='object'||Array.isArray(templates)||!Object.keys(templates).length||Object.keys(templates).length>50)throw Error('Invalid hermesTemplates');
  for(const [id,template] of Object.entries(templates)){
-  if(!new RegExp(hermesIdPattern).test(id)||!template||typeof template!=='object'||Array.isArray(template)||Object.keys(template).some(k=>!Object.hasOwn(hermesTemplatesSchema.additionalProperties.properties,k))||typeof template.name!=='string'||!template.name.trim()||template.name.length>160||template.adapter!=='codex-jsonl'||typeof template.command!=='string'||!template.command.trim()||template.description!==undefined&&(typeof template.description!=='string'||template.description.length>2000))throw Error('Invalid Hermes template: '+id);
+  if(!new RegExp(hermesIdPattern).test(id)||!template||typeof template!=='object'||Array.isArray(template)||Object.keys(template).some(k=>!Object.hasOwn(hermesTemplatesSchema.additionalProperties.properties,k))||typeof template.name!=='string'||!template.name.trim()||template.name.length>160||!['codex-jsonl','codex-app-server'].includes(template.adapter)||typeof template.command!=='string'||!template.command.trim()||template.description!==undefined&&(typeof template.description!=='string'||template.description.length>2000))throw Error('Invalid Hermes template: '+id);
   validateHermesVariables(template.variables);
   for(const field of ['args','resumeArgs'])if(!Array.isArray(template[field])||template[field].length>200||!template[field].every(v=>typeof v==='string'&&v.length<=40000))throw Error('Invalid Hermes argument list: '+id);
   // Protocol-owned fragments remain mandatory so refresh/reply retain their contract.
-  for(const token of ['{{policyArgs}}','{{resumeArgs}}','{{schemaArgs}}'])if(template.args.filter(arg=>arg===token).length!==1)throw Error('Hermes codex-jsonl args require '+token);
+  for(const token of template.adapter==='codex-jsonl'?['{{policyArgs}}','{{resumeArgs}}','{{schemaArgs}}']:[])if(template.args.filter(arg=>arg===token).length!==1)throw Error('Hermes codex-jsonl args require '+token);
   if(!template.resumeArgs.includes('{{sessionId}}')||template.stdin!=='{{prompt}}')throw Error('Hermes codex-jsonl requires sessionId and prompt transport');
   const values={...Object.fromEntries(scalars.map(key=>[key,'fixture'])),...template.variables,...Object.fromEntries(arrays.map(key=>[key,[]]))};
   substitute(template.command,values);substitute(template.stdin,values);expandArgs(template.args,values);expandArgs(template.resumeArgs,values);
@@ -80,6 +80,6 @@ export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,pr
  const command=substitute(template.command,values),args=expandArgs(template.args,values);
  if(!command.trim()||command.includes('\n')||command.includes('\r'))throw Error('Invalid Hermes command');
  // Do not allow another template flag to undo the host-owned read-only refresh policy.
- if(refresh&&(args.includes('--dangerously-bypass-approvals-and-sandbox')||args.filter(a=>a==='--sandbox'||a==='-s').length!==1||args.some(a=>/^(?:--sandbox=|-s=|sandbox_mode=|--full-auto$)/.test(a))))throw Error('Hermes refresh policy conflict');
+ if(refresh&&template.adapter==='codex-jsonl'&&(args.includes('--dangerously-bypass-approvals-and-sandbox')||args.filter(a=>a==='--sandbox'||a==='-s').length!==1||args.some(a=>/^(?:--sandbox=|-s=|sandbox_mode=|--full-auto$)/.test(a))))throw Error('Hermes refresh policy conflict');
  return {command,args,stdin:substitute(template.stdin,values),adapter:template.adapter};
 }

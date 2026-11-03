@@ -8,7 +8,8 @@ import type {FeishuConfig} from "./types.js";
 import { workingResultCard } from "./working-card.js";
 
 type Source = Pick<TaskLease, "taskId" | "revision" | "accountId" | "chatId" | "sessionKey" | "senderId">;
-export type AsyncTaskCard = Source & {jobId: string; messageId: string; imageKey?: string; result?: string; progress?: string; questionMessageId?: string; continuationQuestionIds?: string[]; originalMessageId?: string};
+export type SteeringCardEntry={id:string;text:string;at:number;state:string};
+export type AsyncTaskCard = Source & {steeringEntries?:SteeringCardEntry[];jobId: string; messageId: string; imageKey?: string; result?: string; progress?: string; questionMessageId?: string; continuationQuestionIds?: string[]; originalMessageId?: string};
 const sameSource = (a: Source, b: Source) =>
   a.taskId === b.taskId && a.revision === b.revision && a.accountId === b.accountId &&
   a.chatId === b.chatId && a.sessionKey === b.sessionKey && a.senderId === b.senderId;
@@ -115,4 +116,10 @@ export function prepareAsyncOriginalOverview(stateDir:string, binding:AsyncTaskC
 
 export function sharesAsyncTaskCard(stateDir:string,binding:AsyncTaskCard):boolean {
  const db=database(stateDir);try{return (db.prepare("SELECT metadata FROM cards").all() as {metadata:string}[]).map(row=>JSON.parse(row.metadata) as AsyncTaskCard).some(other=>other.jobId!==binding.jobId&&other.messageId===binding.messageId&&other.accountId===binding.accountId&&other.chatId===binding.chatId);}finally{db.close();}
+}
+
+/** Called after a confirmed edit, under the same per-conversation FIFO as completion. */
+export function acceptAsyncSteeringCard(stateDir:string,binding:AsyncTaskCard,entries:SteeringCardEntry[],progress:string){
+ const current=readAsyncTaskCard(stateDir,binding.jobId,binding);if(!current||current.result!==undefined||current.messageId!==binding.messageId)return;
+ const db=database(stateDir);try{db.prepare("UPDATE cards SET metadata=? WHERE job=?").run(JSON.stringify({...current,steeringEntries:entries,progress}),binding.jobId);}finally{db.close();}
 }

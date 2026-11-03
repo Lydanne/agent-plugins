@@ -58,7 +58,7 @@ export function waitingPresentationInstruction(presentation){
 /** Replays describe the durable receipt, never turn a terminal record back into pending work. */
 export function steeringReceiptOutcome(record){
  const queued=['waiting','accepted'].includes(record.status),resumed=record.status==='dispatched';
- return {queued,resumed,state:record.status,effectiveAt:queued?'next_execution_boundary':resumed?'already_dispatched':'unavailable',...(record.reason?{reason:record.reason}:{}),...(record.childJobId?{continuationJobId:record.childJobId}:{})};
+ return {queued,resumed,state:record.status,effectiveAt:resumed&&record.liveDelivery?.state==='delivered'?'current_turn':queued&&record.liveDelivery?.state==='ready'?'current_turn_pending':queued?'next_execution_boundary':resumed?'already_dispatched':'unavailable',...(record.reason?{reason:record.reason}:{}),...(record.childJobId?{continuationJobId:record.childJobId}:{})};
 }
 
 /** Apply an admitted contribution identically for a card decision or inherited permission. */

@@ -327,6 +327,21 @@
             ],
             "stdin": "{{prompt}}",
             "variables": {}
+          },
+          "codex-live": {
+            "name": "Codex 实时引导",
+            "description": "Private app-server with turn/steer",
+            "adapter": "codex-app-server",
+            "command": "{{cli}}",
+            "args": [
+              "app-server",
+              "--stdio"
+            ],
+            "resumeArgs": [
+              "{{sessionId}}"
+            ],
+            "stdin": "{{prompt}}",
+            "variables": {}
           }
         },
         "propertyNames": {
@@ -387,7 +402,8 @@
             "adapter": {
               "type": "string",
               "enum": [
-                "codex-jsonl"
+                "codex-jsonl",
+                "codex-app-server"
               ]
             },
             "command": {

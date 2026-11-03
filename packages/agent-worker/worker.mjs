@@ -1,3 +1,4 @@
+import {deliverLiveSteering} from './live-steering.mjs';
 import {tryLock,acquireLock} from './locks.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {checkJobWorkspace,holdJobWorkspace} from './workspace-runtime.mjs';
@@ -14,13 +15,14 @@ import {executeQuery} from './index.mjs';
 
 export async function runWorker({root,id,params,scope,runtime,execute=executeQuery,pollMs=1000}) {
  const file=join(root,id+'.json');
- let job=readJson(file);
+ let job=readJson(file);let liveTurn,livePending;
+ const deliver=()=>{if(liveTurn&&!livePending){const turn=liveTurn;livePending=deliverLiveSteering({root,id,workerId:job.workerId,turn,send:turn.send,signal:controller.signal}).catch(()=>{controller.abort();}).finally(()=>{livePending=null;});}};
  const controller=new AbortController();
  const eventFile=join(root,id+'.events.jsonl');let eventBytes=existsSync(eventFile)?statSync(eventFile).size:0,omitted=0;
  function recordEvent(event){const line=JSON.stringify(event)+'\n';const bytes=Buffer.byteLength(line);if(eventBytes+bytes>5*1024*1024){omitted++;return;}appendFileSync(eventFile,line,{mode:0o600});eventBytes+=bytes;}
  function persistUnlocked(boundary=false){
   const latest=readJson(file);
-  for(const key of ['steeringInputs','contributorApprovals'])if(latest[key]!==undefined)job[key]=latest[key];
+  for(const key of ['steeringInputs','contributorApprovals','provenance'])if(latest[key]!==undefined)job[key]=latest[key];
   job.heartbeatAt=Date.now();
   // Waiting/terminal state is not public until workspace handoff and reports settle.
   // A heartbeat must not expose a question that Main can resume before that point.
@@ -41,7 +43,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
  }
  function checkCancellation(){if(existsSync(join(root,id+'.cancel'))){job.status='cancelling';controller.abort();}}
  const timer=setInterval(()=>{
-  try{checkCancellation();persist();}catch{controller.abort();}
+  try{checkCancellation();persist();deliver();}catch{controller.abort();}
  },pollMs);
  try {
   // A cancelled queued job must never start a subprocess or a business operation.
@@ -57,8 +59,9 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   runtime={...runtime,workerCli:runtime?.workerCli??{context:{version:1,workerId:job.workerId??randomUUID(),jobId:id,agentId:job.provenance?.agentId,sessionKey:scope,task:params.task,constraints:params.constraints}}};
   const attachments=jobSourceAttachments(job.provenance);
   checkCancellation();controller.signal.throwIfAborted();
-  const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onProgress:progress=>{job={...job,...progress};persist();}},runtime);
+  const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onLiveSteering:turn=>{liveTurn=turn;},onProgress:progress=>{job={...job,...progress,...(progress.liveTurn?{liveTurn:{...progress.liveTurn,workerId:job.workerId}}:{})};persist();deliver();}},runtime);
   checkCancellation();controller.signal.throwIfAborted();
+  if(livePending)await livePending;
   job.result=response;
   checkCancellation();controller.signal.throwIfAborted();
   const output=JSON.parse(response.content.find(c=>c.type==='text').text);
@@ -80,7 +83,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
  }catch(e){delete job.result;job.status=controller.signal.aborted?'cancelled':e.code==='EXECUTION_TIMEOUT' || String(e.message).includes('exceeded 10 minutes')?'timed_out':'failed';job.error=String(e.message);}
  finally {
   const lastRound=job.executionRounds?.at(-1);if(lastRound&&!lastRound.finishedAt)lastRound.finishedAt=Date.now();
-  clearInterval(timer);if(omitted)appendFileSync(eventFile,JSON.stringify({event:'inspection.omitted',count:omitted})+'\n',{mode:0o600});if(job.status!=='awaiting_main')job.finishedAt=Date.now();
+  clearInterval(timer);if(livePending)await livePending;if(omitted)appendFileSync(eventFile,JSON.stringify({event:'inspection.omitted',count:omitted})+'\n',{mode:0o600});if(job.status!=='awaiting_main')job.finishedAt=Date.now();
   if(job.status!=='awaiting_main')await finalizeJobReport({job,params,runtime});
   job.reports=await captureReports(job.result);
   // Persist terminal result before releasing admission. On storage failure stay blocked.

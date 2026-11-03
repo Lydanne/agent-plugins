@@ -118,3 +118,11 @@ test('context alias from another member still requires contributor approval',asy
   assert.equal(stored.contributorApprovals[0].status,'pending');
  }finally{f.close();}
 });
+test('mistaken questionId returns a correctable contract error without saving or restarting',async()=>{
+ const f=fixture();try{
+  await assert.rejects(query({...f.args,questionId:'invented'},f.ctx),/STEERING_INPUT_INVALID.*questionId.*answer/);
+  assert.equal(readJson(join(f.root,f.id+'.json')).steeringInputs,undefined);
+  const accepted=JSON.parse((await query(f.args,f.ctx)).content[0].text);assert.equal(accepted.accepted,true);
+  assert.equal(readJson(join(f.root,f.id+'.json')).status,'running');
+ }finally{f.close();}
+});

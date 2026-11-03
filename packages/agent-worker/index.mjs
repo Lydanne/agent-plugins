@@ -1,3 +1,4 @@
+import {runAppServerTurn} from './codex-app-server.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {workerContextApi,createWorkerCliService,prepareWorkerCliOptions} from './dist/worker-cli.mjs';
 import {createAutomationClient} from './automation-client.mjs';
@@ -140,6 +141,12 @@ export async function executeQuery(params,context={},runtime=configuration){
     await writeFile(outputSchemaPath,JSON.stringify(outputSchema),{mode:0o600});
    }
    context.signal?.throwIfAborted();
+   if(config.hermesExecution?.template.adapter==='codex-app-server'){
+    return await runAppServerTurn({invocation:hermesCommand(config,{refresh,threadId,prompt}),config,prompt,threadId,refresh,outputSchema,deadline,signal:context.signal,
+     env:{...workerEnvironment(),...workerCliEnvironment(refresh?undefined:config.workerCli),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})},
+     onLiveSteering:refresh?undefined:context.onLiveSteering,onProgress:progress=>{if(progress.sessionId)threadId=progress.sessionId;context.onProgress?.(progress);},
+     onEvent:e=>{const recorded=inspectionEvent(e,refresh?'refresh':'business');if(recorded)context.onInspectionEvent?.(recorded);if(!refresh&&e.item?.type==='command_execution')commands.push({exitCode:e.item.exit_code});}});
+   }
    return await new Promise((resolve,reject)=>{
   const invocation=hermesCommand(config,{refresh,threadId,outputSchemaPath,prompt}),args=invocation.args;
   const child=spawn(process.execPath,[fileURLToPath(new URL('./execution-supervisor.mjs',import.meta.url))],{cwd,detached:true,stdio:['pipe','pipe','pipe','ipc'],env:{...workerEnvironment(),...workerCliEnvironment(refresh?undefined:config.workerCli),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})}});
@@ -215,7 +222,7 @@ async function queryInternal(params,context={}) {
  }
  if(params.action==='tag'){if(params.tags===undefined)throw Error('tags is required for tag');return wrap(jobs.tag(params.jobId,scope,params.tags,{senderId:context.requesterSenderId,accountId:context.agentAccountId},params.tagMode));}
  if(params.action==='steer'){
-  if(params.questionId!==undefined)throw Error('steer does not answer a question; use reply for an existing question');
+  if(params.questionId!==undefined)throw new AgentRepoError('STEERING_INPUT_INVALID','steer 不需要 questionId，本次未保存。追加线索请删除 questionId 并用 answer，沿原 jobId 继续交接；回答 Worker 的现有问题则改用 reply。');
   const original=jobs.status(params.jobId,scope),lease=bindSourceTask(context),source=lease?taskProvenance(lease):undefined;
   if(!source||lease.scheduledRequest||!hasSourceProvenance(original.provenance))throw Error('Steering requires a current trusted human task source');
   const bound=attachmentSupplement(original.provenance,{...source,...(source.senderId!==original.provenance.senderId?{kind:'group_context'}:{})});
@@ -235,7 +242,7 @@ async function queryInternal(params,context={}) {
   }
   const record=await jobs.enqueueSteering(params.jobId,scope,request,authorize);
   const outcome=steeringReceiptOutcome(record);
-  return wrap({jobId:original.jobId,steeringId:record.supplementId,accepted:outcome.queued||outcome.resumed,...outcome,instruction:outcome.queued?'引导已保存，将在原任务当前执行轮次结束后沿原 Worker 会话处理；不是实时插入，也未改变原 task/constraints。独立决策、授权或插件问题仍需单独回答。结束本轮，不中断、不重复提交或轮询。':outcome.resumed?'这条引导此前已交回原会话接续，本次仅返回已有回执，未重复排队；不把已交回称为业务已完成。':'这条引导未能接续，已保存终态及原因；不是等待执行，不自动重建或重试业务。请按原任务状态说明未完成事项。'});
+  return wrap({jobId:original.jobId,steeringId:record.supplementId,accepted:outcome.queued||outcome.resumed,...outcome,instruction:outcome.effectiveAt==='current_turn'?'补充已由当前执行轮次接纳，沿原任务继续；不代表业务完成，不重复提交。':outcome.effectiveAt==='current_turn_pending'?'补充已保存，正在送入当前执行轮次；以送达回执为准，不声称已经读取，不重复提交。':outcome.queued?'引导已保存，将在原任务当前执行轮次结束后沿原 Worker 会话处理；不是实时插入，也未改变原 task/constraints。独立决策、授权或插件问题仍需单独回答。结束本轮，不中断、不重复提交或轮询。':outcome.resumed?'这条引导此前已交回原会话接续，本次仅返回已有回执，未重复排队；不把已交回称为业务已完成。':'这条引导未能接续，已保存终态及原因；不是等待执行，不自动重建或重试业务。请按原任务状态说明未完成事项。'});
  }
  if(['reply','await_user'].includes(params.action)){
   const original=jobs.status(params.jobId,scope);
@@ -334,7 +341,7 @@ export function memorySchema(config) {
 export function delegationDescription(config,asyncEnabled=false) {
  const memoryInstructions=config.memoryRequired?memoryDelegationInstructions:'';
  const baseline=resolveQueueExecution(config);
- const selection='Main 根据用户目标选择：同一原任务的新证据、纠正和方向用 steer(jobId,answer)，将完整补充放在 answer；context 是 run 的背景字段，steer 仅兼容其作为 answer 的别名，双字段不得冲突；无需 questionId；独立目标用 run 沿原 topic 新建 job 排队。用户明确指定排队或引导时优先遵循，不把新业务目标包装成引导；引导只在当前轮次结束后生效，不即时注入或扩权。run 仅使用 queueId 选择执行配置；action=queues 查看队列。模型、推理强度和速度仅在队列 hermesVariables 配置，Hermes 模板定义 CLI 调用协议。modelId 和智慧等级已移除，不接受任务覆盖模型参数。reply 保留原执行快照，不为切换配置重跑已受理或未知任务。同账号、同群、同会话的其他真人可通过原 jobId/questionId reply 提交普通上下文线索；宿主先保存并请原请求人在卡片选择允许一次、一直允许或允许这轮（Worker）。已有匹配许可才恢复原任务；卡片未确认不算授权，不要求原请求人复述线索。决策、授权、插件请求、await_user 和取消仍由原请求人处理。没有待回答问题时不伪造 questionId，不重建任务。';
+ const selection='Main 根据用户目标选择：同一原任务的新证据、纠正和方向用 steer(jobId,answer)，将完整补充放在 answer；context 是 run 的背景字段，steer 仅兼容其作为 answer 的别名，双字段不得冲突；无需 questionId；独立目标用 run 沿原 topic 新建 job 排队。用户明确指定排队或引导时优先遵循，不把新业务目标包装成引导；支持实时引导的执行器将补充送入当前轮次；旧执行器保留到下一执行边界，按 effectiveAt 如实说明，不扩权。用户回复运行中任务补充同一问题的证据时，应先 steer 交接再简短确认，不停在解读材料。参数校验明确拒绝且未保存时，读取工具合同、修正字段并沿原 jobId 继续交接；只重试纠正后的补充，不重跑业务。来源/权限失败、超时或送达不明先核验原记录，不盲目重复，不把失败当交接完成。run 仅使用 queueId 选择执行配置；action=queues 查看队列。模型、推理强度和速度仅在队列 hermesVariables 配置，Hermes 模板定义 CLI 调用协议。modelId 和智慧等级已移除，不接受任务覆盖模型参数。reply 保留原执行快照，不为切换配置重跑已受理或未知任务。同账号、同群、同会话的其他真人可通过原 jobId/questionId reply 提交普通上下文线索；宿主先保存并请原请求人在卡片选择允许一次、一直允许或允许这轮（Worker）。已有匹配许可才恢复原任务；卡片未确认不算授权，不要求原请求人复述线索。决策、授权、插件请求、await_user 和取消仍由原请求人处理。没有待回答问题时不伪造 questionId，不重建任务。';
  let description=config.delegationInstructions;
  if(!config.memoryRequired)description=description.replace('For action=run pass task, context, constraints AND memory.','For action=run pass task, context and constraints; memory is optional.');
  return selection+'Worker 的普通插件调用直接使用任务绑定的 OpenClaw 插件 CLI，自动继承 workerId/jobId 和原任务上下文，不例行交由 Main 中转；只有不理解、需要决策或新增授权时才请求 Main。协作技能统一由 ~/.agents/skills 发布。Main 委派时用 responsibility 简要说明本次职责，task 交代具体任务；agent-repo 自动生成当前 Main 插件目录与通信协议的全局 Codex 技能，宿主在业务输入 collaborationSkill 中显式要求加载。只读查询、日志和源码分析省略 useWorkspace 或传 false，在登记的默认目录执行，不占工作区池。只有明确授权的写任务才传 useWorkspace=true，在登记的独立 clone 池中执行；池满保留原 job 等待，不回退共享目录。恢复写任务必须使用原分配工作区，原工作区忙时等待，不换槽位。技能版本变化会通知 Worker 重新读取；不要复制整段协议或自行指定技能路径。'+delegationReportInstructions+'需要用户决策时，Main 用 action=await_user 携带 jobId、questionId 标记等待用户并询问原用户；收到补充后 reply。Worker 可返回 context_request 暂停原任务并向 Main 提问；收到上下文请求后，核对原 task/constraints，用 action=reply 携带 jobId、questionId、answer 补充上下文；不调用新的 run，不扩大授权。'+(asyncEnabled?config.asyncInstructions:'')+experienceReviewInstructions+memoryInstructions+description.replaceAll('{projectDir}',config.cwd).replaceAll(defaultConfiguration.cwd,config.cwd).replace('GPT-6.1 Sol low, dangerous full access with no sandbox or approval prompts',baseline?`${baseline.model} ${baseline.reasoningEffort}, ${config.approvalMode}`:'No enabled model profiles; configure one in OpenClaw settings before run').replace('Preserve complete task-related user identifiers, personal/business fields and signed download URLs for internal support; exclude unrelated chat and authentication credentials.',config.businessDataPolicy);

@@ -1,3 +1,4 @@
+import {grantLiveSteering} from './live-steering.mjs';
 import {createSourceRevocations,messageSource} from './source-revocations.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {resolveTaskQueues,requestedQueueId,queueFields} from './task-queues.mjs';
@@ -347,7 +348,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(!Number.isSafeInteger(admissionSequence))throw Error('Steering admission sequence exhausted');
     writeJson(counterFile,{value:admissionSequence});
     const record={kind:'steering',admissionSequence,supplementId:input.questionId,jobId,originalQuestionId:input.questionId,scope:job.scope,provenance:job.provenance,question:{questionId:input.questionId,question:input.question,waitKind:'optional',createdAt:input.createdAt,expiresAt:input.expiresAt},answer:input.answer,answerSource:'main_context',attachmentSource:input.source,...(!owner?{contributorApprovalId:request.requestId}:{}),status:'accepted',createdAt:input.createdAt,sequence:input.sequence,acceptedAt:Date.now()};
-    writeJson(file,record);return record;
+    writeJson(file,record);return grantLiveSteering(root,job,record);
    }finally{release();}
   },
   contributorRequest(jobId,scope,requestId){const job=get(jobId,scope),request=job.contributorApprovals?.find(r=>r.requestId===requestId);if(!request)throw Error('Contributor approval request not found');return {job:view(job),request};},
@@ -560,13 +561,18 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    const directory=join(root,'supplements');if(!existsSync(directory))return;
    for(const name of readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).sort((a,b)=>{const x=readJson(join(directory,a)),y=readJson(join(directory,b));return x.kind==='steering'&&y.kind==='steering'?steeringAdmissionOrder(x,y):(x.acceptedAt??x.createdAt)-(y.acceptedAt??y.createdAt)||(x.sequence??0)-(y.sequence??0)||a.localeCompare(b);})){
     let s=readJson(join(directory,name));if(s.supplementId+'.json'!==name||s.jobId!==jobId)continue;
-    const terminalEvent=()=>({kind:'supplement_unavailable',supplementId:s.supplementId,status:s.status,reason:s.reason??'continuation_unavailable'});
+    const supplementDetails=()=>{
+     if(s.kind!=='steering'||!s.provenance)return {};
+     const provenance={...s.provenance,attachmentSources:[...(s.provenance.attachmentSources??[]),...(s.attachmentSource?[s.attachmentSource]:[])]};
+     return s.kind==='steering'&&authorize(provenance)===true?{provenance,steering:true,answer:s.answer,supplementSenderId:s.attachmentSource?.senderId,supplementAt:s.acceptedAt??s.createdAt,liveState:s.liveDelivery?.state}:{};
+    };
+    const terminalEvent=()=>({kind:'supplement_unavailable',supplementId:s.supplementId,status:s.status,reason:s.reason??'continuation_unavailable',...supplementDetails()});
     if(s.status==='suppressed'&&s.reason==='source_invalid'&&s.notificationSuppressed===true)continue;
     if(['blocked','suppressed'].includes(s.status)){await observe(terminalEvent());continue;}
     if(!['waiting','accepted','dispatched'].includes(s.status))continue;
     // Do not disclose a contributor's recalled hint to Main before validating it.
     const observationCurrent=!s.attachmentSource||authorize({...s.provenance,attachmentSources:[...(s.provenance.attachmentSources??[]),s.attachmentSource]})===true;
-    if(observationCurrent)await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,answer:s.answer,childJobId:s.childJobId});
+    if(observationCurrent)await observe({kind:s.status==='waiting'?'supplement_opened':s.status==='dispatched'?'supplement_dispatched':'supplement_received',supplementId:s.supplementId,childJobId:s.childJobId,...supplementDetails()});
     if(s.status!=='accepted')continue;
     const release=await acquireLock(lock);
     try{
@@ -596,7 +602,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      if(authorized!==true)continue;
      if(['cancelled','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){fail('suppressed','task_cancelled');continue;}
      if(['failed','timed_out'].includes(job.status)){fail('blocked','worker_'+job.status);continue;}
-     if(['running','queued','unknown'].includes(job.status))continue;
+     if(s.liveDelivery?.state==='sending'){if(job.status!=='running'){writeJson(join(directory,name),{...s,status:'blocked',reason:'live_delivery_unknown'});}continue;}
+     if(job.status==='running'){grantLiveSteering(root,job,s);continue;}
+     if(['queued','unknown'].includes(job.status))continue;
      let request;
      try{request=readJson(join(root,jobId+'.request.json'));}
      catch(error){
