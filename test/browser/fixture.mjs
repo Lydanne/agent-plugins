@@ -46,7 +46,7 @@ async function resultFor(p){
  if(p.actionId==='projects-knowledgeCatalog')return {projects:[{projectId:'demo',name:'示例项目'},{projectId:'empty',name:'未创建知识库的项目'}]};
  if(p.actionId?.startsWith('projects-knowledge')){
   if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
-  const count=Number(params.get('knowledgeNodes')??0),nodes=count?Array.from({length:count},(_,i)=>({path:'features/f'+Math.floor(i/40)+'/'+i+'.md',title:'知识节点 '+i,featureId:'f'+Math.floor(i/40),featureSource:'metadata',area:'features',inDegree:10,outDegree:10})):knowledgeDocs.map(d=>({path:d.path,title:d.title,uid:d.uid,area:'guides',inDegree:1,outDegree:1}));
+  const count=Number(params.get('knowledgeNodes')??0),nodes=count?Array.from({length:count},(_,i)=>({path:'features/f'+Math.floor(i/40)+'/'+(params.get('knowledgeIndexes')==='true'&&i%40===0?'index':i)+'.md',title:'知识节点 '+i,featureId:'f'+Math.floor(i/40),featureSource:'metadata',area:'features',inDegree:10,outDegree:10})):knowledgeDocs.map(d=>({path:d.path,title:d.title,uid:d.uid,area:'guides',inDegree:1,outDegree:1}));
   const edges=count?Array.from({length:count*10},(_,i)=>({source:nodes[Math.floor(i/10)].path,target:nodes[(Math.floor(i/10)+i%10+1)%count].path,kind:'link'})):[{source:nodes[0].path,target:nodes[1].path,kind:'link'}];
   if(count&&params.get('knowledgePlanets')==='true'){
    edges.splice(0,edges.length,...nodes.flatMap((n,i)=>i%40?[{source:n.path,target:nodes[i-i%40].path,kind:'link'}]:[]));

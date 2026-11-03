@@ -35,3 +35,9 @@ test('outer planetary shells have a central large system and preserve mixed-size
  const grown=[...nodes,...Array.from({length:900},(_,i)=>({path:'new'+i+'.md',title:'New',featureId:'f0',neighborDegree:100}))];const next=layoutNetwork(grown,[],new Set(grown.map(groupId)),'total',layout);expect(validateNetwork(next)).toBe(true);expect(next.groups.find(g=>g.id===core.id)!.x).toBe(core.x);
  const removed=grown.filter(n=>n.featureId!=='core'),last=layoutNetwork(removed,[],new Set(removed.map(groupId)),'total',next);expect(validateNetwork(last)).toBe(true);expect(last.groups.filter(g=>g.systemOrbit===0)).toHaveLength(1);
 });
+
+test('a low-degree index anchors the group, takes a readable central size, and never replaces other documents',()=>{
+ const nodes=[{path:'features/f/index.md',title:'Index',featureId:'f',neighborDegree:0},{path:'features/f/hub.md',title:'Hub',featureId:'f',neighborDegree:100},{path:'features/f/README.md',title:'Readme',featureId:'f',neighborDegree:50},{path:'features/f/nested/index.md',title:'Nested',featureId:'f',neighborDegree:90}];
+ for(const mode of ['total','in','out'] as const){const n=layoutNetwork(nodes,[],new Set(nodes.map(groupId)),mode),g=n.groups[0]!,p=n.points[0]!;expect(p.path).toBe(nodes[0]!.path);expect([p.x,p.y]).toEqual([g.x,g.y]);expect(n.points).toHaveLength(4);expect(p.r).toBeGreaterThanOrEqual(Math.max(...n.points.slice(1).map(p=>p.r)));expect(validateNetwork(n)).toBe(true);}
+ const fallback=layoutNetwork(nodes.slice(1),[],new Set(['feature:f']));expect(fallback.points[0]!.path).toBe('features/f/README.md');
+});

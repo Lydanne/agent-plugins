@@ -8,7 +8,12 @@ export const radiusForWeight=(weight:number)=>6+Math.min(30,Math.sqrt(Math.max(0
 export const nodeRadius=(n:KnowledgeEntry,mode:SizeMode='total')=>radiusForWeight(nodeWeight(n,mode));
 export interface NetworkPoint {id:string;path:string;x:number;y:number;r:number;group:string;entry:KnowledgeEntry}
 export interface NetworkGroup {id:string;label:string;x:number;y:number;r:number;count:number;expanded:boolean;area:string;orbits?:number[];systemOrbit?:number;logicalId?:string}
-// Each Feature is a planetary system: strongest node at the center, smaller satellites on concentric orbits.
+// Prefer the shallowest index document (index.md, then README.md); never invent a center document.
+export function groupCenter(items:KnowledgeEntry[],mode:SizeMode='total'){
+ const indexes=items.filter(n=>/(^|\/)(index|readme)\.md$/i.test(n.path)||n.type==='index');
+ return indexes.sort((a,b)=>a.path.split('/').length-b.path.split('/').length||Number(!/(^|\/)index\.md$/i.test(a.path))-Number(!/(^|\/)index\.md$/i.test(b.path))||a.path.localeCompare(b.path))[0]??[...items].sort((a,b)=>nodeWeight(b,mode)-nodeWeight(a,mode)||a.path.localeCompare(b.path))[0];
+}
+// Index documents anchor each planetary system; other documents occupy concentric orbits.
 export const driftAmplitude=(radius:number)=>Math.max(.6,4-(radius-8)*.2);
 export function phaseFor(id:string){let h=2166136261;for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);return (h>>>0)/4294967296*Math.PI*2;}
 export function driftOffset(id:string,radius:number,time:number){const phase=phaseFor(id),a=driftAmplitude(radius),t=time/(3500+radius*160);return {x:Math.sin(t+phase)*a*.65,y:Math.sin(t*.83+phase*2)*a};}
@@ -17,12 +22,12 @@ export function layoutNetwork(nodes:KnowledgeEntry[],edges:KnowledgeEdge[],expan
  const buckets=new Map<string,KnowledgeEntry[]>();for(const n of nodes){const id=groupId(n);if(!buckets.has(id))buckets.set(id,[]);buckets.get(id)!.push(n);}
  const points:NetworkPoint[]=[],groups:NetworkGroup[]=[];
  for(const [id,items] of [...buckets].sort(([a],[b])=>a.localeCompare(b))){
-  items.sort((a,b)=>nodeWeight(b,mode)-nodeWeight(a,mode)||a.path.localeCompare(b.path));
+  const center=groupCenter(items,mode);items.sort((a,b)=>Number(b===center)-Number(a===center)||nodeWeight(b,mode)-nodeWeight(a,mode)||a.path.localeCompare(b.path));
   const open=expanded.has(id),orbits:number[]=[];let extent=open?36:36+Math.min(44,Math.sqrt(items.length)*3);
-  if(open){const max=Math.max(...items.map(n=>nodeRadius(n,mode))),spacing=max*2+28;let index=0,ring=0;
+  if(open){const centerRadius=Math.max(24,...items.map(n=>nodeRadius(n,mode))),max=centerRadius,spacing=max*2+28;let index=0,ring=0;
    while(index<items.length){const radius=ring*spacing,capacity=ring===0?1:Math.max(1,Math.floor(Math.PI/Math.asin(spacing/(2*radius)))),count=Math.min(capacity,items.length-index),phase=phaseFor(id)+ring*goldenAngle;
     if(ring)orbits.push(radius);
-    for(let j=0;j<count;j++){const n=items[index++]!,r=nodeRadius(n,mode),angle=j/count*Math.PI*2+phase;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x:Math.cos(angle)*radius,y:Math.sin(angle)*radius,r});extent=Math.max(extent,radius+r+32);}ring++;
+    for(let j=0;j<count;j++){const n=items[index++]!,r=n===center?centerRadius:nodeRadius(n,mode),angle=j/count*Math.PI*2+phase;points.push({id:'doc:'+n.path,path:n.path,entry:n,group:id,x:Math.cos(angle)*radius,y:Math.sin(angle)*radius,r});extent=Math.max(extent,radius+r+32);}ring++;
    }
   }
   groups.push({id,label:id.slice(id.indexOf(':')+1),x:0,y:0,r:extent,count:items.length,expanded:open,area:items[0]?.area??'index',orbits});
