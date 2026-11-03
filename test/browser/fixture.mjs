@@ -47,16 +47,18 @@ async function resultFor(p){
  if(p.actionId?.startsWith('projects-knowledge')){
   if(v.projectId!=='demo')return {...knowledgeScope,available:false,complete:false,reason:'knowledge_directory_missing'};
   const count=Number(params.get('knowledgeNodes')??0),nodes=count?Array.from({length:count},(_,i)=>({path:'features/f'+Math.floor(i/40)+'/'+(params.get('knowledgeIndexes')==='true'&&i%40===0?'index':i)+'.md',title:'知识节点 '+i,featureId:'f'+Math.floor(i/40),featureSource:'metadata',area:'features',inDegree:10,outDegree:10})):knowledgeDocs.map(d=>({path:d.path,title:d.title,uid:d.uid,area:'guides',inDegree:1,outDegree:1}));
+  if(params.get('knowledgeUidMigration')==='true'){nodes[0].path='features/f0/schema/index.md';nodes[0].uid='stable-schema';}
   const edges=count?Array.from({length:count*10},(_,i)=>({source:nodes[Math.floor(i/10)].path,target:nodes[(Math.floor(i/10)+i%10+1)%count].path,kind:'link'})):[{source:nodes[0].path,target:nodes[1].path,kind:'link'}];
   if(count&&params.get('knowledgePlanets')==='true'){
    edges.splice(0,edges.length,...nodes.flatMap((n,i)=>i%40?[{source:n.path,target:nodes[i-i%40].path,kind:'link'}]:[]));
    for(let i=0;i<nodes.length;i++){nodes[i].inDegree=i%40?0:Math.min(39,nodes.length-i-1);nodes[i].outDegree=i%40?1:0;}
   }
   if(params.get('knowledgeHistory')==='true'){
-   const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i,...(params.get('knowledgeDecisions')==='true'&&i!==1?{decisionCount:i+1,decisionPaths:['decisions/adr-'+i+'.md']}:{} )}));
-   if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',records,total:records.length,nextCursor:null,complete:true};
+   const records=[2,1,0].map(i=>({id:'frame-'+i,at:'2026-10-0'+(i+1)+'T00:00:00Z',title:'历史帧 '+i,pullRequest:i+1,...(params.get('knowledgeDecisions')==='true'&&i!==1?{decisionCount:i+1,decisionPaths:['decisions/adr-'+i+'.md']}:{} )}));
+   if(p.actionId==='projects-knowledgeChanges')return {head:'fixture-history',source:'git',granularity:'pull-request',records,total:records.length,nextCursor:null,complete:true};
    if(p.actionId==='projects-knowledgeSnapshot')return {...knowledgeScope,state:'ready',snapshotId:'snapshot-'+v.revision,commit:params.get('knowledgeObservations')==='true'?undefined:v.revision,totalNodes:nodes.length,totalEdges:edges.length};
    if(p.actionId==='projects-knowledgeDiff'){const target=nodes[v.revision==='frame-0'?0:80]??nodes[0];return {afterSnapshotId:'snapshot-'+v.revision,changes:params.get('knowledgeReplay')==='true'?[{kind:'modified',path:target.path,entry:target}]:[],commit:v.revision};}
+   if(p.actionId==='projects-knowledgeNodes'&&params.get('knowledgeUidMigration')==='true'&&v.snapshotId==='snapshot-frame-0')return {snapshotId:v.snapshotId,nodes:[...nodes.map((n,i)=>i===0?{...n,uid:undefined}:n),{...nodes[0],path:'features/f0/schema.md',uid:'stable-schema'}],nextCursor:null};
    if(p.actionId==='projects-knowledgeNodes')return {snapshotId:v.snapshotId,nodes:nodes.map((n,i)=>({...n,...(params.get('knowledgeReplay')==='true'&&i===0&&v.snapshotId==='snapshot-frame-1'?{inDegree:20}:{}),contentHash:i===0?v.snapshotId:'stable'})),nextCursor:null};
    if(p.actionId==='projects-knowledgeEdges')return {snapshotId:v.snapshotId,edges,nextCursor:null};
   }

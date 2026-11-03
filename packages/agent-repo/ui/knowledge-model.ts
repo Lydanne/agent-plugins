@@ -7,7 +7,7 @@ export interface KnowledgeCatalog {projects:{projectId:string;name:string;knowle
 export interface KnowledgeEdge {source:string;target:string;kind:'link'|'relation';relation?:string}
 export interface KnowledgeGraph extends KnowledgeScope {nodes:KnowledgeEntry[];edges:KnowledgeEdge[];totalNodes:number;nodeLimit:number;edgeLimit:number;scanComplete:boolean;truncated:boolean;unresolvedReferences:number;ignoredReferences:number;omittedEdges:number;invalidDocuments:number;referenceLimit:boolean}
 export interface KnowledgeIndex extends KnowledgeScope {snapshotId?:string;state:'building'|'ready'|'error';entrypoint?:string;totalNodes:number;totalEdges:number;processed:number;total:number;error?:string;stale?:boolean;commit?:string;at?:string;source?:string;indexedAt?:string}
-export interface KnowledgeHistoryRecord {decisionCount?:number;decisionPaths?:string[];id:string;parent?:string;at:string;title:string;snapshotId?:string}
-export interface KnowledgeHistory {head:string;source:string;complete:boolean;reason?:string;records:KnowledgeHistoryRecord[];total:number;nextCursor:string|null}
+export interface KnowledgeHistoryRecord {pullRequest?:number;decisionCount?:number;decisionPaths?:string[];id:string;parent?:string;at:string;title:string;snapshotId?:string}
+export interface KnowledgeHistory {granularity?:string;omittedRecords?:number;head:string;source:string;complete:boolean;reason?:string;records:KnowledgeHistoryRecord[];total:number;nextCursor:string|null}
 export interface KnowledgeChange {kind:string;path:string;previousPath?:string;entry:KnowledgeEntry}
 export interface KnowledgeDiff {beforeSnapshotId?:string;afterSnapshotId:string;changes:KnowledgeChange[];commit:string;at:string;relationsAdded?:KnowledgeEdge[];relationsRemoved?:KnowledgeEdge[]}
