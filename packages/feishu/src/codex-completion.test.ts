@@ -8,7 +8,7 @@ import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {mkdtempSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {acceptAsyncCardResult,bindAsyncTaskCard,readAsyncTaskCard,continueAsyncTaskCard} from './async-task-card.js';
+import {acceptAsyncCardResult,bindAsyncTaskCard,readAsyncTaskCard,continueAsyncTaskCard,acceptAsyncSteeringCard} from './async-task-card.js';
 import {runFeishuWorkingTurn} from "./working-turn-queue.js";
 import {savePreparedCompletion,readPreparedCompletion} from "./completion-outbox.js";
 const mocks=vi.hoisted(()=>({observe:vi.fn(),directory:vi.fn(),valid:true,buzz:vi.fn(),media:vi.fn(),send:vi.fn(),edit:vi.fn(),run:vi.fn(),recalls:new Set(),withdrawnMessages:new Set<string>(),leases:new Map(),entry: {sessionId:"current"},config:{messages:{queue:{mode:'steer'}}}}));
@@ -1325,4 +1325,13 @@ it('scheduled thread Worker result uses the original thread root',async()=>{
  const routed={...event,provenance:{...event.provenance,deliveryMode:'thread' as const,rootId:'original-topic',replyInThread:true}};
  await deliverCodexCompletion(routed,{beforeSend:vi.fn(),onReceipt:vi.fn()});
  expect(mocks.send.mock.calls[0][0]).toMatchObject({replyToMessageId:'original-topic',replyInThread:true});
+});
+
+it('steered task completion edits the new working card without replacing the old supplement receipt',async()=>{
+ bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'supplement-receipt'});
+ acceptAsyncSteeringCard(cardStateDir,readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)!,[{id:'hint',text:'补充昨天人数',at:1,state:'supplement_dispatched'}],'补充昨天人数');
+ continueAsyncTaskCard(cardStateDir,event.provenance,event.jobId,'hint',{messageId:'latest-working'});
+ await deliverCodexCompletion(event,{beforeSend:vi.fn(),onReceipt:vi.fn()});
+ expect(mocks.edit).toHaveBeenCalledWith(expect.objectContaining({messageId:'latest-working'}));
+ expect(mocks.edit.mock.calls.some(([input])=>input.messageId==='supplement-receipt')).toBe(false);
 });

@@ -242,6 +242,8 @@ async function queryInternal(params,context={}) {
   }
   const record=await jobs.enqueueSteering(params.jobId,scope,request,authorize);
   const outcome=steeringReceiptOutcome(record);
+  // Retain this human turn's working card and route completion to it.
+  if((outcome.queued||outcome.resumed)&&original.status!=='completed'&&(!record.childJobId||record.childJobId===original.jobId))rememberAsyncContinuation(lease,original,record.supplementId);
   return wrap({jobId:original.jobId,steeringId:record.supplementId,accepted:outcome.queued||outcome.resumed,...outcome,instruction:outcome.effectiveAt==='current_turn'?'补充已由当前执行轮次接纳，沿原任务继续；不代表业务完成，不重复提交。':outcome.effectiveAt==='current_turn_pending'?'补充已保存，正在送入当前执行轮次；以送达回执为准，不声称已经读取，不重复提交。':outcome.queued?'引导已保存，将在原任务当前执行轮次结束后沿原 Worker 会话处理；不是实时插入，也未改变原 task/constraints。独立决策、授权或插件问题仍需单独回答。结束本轮，不中断、不重复提交或轮询。':outcome.resumed?'这条引导此前已交回原会话接续，本次仅返回已有回执，未重复排队；不把已交回称为业务已完成。':'这条引导未能接续，已保存终态及原因；不是等待执行，不自动重建或重试业务。请按原任务状态说明未完成事项。'});
  }
  if(['reply','await_user'].includes(params.action)){

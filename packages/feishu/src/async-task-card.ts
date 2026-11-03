@@ -102,7 +102,7 @@ export function acceptAsyncCardProgress(stateDir:string, binding:AsyncTaskCard, 
 
 /** The initial card is an overview; detailed results stay on each continuation card. */
 export function prepareAsyncOriginalOverview(stateDir:string, binding:AsyncTaskCard, status:string, config:Pick<FeishuConfig,"workingCard"|"businessMessages">={}) {
- if(!binding.originalMessageId || binding.originalMessageId===binding.messageId)return undefined;
+ if(!binding.originalMessageId || binding.originalMessageId===binding.messageId || binding.steeringEntries?.length)return undefined;
  const db=database(stateDir);
  try {
   const siblings=(db.prepare("SELECT metadata FROM cards ORDER BY rowid").all() as {metadata:string}[]).map(row=>JSON.parse(row.metadata) as AsyncTaskCard)

@@ -126,3 +126,16 @@ test('mistaken questionId returns a correctable contract error without saving or
   assert.equal(readJson(join(f.root,f.id+'.json')).status,'running');
  }finally{f.close();}
 });
+
+test('accepted running steering holds the new human card with original business provenance',async()=>{
+ const f=fixture();try{
+  const path=join(f.root,f.id+'.json');writeJson(path,{...readJson(path),notification:{state:'pending'}});
+  const receipt=JSON.parse((await query(f.args,f.ctx)).content[0].text);
+  await query(f.args,f.ctx);
+  assert.equal(f.lease.asyncDispatchAccepted,true);
+  assert.equal(f.lease.asyncContinuations.length,1);
+  assert.equal(f.lease.asyncContinuations[0].jobId,f.id);
+  assert.equal(f.lease.asyncContinuations[0].questionId,receipt.steeringId);
+  assert.equal(f.lease.asyncContinuations[0].provenance.taskId,'original');
+ }finally{f.close();}
+});

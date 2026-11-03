@@ -7,7 +7,7 @@ vi.mock('./accounts.js',()=>({resolveFeishuRuntimeAccount:()=>({accountId:'a'})}
 vi.mock('./bot-sender-name.js',()=>({resolveFeishuSenderName:vi.fn(async()=>({name:'同事'}))}));
 import {editMessageFeishu} from './send.js';
 import {updateSteeringCard,renderSteeringCard,type SteeringCardEvent} from './worker-steering-card.js';
-import {bindAsyncTaskCard,readAsyncTaskCard,acceptAsyncCardResult} from './async-task-card.js';
+import {bindAsyncTaskCard,readAsyncTaskCard,acceptAsyncCardResult,continueAsyncTaskCard,prepareAsyncCardResult,prepareAsyncOriginalOverview} from './async-task-card.js';
 import type {ClawdbotConfig} from '../runtime-api.js';
 let root:string;
 const source={taskId:'source',revision:0,accountId:'a',chatId:'chat',sessionKey:'session',senderId:'owner'};
@@ -31,4 +31,19 @@ it('does not replace final results or update another source or revoked input',as
 it('failed edits retain retryable state and untrusted text is plain text',async()=>{
  vi.mocked(editMessageFeishu).mockRejectedValueOnce(Error('network'));await expect(update()).rejects.toThrow('network');expect(readAsyncTaskCard(root,'job',source)?.steeringEntries).toBeUndefined();await update();expect(editMessageFeishu).toHaveBeenCalledTimes(2);
  const rendered=renderSteeringCard({...event,answer:'<at id="all"></at>'},'person');expect(rendered.card.body.elements[0].text.tag).toBe('plain_text');
+});
+
+it('keeps the new working card as the result destination while the old card stays supplemented',async()=>{
+ await update();
+ continueAsyncTaskCard(root,source,'job','hint',{messageId:'new-working',imageKey:'gif'});
+ await update({...event,kind:'supplement_dispatched',liveState:'delivered'});
+ expect(vi.mocked(editMessageFeishu).mock.calls.every(([input])=>input.messageId==='original-working')).toBe(true);
+ const binding=readAsyncTaskCard(root,'job',source)!;
+ expect(binding.messageId).toBe('new-working');
+ expect(binding.result).toBeUndefined();
+ expect(prepareAsyncCardResult(root,binding,'今天 10 人，昨天 20 人').combined).toBe('今天 10 人，昨天 20 人');
+ acceptAsyncCardResult(root,binding,'今天 10 人，昨天 20 人');
+ expect(prepareAsyncOriginalOverview(root,binding,'completed')).toBeUndefined();
+ await update();
+ expect(editMessageFeishu).toHaveBeenCalledTimes(2);
 });

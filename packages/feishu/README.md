@@ -6,6 +6,8 @@
 
 Worker 与 Main 的自动补充仅在原任务内部流转，保留当前工作卡，不向群里发送自动补充详情或创建新的历史卡、工作卡。只有 Main 确认需要用户补充并调用 `await_user` 后才进入群内补充卡片流程；卡片投递失败时可用文字提问。已有用户补充卡正常收尾，内部补充内容不回填卡片。
 
+真人向运行中任务追加引导时，原工作卡保留“已补充”及补充记录，本轮新工作卡继续显示“干活中”；核验后的最终结果更新本轮新卡，不把接纳补充的说明当作任务结果。业务归属仍沿用原任务。
+
 ## 安装与首次接入
 
 从本仓库构建打包后使用 `openclaw plugins install /absolute/<feishu-package>.tgz`。不要使用 `openclaw plugins install @openclaw/feishu` 来安装此衍生版。完整构建、隔离安装、配置补丁及验收流程见 [OpenClaw 接入指南](https://github.com/Lydanne/agent-plugins/blob/main/docs/openclaw-setup.md)。
