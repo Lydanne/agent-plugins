@@ -16,6 +16,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.ui.json"
   },
   "files": [
+    "codex-skill-policy.mjs",
     "codex-worker-tools.mjs",
     "timing.mjs",
     "index.mjs",

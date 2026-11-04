@@ -25,6 +25,16 @@ test('default Codex template renders start, resume, JSON strings and read-only r
  const next=hermesCommand(config,{prompt,threadId:'session id',refresh:true,outputSchemaPath:'/tmp/schema file.json'});
  assert.equal(next.args[next.args.indexOf('resume')+1],'session id');assert.equal(next.args[next.args.indexOf('--output-schema')+1],'/tmp/schema file.json');assert.ok(next.args.includes('read-only'));assert.ok(!next.args.includes('--dangerously-bypass-approvals-and-sandbox'));
 });
+test('native skill switches apply to start/resume/refresh and templates cannot override them',()=>{
+ for(const options of [{},{threadId:'fixture'},{refresh:true},{threadId:'fixture',refresh:true}]){
+  const {args}=hermesCommand(resolveQueueExecution({}),options);
+  for(const value of ['features.skip_host_skill_discovery=true','skills.include_instructions=false','skills.bundled.enabled=false'])assert.equal(args.filter(arg=>arg===value).length,1);
+ }
+ for(const extra of [['-c','skills.include_instructions=true'],['--config=skills={include_instructions=true}'],['--config','features={skip_host_skill_discovery=false}'],['--disable','skip_host_skill_discovery'],['--disable=skip_host_skill_discovery'],['-cskills.bundled.enabled=true'],['-c','"skills"."include_instructions"=true'],['-c','features."skip_host_skill_di\\u0073covery"=false']]){
+  const template={...structuredClone(defaultHermesTemplates.codex),args:[...defaultHermesTemplates.codex.args,...extra]};
+  assert.throws(()=>hermesCommand(resolveQueueExecution({hermesTemplates:{codex:template}})),/skill policy conflict/);
+ }
+});
 test('templates reject unknown variables, malformed placeholders, reserved overrides and unsupported adapters',()=>{
  const template=structuredClone(defaultHermesTemplates.codex);
  for(const change of [{command:'{{missing}}'},{command:'{{cli}'},{adapter:'unimplemented'},{stdin:'changed'},{args:['exec','--json','-']},{variables:{cwd:'/wrong'}},{resumeArgs:['resume']}])assert.throws(()=>resolveConfiguration({hermesTemplates:{codex:{...template,...change}}}),/Hermes|hermesTemplates/);

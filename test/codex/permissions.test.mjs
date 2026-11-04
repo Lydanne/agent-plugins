@@ -7,6 +7,7 @@ import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {runAppServerTurn} from '../../packages/agent-worker/codex-app-server.mjs';
+import {hermesCommand} from '../../packages/agent-worker/hermes-templates.mjs';
 
 // Opt-in protocol tests against a real CLI binary, never the real account or model.
 const cli=process.env.WORKER_CODEX_CLI;
@@ -14,7 +15,7 @@ if(!cli)throw Error('Set WORKER_CODEX_CLI to the Codex CLI executable to run the
 const restrictions=['--disable','shell_tool','--disable','view_image','--disable','multi_agent','--disable','goals','--disable','hooks','--disable','plugins','-c','web_search="disabled"','-c','tools.experimental_request_user_input.enabled=false'];
 const model={slug:'worker-permission-fixture',display_name:'Fixture',description:null,supported_reasoning_levels:[],shell_type:'disabled',visibility:'list',supported_in_api:true,priority:0,availability_nux:null,upgrade:null,support_verbosity:false,default_verbosity:null,apply_patch_tool_type:null,truncation_policy:{mode:'bytes',limit:10000},experimental_supported_tools:[],node_repl_disabled:true,tool_mode:'direct',multi_agent_version:'disabled',base_instructions:'Offline permission fixture'};
 
-async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,patch=false,appServer=false,resume=false,skills=false,skillRestrictions=false}={}){
+async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,patch=false,appServer=false,resume=false,skills=false,skillRestrictions=false,workerJsonl=false}={}){
  const root=await mkdtemp(join(tmpdir(),'worker-permission-probe-')),requests=[];
  const cwd=join(root,'project');await mkdir(cwd);
  let child,server,timer,stdout='',stderr='';
@@ -54,7 +55,10 @@ async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,pat
    if(resume)assert.equal(await runAppServerTurn({...options,threadId,deadline:Date.now()+20000,toolBridge:{...options.toolBridge,invoke:async input=>{calls.push({name:input.name,arguments:input.arguments});return {fixture:'resumed-host-result'};}}}),'fixture complete');
    return {requests,calls,result,sessions};
   }
-  child=spawn(cli,args,{cwd,detached:true,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['ignore','pipe','pipe']});
+  const generated=workerJsonl?hermesCommand({cli,cwd,model:model.slug,reasoningEffort:'low',executorInstructions:'Fixture worker instructions',approvalMode:'read-only',codexHome:root}).args:undefined;
+  const providerArgs=args.slice(5);const modelIndex=providerArgs.indexOf('-m');providerArgs.splice(modelIndex,2);
+  const finalArgs=generated?[...generated.slice(0,-1),'--skip-git-repo-check',...providerArgs]:args;
+  child=spawn(cli,finalArgs,{cwd,detached:true,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',chunk=>stdout+=chunk);child.stderr.on('data',chunk=>stderr+=chunk);
   timer=setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},20000);
   const code=await new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});
@@ -115,4 +119,9 @@ test('Worker App Server suppresses native skill catalogs while retaining project
  assert.doesNotMatch(JSON.stringify(result.requests),/FIXTURE_PRIVATE_SKILL_/);
  assert.match(JSON.stringify(result.requests),/FIXTURE_PRIVATE_PROJECT_INSTRUCTION/);
  assert.equal(result.calls.length,2);
+});
+test('Worker JSONL command suppresses native skill catalogs while retaining project rules',async()=>{
+ const result=await probe({workerJsonl:true,skills:true});
+ assert.doesNotMatch(JSON.stringify(result.requests),/FIXTURE_PRIVATE_SKILL_/);
+ assert.match(JSON.stringify(result.requests),/FIXTURE_PRIVATE_PROJECT_INSTRUCTION/);
 });
