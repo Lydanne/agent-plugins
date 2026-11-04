@@ -6,6 +6,7 @@ export function registerAuthorizationAdapter(id,adapter,owner){
  if(adapter.resources!==undefined&&(typeof adapter.resources!=='function'||typeof adapter.revision!=='string'||!adapter.revision))throw Error('Resource adapters require a revision');
  const record={id,adapter,owner};registry.set(id,record);return ()=>{if(registry.get(id)===record)registry.delete(id);};
 }
+export function authorizationAdapterClaims(event,context){return [...registry.values()].some(({adapter})=>adapter.match(event,context));}
 export async function resolveAuthorizedOperation(event,context){
  const matches=[...registry.values()].filter(({adapter})=>adapter.match(event,context));
  if(matches.length!==1)return undefined;

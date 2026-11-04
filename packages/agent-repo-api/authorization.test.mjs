@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {registerAuthorizationAdapter,resolveAuthorizedOperation} from './authorization.mjs';
+import {authorizationAdapterClaims,registerAuthorizationAdapter,resolveAuthorizedOperation} from './authorization.mjs';
 test('unknown and ambiguous adapters fail closed and ownership is enforced',async()=>{
  const owner=Symbol(),adapter={match:()=>true,resolve:()=>({requirements:[{resourceId:'r',action:'read'}]})};
+ assert.equal(authorizationAdapterClaims({},{}),false);
  assert.equal(await resolveAuthorizedOperation({},{}),undefined);
  const off=registerAuthorizationAdapter('one',adapter,owner);
- try{assert.equal((await resolveAuthorizedOperation({},{})).requirements[0].action,'read');assert.throws(()=>registerAuthorizationAdapter('one',adapter,Symbol()));const off2=registerAuthorizationAdapter('two',adapter,owner);try{assert.equal(await resolveAuthorizedOperation({},{}),undefined);}finally{off2();}}finally{off();}
+ try{assert.equal((await resolveAuthorizedOperation({},{})).requirements[0].action,'read');assert.throws(()=>registerAuthorizationAdapter('one',adapter,Symbol()));const off2=registerAuthorizationAdapter('two',adapter,owner);try{assert.equal(authorizationAdapterClaims({},{}),true);assert.equal(await resolveAuthorizedOperation({},{}),undefined);}finally{off2();}}finally{off();}
 });
 test('Worker job scope survives changed execution ids and cannot leak after invocation',async()=>{
  const {bindAuthorizationScope,getAuthorizationScope}=await import('./authorization.mjs');

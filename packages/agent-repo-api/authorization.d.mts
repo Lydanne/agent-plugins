@@ -4,6 +4,7 @@ export interface AuthorizationContext {agentId?:string;sessionKey?:string;toolCa
 export interface AuthorizationOperation {requirements:Array<{resourceId:string;action:PermissionAction}>;context?:Record<string,string>;adapter?:{id:string;revision:string}}
 export interface AuthorizationAdapter {revision?:string;resources?(context:AuthorizationContext):AuthorizationResource[]|Promise<AuthorizationResource[]>;match(event:AuthorizationEvent,context:AuthorizationContext):boolean;resolve(event:AuthorizationEvent,context:AuthorizationContext):AuthorizationOperation|undefined|Promise<AuthorizationOperation|undefined>}
 export function registerAuthorizationAdapter(id:string,adapter:AuthorizationAdapter,owner:symbol):()=>void;
+export function authorizationAdapterClaims(event:AuthorizationEvent,context:AuthorizationContext):boolean;
 export function resolveAuthorizedOperation(event:AuthorizationEvent,context:AuthorizationContext):Promise<AuthorizationOperation|undefined>;
 export interface AuthorizationInvocationContext extends AuthorizationContext {runId?:string}
 export function bindAuthorizationScope(context:AuthorizationInvocationContext,jobId:string):()=>void;

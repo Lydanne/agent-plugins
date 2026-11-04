@@ -87,3 +87,15 @@ for(const action of ['scan','previewDefaults','mode','save','publish','classify'
  assert.equal([...f.container.querySelectorAll('button')].find(button=>button.textContent==='刷新').disabled,false);
  assert.equal(calls.filter(call=>call.agentId==='other').length,1);
 });
+test('scanned tool review requires classified behavior and explicit confirmation',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
+ const resource={id:'tool://fixture/lookup',name:'新工具',revision:2,reviewEligible:true,definition:{toolName:'lookup'},behavior:{access:'read',externalEffect:'none',sensitivity:'ordinary'}};
+ const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:{...catalog,resources:[resource]}};});ctx.props={...ctx.props,section:'authorization'};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'权限资源');await settle();click(f.container,'核验并启用');await settle();
+ assert.ok(f.container.textContent.includes('不提供沙箱或自动回滚'));assert.equal(calls.some(call=>call.actionId==='authorization-review'),false);
+ click(f.container,'取消核验');await settle();assert.equal(calls.some(call=>call.actionId==='authorization-review'),false);
+ click(f.container,'核验并启用');await settle();click(f.container,'确认分类并启用');await settle();
+ assert.deepEqual(calls.find(call=>call.actionId==='authorization-review').payload,{resourceId:resource.id,expectedRevision:2,confirmed:true});
+ resource.behavior.access='unknown';click(f.container,'刷新');await settle();click(f.container,'核验并启用');await settle();
+ assert.equal([...f.container.querySelectorAll('button')].find(button=>button.textContent==='确认分类并启用').disabled,true);
+});

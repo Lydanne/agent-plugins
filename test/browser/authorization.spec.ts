@@ -21,3 +21,16 @@ test('read-only permission center offers no changes',async({page})=>{
  await expect(page.getByRole('button',{name:'启用强制拦截',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'配置新增资源默认授权',exact:true})).toHaveCount(0);
 });
+for(const width of [400,1280])test(`resource review requires explicit confirmation at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await page.goto('/?section=authorization&permissionReview=true');
+ await page.getByRole('button',{name:'权限资源',exact:true}).click();
+ await page.getByRole('button',{name:'核验并启用',exact:true}).click();
+ const review=page.getByRole('region',{name:'工具分类核验',exact:true});await expect(review).toBeVisible();
+ await expect(review).toContainText('不提供沙箱或自动回滚');
+ expect(await page.evaluate(()=>(window as any).fixture.calls.filter((call:any)=>call.actionId==='authorization-review').length)).toBe(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+ await review.getByRole('button',{name:'确认分类并启用',exact:true}).click();
+ await expect(review).toHaveCount(0);
+ const calls=await page.evaluate(()=>(window as any).fixture.calls.filter((call:any)=>call.actionId==='authorization-review'));
+ expect(calls).toHaveLength(1);expect(calls[0].payload).toEqual({resourceId:'tool://fixture/lookup',expectedRevision:2,confirmed:true});
+});
