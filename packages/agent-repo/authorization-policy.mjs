@@ -38,6 +38,17 @@ export function permissionDefaultMatches(rule,resource){
  const conditions=Object.fromEntries(Object.entries(rule.conditions??{}).filter(([key])=>!contextFields.has(key)));
  return permissionRuleMatches({...rule,conditions},resource,{});
 }
+/** Discovery has no call payload. Conditional allows expose metadata, not execution rights. */
+export function permissionDiscoveryRules(rules){
+ return rules.map(validatePermissionRule).flatMap(rule=>{
+  const conditions=Object.fromEntries(Object.entries(rule.conditions??{}).filter(([key])=>!contextFields.has(key)));
+  const needsInvocation=(rule.parameters?.length??0)>0||Object.keys(rule.conditions??{}).some(key=>contextFields.has(key));
+  // Only a deny that is decidable without invocation data may hide metadata.
+  if(rule.effect==='deny'&&needsInvocation)return [];
+  const {parameters,...metadataRule}=rule;
+  return [{...metadataRule,conditions}];
+ });
+}
 export function permissionParametersMatch(predicates,parameters){
  return (predicates??[]).every(({path,op,value})=>{
   let current=parameters,present=true;

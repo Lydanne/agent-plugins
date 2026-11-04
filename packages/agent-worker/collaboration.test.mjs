@@ -7,12 +7,12 @@ import {hostRequestId,localPersonCall,createCollaborationService,authorizePerson
 import {parseContextRequest} from './context-request.mjs';
 import {createJobs,writeJson,readJson,requestKeyFor,USER_INPUT_WAIT_MS} from './jobs.mjs';
 const p={taskId:'task',revision:0,accountId:'a',chatId:'chat',sessionKey:'scope',senderId:'alice',agentId:'main',sourceMessageIds:['m'],requestMessageIds:['m'],people:{requester:{openId:'alice',accountId:'a',appId:'app'},mentions:[]}};
-function fixture(status='awaiting_user'){
+function fixture(status='awaiting_user',options={}){
  const root=mkdtempSync('/tmp/worker-collaboration-'),id=randomUUID(),scope='scope',params={topic:'test',task:'只读查询',context:'已核实对象',constraints:'不修改业务数据',memory:{status:'no_match',queries:['test'],items:[]}};
  const q={questionId:randomUUID(),question:'补充日期',reason:'未知',progress:'已查询',fields:[{id:'date',label:'日期',type:'text',required:true}],createdAt:Date.now(),waitingForUserAt:Date.now()-USER_INPUT_WAIT_MS-10,expiresAt:Date.now()+3600000};
  const job={jobId:id,scope:createHash('sha256').update(scope).digest('hex'),requestKey:requestKeyFor(params,scope,p),provenance:p,topic:'test',status,contextRequest:q,questions:[q],tags:[],resourceKeys:['record:one'],schedulerVersion:1,createdAt:Date.now(),heartbeatAt:Date.now(),resumeSessionId:randomUUID(),notification:{state:'pending'}};
  writeJson(join(root,id+'.request.json'),{params,scope,runtime:{state:root,cwd:root}});writeJson(join(root,id+'.json'),job);mkdirSync(join(root,'active'));
- const jobs=createJobs({root,node:process.execPath,worker:'unused',authorizeUserTimeout:()=>true,mainTimeoutGraceMs:60000});
+ const jobs=createJobs({root,node:process.execPath,worker:'unused',authorizeUserTimeout:()=>true,mainTimeoutGraceMs:60000,...options});
  return {root,id,scope,params,q,job,jobs,close:()=>rmSync(root,{recursive:true,force:true})};
 }
 test('host ID survives selector equivalents/retries and separates source revisions',()=>{
@@ -49,6 +49,26 @@ test('timeout asks Main once, then resumes with unknowns after bounded grace',()
   const saved=readJson(join(f.root,f.id+'.json'));saved.contextRequest.timeoutRequestedAt-=60001;writeJson(join(f.root,f.id+'.json'),saved);
   f.jobs.tick();job=f.jobs.status(f.id,f.scope);assert.equal(job.status,'queued');assert.match(job.questions[0].answer,/不是用户答复或授权/);assert.equal(job.questions[0].resumeReason,'user_wait_timeout');
   assert.equal(readJson(join(f.root,f.id+'.request.json')).params.constraints,f.params.constraints);
+ }finally{f.close();}
+});
+test('late reply checks original task permission at acceptance and deferred dispatch',async()=>{
+ let allowed=false;const checks=[];
+ const f=fixture('running',{authorizeControl:async(job,request,event)=>{checks.push(event);assert.equal(job.jobId,f.id);assert.equal(request.scope,f.scope);if(!allowed)throw Error('Permission denied');}});
+ try{
+  const old={...f.job,contextRequest:undefined,questions:[{...f.q,answer:'unknown',resumeReason:'user_wait_timeout'}]};writeJson(join(f.root,f.id+'.json'),old);
+  const opened=await f.jobs.openSupplement(f.id,f.scope,f.q.questionId,()=>true);
+  await assert.rejects(f.jobs.submitSupplement(f.id,f.scope,opened.supplementId,'late answer',{},()=>true),/Permission denied/);
+  assert.equal(f.jobs.supplement(f.id,f.scope,opened.supplementId).status,'waiting');
+  allowed=true;await f.jobs.submitSupplement(f.id,f.scope,opened.supplementId,'late answer',{},()=>true);
+  allowed=false;
+  // An accepted receipt is idempotent even if permission changes afterwards.
+  assert.equal((await f.jobs.submitSupplement(f.id,f.scope,opened.supplementId,'late answer',{},()=>true)).status,'accepted');
+  writeJson(join(f.root,f.id+'.json'),{...old,status:'completed'});
+  await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});
+  const result=f.jobs.supplement(f.id,f.scope,opened.supplementId);
+  assert.equal(result.status,'blocked');assert.equal(result.reason,'reply_permission_unavailable');
+  assert.equal(existsSync(join(f.root,opened.supplementId+'.json')),false);
+  assert.ok(checks.length>=3);assert.ok(checks.every(event=>event.toolName==='agent_worker'&&event.params.action==='reply'&&event.params.questionId===f.q.questionId&&event.params.jobId===f.id&&event.params.answer==='late answer'));
  }finally{f.close();}
 });
 test('late supplement persists during running, dispatches once after completion, preserves parent and scope',async()=>{

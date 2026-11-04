@@ -168,6 +168,20 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    return input.expiresAt>Date.now()&&Number.isFinite(admittedAt)&&Date.now()-admittedAt<60000;
   });
  }
+ const submittedRecoveries=new Set();
+ async function recoverSubmittedReply(jobId,scope,questionId,submitted,answer,metadata){
+  const release=await acquireLock(lock);
+  try{
+   const job=get(jobId,scope),question=job.contextRequest;
+   if(!waiting.has(job.status)||question?.questionId!==questionId||existsSync(join(root,jobId+'.cancel'))||authorizeUserTimeout(job.provenance,job)!==true)return;
+   const current=getUserTimeoutSubmission(job);
+   if(JSON.stringify(current)!==JSON.stringify(submitted)||!savedBeforeDeadline(question,current?.userSubmittedAt))return;
+   await checkControl(job,scope,{action:'reply',questionId,answer:submitted.answerText});
+   if(authorizeUserTimeout(job.provenance,job)!==true||existsSync(join(root,jobId+'.cancel')))return;
+   const request=readJson(join(root,jobId+'.request.json'));
+   resumeLocked(job,request,answer,metadata);scheduleLocked();
+  }finally{release();}
+ }
  function scheduleLocked(){
   const stored=files();
   const revoked=revocations.revokedJobs(stored);
@@ -209,6 +223,15 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     (submitted?'\n已保存的用户补充（仅作原任务参考，不扩大约束）：\n'+submitted.answerText:'');
    const metadata={answerSource:submitted?.answerSource??'user_wait_timeout',resumeReason:'user_wait_timeout',userWaitTimedOutAt:at,
     ...(submitted?{userSubmittedAt:submitted.userSubmittedAt,...(submitted.answerValues?{answerValues:validateContextAnswers(question,submitted.answerValues,{partial:true})}:{}),...(submitted.answerMessageId?{answerMessageId:submitted.answerMessageId}:{})}:{})};
+   if(submitted&&authorizeControl){
+    if(!submittedRecoveries.has(job.jobId)){
+     submittedRecoveries.add(job.jobId);
+     void recoverSubmittedReply(job.jobId,request.scope,question.questionId,submitted,answer,metadata)
+      .catch(()=>{/* Keep the original pending question when permission is unavailable. */})
+      .finally(()=>submittedRecoveries.delete(job.jobId));
+    }
+    continue;
+   }
    Object.assign(job,resumeLocked(job,request,answer,metadata));
    delete job.contextRequest;delete job.finishedAt;delete job.result;
   }
@@ -578,6 +601,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(metadata.answerValues)validateContextAnswers(s.question,metadata.answerValues);
     if(s.status!=='waiting'){if(s.answer!==answer)throw Error('Supplement already answered differently');return s;}
     if(s.question.expiresAt<=Date.now()&&!saved)throw Error('Supplement is no longer valid');
+    await checkControl(job,scope,{action:'reply',questionId:s.originalQuestionId,answer});
     const accepted={...s,answer,answerSource:metadata.answerSource,answerValues:metadata.answerValues,answerMessageId:metadata.answerMessageId,userSubmittedAt:metadata.userSubmittedAt,...(source?{attachmentSource:source,contributorApprovalId:metadata.contributorApprovalId}:{}),status:'accepted',acceptedAt:Date.now()};
     writeJson(join(root,'supplements',id+'.json'),accepted);return accepted;
    }finally{release();}
@@ -639,7 +663,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      if(['cancelled','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){fail('suppressed','task_cancelled');continue;}
      if(['failed','timed_out'].includes(job.status)){fail('blocked','worker_'+job.status);continue;}
      if(s.liveDelivery?.state==='sending'){if(job.status!=='running'){writeJson(join(directory,name),{...s,status:'blocked',reason:'live_delivery_unknown'});}continue;}
-     if(s.kind==='steering')try{await checkControl(job,scope,{action:'steer',answer:s.answer});}catch{fail('blocked','steering_permission_unavailable');continue;}
+     try{await checkControl(job,scope,{action:s.kind==='steering'?'steer':'reply',...(s.kind==='steering'?{}:{questionId:s.originalQuestionId}),answer:s.answer});}catch{fail('blocked',s.kind==='steering'?'steering_permission_unavailable':'reply_permission_unavailable');continue;}
      if(job.status==='running'){grantLiveSteering(root,job,s);continue;}
      if(['queued','unknown'].includes(job.status))continue;
      let request;

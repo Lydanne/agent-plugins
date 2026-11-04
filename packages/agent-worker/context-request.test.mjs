@@ -319,6 +319,36 @@ for(const blocked of ['authorization','cancel','binding','main','answered'])test
  }finally{f.close();}
 });
 
+test('saved user reply recovery keeps the question pending on denial and resumes once after permission returns',async()=>{
+ const f=fixture();try{
+  const original=await ask(f),worker=join(f.root,'authorized-submission-worker.mjs');
+  writeFileSync(worker,`import{readFileSync,writeFileSync}from'node:fs';const[root,id]=process.argv.slice(2);let input='';for await(const c of process.stdin)input+=c;const p=root+'/'+id+'.json',j=JSON.parse(readFileSync(p));j.status='completed';j.result={params:JSON.parse(input).params};writeFileSync(p,JSON.stringify(j));`);
+  let allowed=false,checks=0;
+  const saved={answerSource:'user_text',answerMessageId:'saved-answer',userSubmittedAt:Date.now()-180001,answerText:'saved answer'};
+  const jobs=createJobs({root:f.root,node:process.execPath,worker,authorizeUserTimeout:()=>true,getUserTimeoutSubmission:()=>saved,authorizeControl:async(job,request,event)=>{
+   if(event.params.action!=='reply')return;
+   checks++;assert.equal(job.jobId,f.id);assert.equal(request.scope,f.scope);
+   assert.deepEqual(event.params,{action:'reply',questionId:original.contextRequest.questionId,answer:'saved answer',jobId:f.id});
+   if(!allowed)throw Error('Permission denied');
+  }});
+  await jobs.awaitUser(f.id,f.scope,original.contextRequest.questionId,f.provenance);
+  const file=join(f.root,f.id+'.json'),j=readJson(file);j.contextRequest.createdAt=Date.now()-400000;j.contextRequest.waitingForUserAt=Date.now()-300000;writeJson(file,j);
+  const requestBefore=readFileSync(join(f.root,f.id+'.request.json'),'utf8');
+  jobs.tick();jobs.tick();
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(checks,1);assert.equal(readJson(file).status,'awaiting_user');
+  assert.equal(readJson(file).contextRequest.questionId,original.contextRequest.questionId);
+  assert.equal(readFileSync(join(f.root,f.id+'.request.json'),'utf8'),requestBefore);
+  allowed=true;jobs.tick();
+  for(let attempt=0;attempt<100&&readJson(file).status==='awaiting_user';attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+  const done=await jobs.wait(f.id,f.scope,2);
+  assert.equal(done.status,'completed');assert.equal(checks,2);
+  assert.equal(done.questions.filter(q=>q.questionId===original.contextRequest.questionId).length,1);
+  assert.equal(done.questions[0].answerMessageId,'saved-answer');
+  assert.match(done.result.params.mainReplies[0].answer,/saved answer/);
+  jobs.tick();assert.equal(checks,2);
+ }finally{f.close();}
+});
 test('submitted input gets three minutes and recovery preserves its text and recall identity',async()=>{
  const f=fixture();try{
   const original=await ask(f),worker=join(f.root,'submission-worker.mjs');

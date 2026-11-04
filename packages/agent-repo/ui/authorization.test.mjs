@@ -100,3 +100,28 @@ test('scanned tool review requires classified behavior and explicit confirmation
  resource.behavior.access='unknown';click(f.container,'刷新');await settle();click(f.container,'核验并启用');await settle();
  assert.equal([...f.container.querySelectorAll('button')].find(button=>button.textContent==='确认分类并启用').disabled,true);
 });
+
+test('new department bindings default to direct members and preserve explicit descendants on edit',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
+ const binding={id:'department-binding',revision:1,groupId:'internal',entityId:'department',entityType:'department',membership:'descendants',status:'active'};
+ const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:{...catalog,bindings:[binding]}};});ctx.props={...ctx.props,section:'authorization'};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'实体绑定');await settle();click(f.container,'新增实体绑定');await settle();
+ const field=label=>[...f.container.querySelectorAll('label')].find(node=>node.textContent.startsWith(label));
+ const type=field('实体类型').querySelector('select');type.value='department';type.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();
+ assert.equal(field('覆盖范围').querySelector('select').value,'members');
+ const entity=field('实体 ID').querySelector('input');entity.value='department';entity.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ assert.equal(calls.find(call=>call.actionId==='authorization-save').payload.value.membership,'members');
+ click(f.container,'编辑');await settle();assert.equal(field('覆盖范围').querySelector('select').value,'descendants');
+});
+test('editing a multi-resource rule keeps each existing resource ID separate',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
+ const ids=['tool://fixture/one','tool://fixture/two'];
+ const rule={id:'multi-resource',revision:1,groupId:'internal',kind:'explicit',effect:'allow',actions:['read'],selector:{resourceIds:ids}};
+ const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:{...catalog,rules:[rule]}};});ctx.props={...ctx.props,section:'authorization'};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'授权与默认策略');await settle();click(f.container,'编辑');await settle();
+ const input=[...f.container.querySelectorAll('label')].find(node=>node.textContent.startsWith('资源 ID')).querySelector('input');
+ assert.equal(input.value,ids.join(' '));input.value+=' tool://fixture/three';input.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ assert.deepEqual(calls.find(call=>call.actionId==='authorization-save').payload.value.selector.resourceIds,[...ids,'tool://fixture/three']);
+});

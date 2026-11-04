@@ -32,3 +32,26 @@ test('permission resolution reads current bindings after asynchronous operation 
  const service=createAuthorizationService({store,resolveIdentity:()=>subject,resolveOperation:async()=>{await Promise.resolve();operationResolved=true;return {requirements:[{resourceId:'r',action:'read'}]};},readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'s',complete:true,observedAt:new Date().toISOString(),nodes:[{id:'p',type:'person',sourceId:'s',status:'active'}],edges:[]})});
  store.get=()=>null;const result=await service.decide({},{});assert.equal(result.allowed,false);assert.equal(operationResolved,true);
 });
+test('conditional tool grants remain discoverable while invocation checks and task ceilings stay restrictive',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'auth-discovery-')),store=createAuthorizationStore(root,{agentId:'ada'});
+ t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
+ const subject={id:'p',agentId:'ada',sourceId:'tenant',verified:true};
+ const resource={id:'query',agentId:'ada',kind:'tool',provider:'fixture',definition:{toolName:'lookup'},actions:['discover','read','execute'],status:'active',verification:'verified',enforcement:'enforced',behavior:{sensitivity:'ordinary'}};
+ store.saveResource(resource,{actor:'admin'});
+ store.saveBinding({id:'b',agentId:'ada',entityId:'p',entityType:'person',membership:'self',groupId:'internal',status:'active'},{actor:'admin'});
+ const service=createAuthorizationService({store,resolveIdentity:()=>subject,readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'tenant',observedAt:new Date().toISOString(),complete:true,nodes:[{id:'p',type:'person',sourceId:'tenant',status:'active'}],edges:[]}),resolveOperation:event=>({requirements:[{resourceId:'query',action:'execute'},{resourceId:'query',action:'read'}],context:{projectId:event.params.projectId}})});
+ assert.deepEqual(await service.discover({}, {scopeId:'before-grant'}),[]);
+ store.saveRule({id:'limited',groupId:'internal',actions:['discover','read','execute'],effect:'allow',selector:{resourceIds:['query']},conditions:{projectId:['project-a'],sensitivity:['ordinary']},parameters:[{path:'limit',op:'max',value:100}]},{actor:'admin'});
+ assert.deepEqual(await service.discover({}, {scopeId:'before-grant'}),[]);
+ assert.deepEqual(await service.discover({}, {scopeId:'after-grant'}),['lookup']);
+ const decide=params=>service.decide({params},{},{scopeId:'after-grant'});
+ assert.equal((await decide({projectId:'project-a',limit:5})).allowed,true);
+ assert.equal((await decide({projectId:'project-b',limit:5})).allowed,false);
+ assert.equal((await decide({projectId:'project-a',limit:101})).allowed,false);
+ store.saveRule({id:'conditional-deny',groupId:'internal',actions:['discover','read','execute'],effect:'deny',selector:{resourceIds:['query']},parameters:[{path:'limit',op:'min',value:50}]},{actor:'admin'});
+ assert.deepEqual(await service.discover({}, {scopeId:'after-grant'}),['lookup']);
+ assert.equal((await decide({projectId:'project-a',limit:50})).allowed,false);
+ assert.equal((await decide({projectId:'project-a',limit:5})).allowed,true);
+ store.saveRule({id:'hide',groupId:'internal',actions:['discover'],effect:'deny',selector:{resourceIds:['query']},conditions:{sensitivity:['ordinary']}},{actor:'admin'});
+ assert.deepEqual(await service.discover({}, {scopeId:'after-grant'}),[]);
+});

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {evaluatePermissions} from './authorization-policy.mjs';
+import {evaluatePermissions,permissionDiscoveryRules} from './authorization-policy.mjs';
 import {resolvePermissionGroups} from './authorization-membership.mjs';
 
 /** Readers/adapters are trusted code, never model arguments. */
@@ -39,9 +39,9 @@ export function createAuthorizationService({store,resolveIdentity,readMembership
    const scope=scopeId?store.taskScope(scopeId,subject.id,membership.groupIds):null,names=new Set();
    for(const resource of store.list('resources')){
     const name=resource.definition?.toolName;if(!name)continue;
-    const input={agentId:store.agentId,subject,groups:membership.groupIds,rules:store.effectiveRules(resource.id),requirements:[{resource,action:'discover'}]};
+    const input={agentId:store.agentId,subject,groups:membership.groupIds,rules:permissionDiscoveryRules(store.effectiveRules(resource.id)),requirements:[{resource,action:'discover'}]};
     if(!evaluatePermissions(input).allowed)continue;
-    if(scope){const frozen=scope.resources.find(item=>item.id===resource.id&&item.revision===resource.revision);if(!frozen||!evaluatePermissions({...input,groups:scope.groupIds,rules:frozen.rules}).allowed)continue;}
+    if(scope){const frozen=scope.resources.find(item=>item.id===resource.id&&item.revision===resource.revision);if(!frozen||!evaluatePermissions({...input,groups:scope.groupIds,rules:permissionDiscoveryRules(frozen.rules)}).allowed)continue;}
     names.add(name);
    }
    return [...names].sort();
