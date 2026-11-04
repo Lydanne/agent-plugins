@@ -1,8 +1,6 @@
 import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-import {codexSkillArgs,assertCodexSkillArgs} from './codex-skill-policy.mjs';
-import {codexExtensionArgs,assertCodexExtensionArgs} from './codex-extension-policy.mjs';
 export const hermesIdPattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$';
 const variablePattern='^[A-Za-z][A-Za-z0-9_]{0,63}$';
 const stringSchema={type:'string',maxLength:40000};
@@ -79,11 +77,7 @@ export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,pr
   policyArgs:refresh?['--sandbox','read-only']:config.approvalMode==='dangerously-bypass-approvals-and-sandbox'?['--dangerously-bypass-approvals-and-sandbox']:['--sandbox',config.approvalMode],
   speedArgs:variables.speed?['-c','service_tier='+JSON.stringify(variables.speed)]:[],schemaArgs:refresh&&outputSchemaPath?['--output-schema',outputSchemaPath]:[],resumeArgs:[]};
  values.resumeArgs=threadId?expandArgs(template.resumeArgs,values):[];
- if(template.adapter==='codex-jsonl')values.policyArgs.push(...codexSkillArgs,...codexExtensionArgs);
  const command=substitute(template.command,values),args=expandArgs(template.args,values);
- if(template.adapter==='codex-app-server')args.push(...codexExtensionArgs);
- if(template.adapter==='codex-jsonl')assertCodexSkillArgs(args);
- assertCodexExtensionArgs(args);
  if(!command.trim()||command.includes('\n')||command.includes('\r'))throw Error('Invalid Hermes command');
  // Do not allow another template flag to undo the host-owned read-only refresh policy.
  if(refresh&&template.adapter==='codex-jsonl'&&(args.includes('--dangerously-bypass-approvals-and-sandbox')||args.filter(a=>a==='--sandbox'||a==='-s').length!==1||args.some(a=>/^(?:--sandbox=|-s=|sandbox_mode=|--full-auto$)/.test(a))))throw Error('Hermes refresh policy conflict');

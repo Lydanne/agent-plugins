@@ -28,6 +28,7 @@ export function createAuthorizationStore(root,{agentId,now=()=>new Date().toISOS
   const defaults=[
    {id:'builtin-administrator-default',groupId:'administrator',kind:'default',effect:'allow',actions:[...permissionActions],selector:{}},
    {id:'builtin-internal-default',groupId:'internal',kind:'default',effect:'allow',actions:['discover','read','execute'],selector:{},conditions:{access:['read'],sensitivity:['ordinary'],externalEffect:['none']}},
+   {id:'builtin-internal-worker-default',groupId:'internal',kind:'default',effect:'allow',actions:['discover','execute','delegate','transfer'],selector:{resourceIds:['tool://agent-worker/agent_worker/run','tool://agent-worker/agent_worker/reply','tool://agent-worker/agent_worker/steer','delivery://agent-worker/result']}},
   ];
   for(const rule of defaults)db.prepare('INSERT INTO auth_rules VALUES(?,?,1,?,?)').run(rule.id,rule.groupId,rule.kind,JSON.stringify(rule));
 

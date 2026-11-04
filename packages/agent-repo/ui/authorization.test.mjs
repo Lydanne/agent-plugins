@@ -9,6 +9,7 @@ test('permission center renders built-in groups without mutating and offers admi
  const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:catalog};});ctx.props={...ctx.props,section:'authorization'};
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  for(const name of ['管理员组','内部组','外部组'])assert.ok(f.container.textContent.includes(name));
+ assert.ok(f.container.textContent.includes('权限组不提供完整沙箱隔离'));
  assert.equal(calls.filter(call=>call.actionId==='authorization-catalog').length,1);
  assert.equal(calls.some(call=>['authorization-save','authorization-mode','authorization-scan'].includes(call.actionId)),false);
  click(f.container,'权限资源');await settle();assert.ok(f.container.textContent.includes('扫描当前能力'));

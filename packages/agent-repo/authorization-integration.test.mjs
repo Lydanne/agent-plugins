@@ -50,7 +50,6 @@ test('discovery filters model tool names and freezes the first model-turn scope'
 test('Worker admission and delivery share the original ceiling across child jobs',async t=>{
  const {registerAuthorizationRuntime}=await import('./authorization-runtime.mjs');
  const {admitAuthorizedTask,authorizeTaskOperation,filterTaskTools}=await import('./dist/authorization-api.mjs');
- const {permissionActions}=await import('./authorization-policy.mjs');
  const root=mkdtempSync(join(tmpdir(),'auth-worker-lifecycle-')),agentId='lifecycle-fixture',services=[];
  const person={id:'p',typeId:'person',sourceId:'s',status:'active',observedAt:new Date().toISOString(),source:{kind:'channel',namespace:'feishu',externalId:JSON.stringify(['account','app','sender'])}};
  const graph={list:()=>({entities:[person]}),get:()=>({entity:person}),relations:()=>({relations:[]})};
@@ -59,18 +58,17 @@ test('Worker admission and delivery share the original ceiling across child jobs
  const store=runtime.storeFor(agentId);
  scanPermissionResources(store,{plugins:{plugins:[{id:'agent-worker',version:'1',runtime:{state:'active'}},{id:'agent-repo',version:'1',runtime:{state:'active'}}]},catalog:{agentId,groups:[]}},{actor:'scanner'});
  store.saveBinding({id:'b',agentId,entityId:'p',entityType:'person',membership:'self',groupId:'internal',status:'active'},{actor:'operator'});
- store.saveRule({id:'run',groupId:'internal',effect:'allow',actions:[...permissionActions],selector:{resourceIds:['tool://agent-worker/agent_worker/run']}},{actor:'operator'});
  store.setMode('enforce',{actor:'operator'});
  const task={agentId,jobId:'original',sessionKey:'agent:'+agentId+':source',requester:{channel:'feishu',accountId:'account',senderId:'sender'}};
  await admitAuthorizedTask(task);
+ await admitAuthorizedTask({...task,phase:'delivery'});
  const lookup={toolName:'agent_repo',params:{action:'person',openId:'sender'}};
  store.saveRule({id:'person',groupId:'internal',effect:'allow',actions:['discover','read','execute'],selector:{resourceIds:['tool://agent-repo/agent_repo/person','data://agent-repo/entities']}},{actor:'operator'});
  await assert.rejects(authorizeTaskOperation(task,lookup),/Permission denied/);
  assert.deepEqual(await filterTaskTools(task,['agent_repo']),[]);
- store.saveRule({id:'deliver',groupId:'internal',effect:'allow',actions:['transfer'],selector:{resourceIds:['delivery://agent-worker/result']}},{actor:'operator'});
- await assert.rejects(admitAuthorizedTask({...task,phase:'delivery'}),/Permission denied/);
+ await admitAuthorizedTask({...task,phase:'delivery'});
  await admitAuthorizedTask({...task,jobId:'child',parentJobId:'original'});
- await assert.rejects(admitAuthorizedTask({...task,jobId:'child',parentJobId:'original',phase:'delivery'}),/Permission denied/);
+ await assert.rejects(authorizeTaskOperation({...task,jobId:'child',parentJobId:'original'},lookup),/Permission denied/);
  await admitAuthorizedTask({...task,jobId:'fresh'});
  await admitAuthorizedTask({...task,jobId:'fresh',phase:'delivery'});
  await authorizeTaskOperation({...task,jobId:'fresh'},lookup);

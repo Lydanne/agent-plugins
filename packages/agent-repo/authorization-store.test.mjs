@@ -5,12 +5,27 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {evaluatePermissions} from './authorization-policy.mjs';
 import {createAuthorizationStore} from './authorization-store.mjs';
+import {workerAuthorizationResources} from './authorization-worker.mjs';
 function setup(t){const root=mkdtempSync(join(tmpdir(),'auth-store-'));const store=createAuthorizationStore(root,{agentId:'ada'});t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});return {store,root};}
 test('independent database initializes exactly three groups without entity changes',t=>{
  const {store,root}=setup(t);assert.deepEqual(store.list('groups').map(g=>g.id),['administrator','external','internal']);
- assert.equal(store.list('rules').length,2);assert.equal(store.list('bindings').length,0);
+ assert.equal(store.list('rules').length,3);assert.equal(store.list('bindings').length,0);
  assert.equal(existsSync(join(root,'.runtime','agent_repo.sqlite')),false);
  assert.throws(()=>createAuthorizationStore(root,{agentId:'other'}),/another Agent/);
+});
+test('internal defaults admit Worker tasks and return results without granting business writes; external stays ungranted',t=>{
+ const {store}=setup(t),resources=workerAuthorizationResources('ada');
+ const write={id:'fixture-write',agentId:'ada',kind:'tool',provider:'fixture',actions:['discover','execute','update'],status:'active',verification:'verified',enforcement:'enforced',behavior:{access:'write',externalEffect:'none',sensitivity:'ordinary'}};
+ for(const resource of [...resources,write]){store.saveResource(resource,{actor:'scanner'});store.applyDefaults(resource.id,{actor:'scanner'});}
+ const allowed=(group,id,actions)=>evaluatePermissions({agentId:'ada',subject:{id:'person',agentId:'ada',verified:true},groups:[group],rules:store.effectiveRules(id),requirements:actions.map(action=>({resource:store.get('resources',id),action}))}).allowed;
+ for(const group of ['administrator','internal']){
+  for(const action of ['run','reply','steer'])assert.equal(allowed(group,'tool://agent-worker/agent_worker/'+action,['execute','delegate']),true);
+  assert.equal(allowed(group,'delivery://agent-worker/result',['transfer']),true);
+ }
+ assert.equal(allowed('internal',write.id,['execute','update']),false);
+ assert.equal(allowed('administrator',write.id,['execute','update']),true);
+ assert.equal(allowed('external','tool://agent-worker/agent_worker/run',['execute','delegate']),false);
+ assert.equal(allowed('external','delivery://agent-worker/result',['transfer']),false);
 });
 test('optimistic updates and audit are transactional',t=>{
  const {store}=setup(t),group=store.get('groups','internal');

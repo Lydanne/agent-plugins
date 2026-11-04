@@ -65,7 +65,7 @@ async function mode(){if(!data.value||!canEdit.value)return;const valid=request.
  <section class="ar-authorization">
   <PageHeader title="权限中心" description="通过权限组管理组织、部门和个人交给 Worker 执行的能力；Main 沿用 OpenClaw 权限。"/>
   <StatusNotice v-if="error" tone="error">{{error}}</StatusNotice>
-  <div v-if="data"><p>Worker 当前模式：{{data.mode==='audit'?'审计（记录判定，不拦截）':'强制（未授权操作会被拦截）'}}</p><Button v-if="data.canAdmin" variant="outline" :disabled="busy" @click="mode">{{data.mode==='audit'?'启用强制拦截':'切换为审计'}}</Button></div>
+  <div v-if="data"><p>Worker 当前模式：{{data.mode==='audit'?'审计（记录判定，不拦截）':'强制（已接入入口的未授权操作会被拦截）'}}</p><p>权限控制覆盖已接入鉴权的 Worker 调用。原生 Shell、文件、网络及其他未接入能力沿用执行环境配置，权限组不提供完整沙箱隔离。</p><Button v-if="data.canAdmin" variant="outline" :disabled="busy" @click="mode">{{data.mode==='audit'?'启用强制拦截':'切换为审计'}}</Button></div>
   <nav aria-label="权限管理分类"><Button v-for="(label,key) in labels" :key="key" variant="ghost" :aria-current="section===key?'page':undefined" @click="section=key as typeof section;editing=null">{{label}}</Button><Button variant="outline" :disabled="busy" @click="refresh">刷新</Button></nav>
   <Button v-if="section==='resources'&&canEdit" @click="scan">扫描当前能力</Button>
   <p v-if="section==='resources'&&scanSummary">{{scanSummary}}</p>

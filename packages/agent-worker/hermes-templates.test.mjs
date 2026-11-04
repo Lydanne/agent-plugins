@@ -25,26 +25,13 @@ test('default Codex template renders start, resume, JSON strings and read-only r
  const next=hermesCommand(config,{prompt,threadId:'session id',refresh:true,outputSchemaPath:'/tmp/schema file.json'});
  assert.equal(next.args[next.args.indexOf('resume')+1],'session id');assert.equal(next.args[next.args.indexOf('--output-schema')+1],'/tmp/schema file.json');assert.ok(next.args.includes('read-only'));assert.ok(!next.args.includes('--dangerously-bypass-approvals-and-sandbox'));
 });
-test('native skill switches apply to start/resume/refresh and templates cannot override them',()=>{
- for(const options of [{},{threadId:'fixture'},{refresh:true},{threadId:'fixture',refresh:true}]){
-  const {args}=hermesCommand(resolveQueueExecution({}),options);
-  for(const value of ['features.skip_host_skill_discovery=true','skills.include_instructions=false','skills.bundled.enabled=false'])assert.equal(args.filter(arg=>arg===value).length,1);
- }
- for(const extra of [['-c','skills.include_instructions=true'],['--config=skills={include_instructions=true}'],['--config','features={skip_host_skill_discovery=false}'],['--disable','skip_host_skill_discovery'],['--disable=skip_host_skill_discovery'],['-cskills.bundled.enabled=true'],['-c','"skills"."include_instructions"=true'],['-c','features."skip_host_skill_di\\u0073covery"=false']]){
-  const template={...structuredClone(defaultHermesTemplates.codex),args:[...defaultHermesTemplates.codex.args,...extra]};
-  assert.throws(()=>hermesCommand(resolveQueueExecution({hermesTemplates:{codex:template}})),/skill policy conflict/);
- }
-});
-test('both adapters disable native extensions before startup and reject template re-enablement',()=>{
- for(const adapter of ['codex-jsonl','codex-app-server']){
-  const template={...structuredClone(defaultHermesTemplates[adapter==='codex-jsonl'?'codex':'codex-live'])};
+test('Worker preserves operator native CLI settings instead of imposing a blanket extension policy',()=>{
+ for(const adapter of ['codex','codex-live']){
+  const template=structuredClone(defaultHermesTemplates[adapter]);template.args.push('--enable','hooks','-c','features.plugins=true');
   const config=resolveQueueExecution({hermesTemplates:{codex:template}});
   const args=hermesCommand(config).args;
-  for(const feature of ['hooks','codex_hooks','plugin_hooks','plugins','remote_plugin','apps','connectors'])assert.ok(args.includes('features.'+feature+'=false'));
-  for(const extra of [['--enable','hooks'],['--enable=plugins'],['-c','features.plugin_hooks=true'],['--config=features.codex_hooks=true']]){
-   const overridden={...template,args:[...template.args,...extra]};
-   assert.throws(()=>hermesCommand(resolveQueueExecution({hermesTemplates:{codex:overridden}})),/policy conflict/);
-  }
+  assert.deepEqual(args.slice(-4),['--enable','hooks','-c','features.plugins=true']);
+  assert.equal(args.some(arg=>/^(features\.(hooks|plugins|apps|skip_host_skill_discovery)|skills\.)=/.test(arg)&&arg!=='features.plugins=true'),false);
  }
 });
 test('templates reject unknown variables, malformed placeholders, reserved overrides and unsupported adapters',()=>{
