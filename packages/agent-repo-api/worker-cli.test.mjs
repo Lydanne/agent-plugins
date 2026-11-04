@@ -58,13 +58,15 @@ test('Worker catalog, descriptions and rewritten calls retain task group permiss
  }finally{dispose();await f.service.stop();}
 });
 test('in-flight calls abort on cancellation, source revocation, timeout and service stop',async()=>{
- for(const reason of ['cancel','revoke','timeout','stop']){
+ for(const reason of ['cancel','revoke','timeout','stop','client_abort']){
   let writes=0,started;const ready=new Promise(r=>started=r);
   const f=await fixture({execute:async(_args,signal)=>{started();await delay(200,null,{signal});writes++;return {};}});
   try{
-   const cli=reason==='timeout'?await connectWorkerCli({timeout:60},f.env):f.cli;
+   const controller=new AbortController();
+   const cli=reason==='timeout'?await connectWorkerCli({timeout:60},f.env):reason==='client_abort'?await connectWorkerCli({signal:controller.signal},f.env):f.cli;
    const result=cli.request('tools.invoke',{name:'fixture_read',args:{}});const rejected=assert.rejects(result);await ready;
    if(reason==='cancel')f.setStatus('cancelled');if(reason==='revoke')f.setAuthorized(false);if(reason==='stop')await f.service.stop();
+   if(reason==='client_abort')controller.abort();
    await rejected;await delay(220);assert.equal(writes,0,reason);
   }finally{if(reason!=='stop')await f.service.stop();}
  }

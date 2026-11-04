@@ -7,7 +7,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r --workspace-concurrency=1 test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test:ui:e2e": "playwright test"
+    "test:ui:e2e": "playwright test",
+    "test:codex-permissions": "node --test test/codex/permissions.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

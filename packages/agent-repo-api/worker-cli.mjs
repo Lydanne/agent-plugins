@@ -172,7 +172,8 @@ export async function connectWorkerCli(options={},env=process.env){
  if(options.url||options.token||options.password||options.agent&&options.agent!==context.agentId||options.session&&options.session!==context.sessionKey)throw denied('Cannot override Worker connection or task identity');
  if(!/^http:\/\/127\.0\.0\.1:\d+\/invoke$/.test(env.OPENCLAW_WORKER_CLI_URL??'')||!env.OPENCLAW_WORKER_CLI_TOKEN)throw denied('Worker CLI lease unavailable');
  return {context,close(){},async request(method,params,extra={}){
-  const response=await fetch(env.OPENCLAW_WORKER_CLI_URL,{method:'POST',headers:{authorization:'Bearer '+env.OPENCLAW_WORKER_CLI_TOKEN,'content-type':'application/json'},body:JSON.stringify({method,params,identity:{workerId:context.workerId,jobId:context.jobId},...extra}),signal:AbortSignal.timeout(Number(options.timeout??30000))});
+  const timeout=AbortSignal.timeout(Number(options.timeout??30000));
+  const response=await fetch(env.OPENCLAW_WORKER_CLI_URL,{method:'POST',headers:{authorization:'Bearer '+env.OPENCLAW_WORKER_CLI_TOKEN,'content-type':'application/json'},body:JSON.stringify({method,params,identity:{workerId:context.workerId,jobId:context.jobId},...extra}),signal:options.signal?AbortSignal.any([options.signal,timeout]):timeout});
   const output=await response.json();if(!response.ok||!output.ok)throw Object.assign(Error(output.error?.message??'Worker CLI failed'),{code:output.error?.code});return output.result;
  }};
 }

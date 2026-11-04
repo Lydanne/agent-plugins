@@ -1,5 +1,6 @@
 import {admitAuthorizedTask} from './dist/authorization-api.mjs';
 import {runAppServerTurn} from './codex-app-server.mjs';
+import {createCodexWorkerBridge} from './codex-worker-tools.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
 import {workerContextApi,createWorkerCliService,prepareWorkerCliOptions} from './dist/worker-cli.mjs';
 import {createAutomationClient} from './automation-client.mjs';
@@ -143,7 +144,7 @@ export async function executeQuery(params,context={},runtime=configuration){
    }
    context.signal?.throwIfAborted();
    if(config.hermesExecution?.template.adapter==='codex-app-server'){
-    return await runAppServerTurn({invocation:hermesCommand(config,{refresh,threadId,prompt}),config,prompt,threadId,refresh,outputSchema,deadline,signal:context.signal,
+    return await runAppServerTurn({invocation:hermesCommand(config,{refresh,threadId,prompt}),config,prompt,threadId,refresh,outputSchema,deadline,signal:context.signal,toolBridge:createCodexWorkerBridge(config.workerCli,{timeout:Math.max(1,deadline-Date.now())}),
      env:{...workerEnvironment(),...workerCliEnvironment(refresh?undefined:config.workerCli),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})},
      onLiveSteering:refresh?undefined:context.onLiveSteering,onProgress:progress=>{if(progress.sessionId)threadId=progress.sessionId;context.onProgress?.(progress);},
      onEvent:e=>{const recorded=inspectionEvent(e,refresh?'refresh':'business');if(recorded)context.onInspectionEvent?.(recorded);if(!refresh&&e.item?.type==='command_execution')commands.push({exitCode:e.item.exit_code});}});
