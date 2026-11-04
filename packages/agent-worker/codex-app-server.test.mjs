@@ -52,6 +52,14 @@ test('executeQuery selects the live Hermes adapter and preserves the result/sess
 
 const definitions=[{type:'function',name:'fixture_tool',description:'Fixture only',inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id'],additionalProperties:false}}];
 const requestsOf=f=>readFileSync(join(f.root,'requests.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+for(const threadId of [undefined,'thread-fixture'])test('host owns automatic skill context on '+(threadId?'resume':'start'),async t=>{
+ const f=fixture(t,'complete');await runAppServerTurn({...f.options,threadId});
+ const request=requestsOf(f).find(r=>r.method===(threadId?'thread/resume':'thread/start'));
+ assert.equal(request.params.config['features.skip_host_skill_discovery'],true);
+ assert.equal(request.params.config['skills.include_instructions'],false);
+ assert.equal(request.params.config['skills.bundled.enabled'],false);
+ assert.equal(request.params.config.project_doc_max_bytes,undefined);
+});
 test('dynamic tool calls are dispatched to the host bridge in the active turn',async t=>{
  const f=fixture(t,'tool');let calls=0;
  await runAppServerTurn({...f.options,toolBridge:{definitions,invoke:async input=>{calls++;assert.equal(input.name,'fixture_tool');assert.equal(input.callId,'call-fixture');assert.deepEqual(input.arguments,{id:'fixture'});assert.equal(input.signal.aborted,false);return {value:'authorized'};}}});

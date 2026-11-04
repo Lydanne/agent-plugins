@@ -75,7 +75,10 @@ export async function runAppServerTurn({invocation,config,prompt,threadId,refres
   child.send({command:invocation.command,args:invocation.args});
   await rpc('initialize',{clientInfo:{name:'agent-worker',version:'1.0.1'},capabilities:{experimentalApi:true}});write({method:'initialized'});
   const sandbox=refresh||config.approvalMode==='read-only'?'read-only':config.approvalMode==='workspace-write'?'workspace-write':'danger-full-access';
-  const params={cwd:config.cwd,model:config.model,approvalPolicy:'never',sandbox,developerInstructions:config.executorInstructions.replaceAll('{projectDir}',config.cwd),config:{model_reasoning_effort:config.reasoningEffort},...(config.speed?{serviceTier:config.speed}:{})};
+  // Worker supplies its permission-filtered skill snapshot in the prompt. Native
+  // discovery must not append unrelated user, bundled or project skill catalogs.
+  // This controls automatic context only; it is not a filesystem/tool sandbox.
+  const params={cwd:config.cwd,model:config.model,approvalPolicy:'never',sandbox,developerInstructions:config.executorInstructions.replaceAll('{projectDir}',config.cwd),config:{model_reasoning_effort:config.reasoningEffort,'features.skip_host_skill_discovery':true,'skills.include_instructions':false,'skills.bundled.enabled':false},...(config.speed?{serviceTier:config.speed}:{})};
   const response=await rpc(threadId?'thread/resume':'thread/start',{...params,...(threadId?{threadId,excludeTurns:true}:toolBridge?{dynamicTools:definitions}:{})});
   if(threadId&&response.thread?.id!==threadId)throw Error('Original Worker session cannot be resumed safely');
   threadId=response.thread?.id;if(typeof threadId!=='string'||!threadId)throw Error('App server returned no thread');
