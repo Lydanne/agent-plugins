@@ -34,3 +34,9 @@ test('discovery adapter failure preserves a successfully read audit mode only',a
   assert.deepEqual(await runtime.prepare({}, {agentId:'ada'}),mode==='audit'?undefined:{toolsAllow:[]});
  }
 });
+test('skill tool output cannot expose entries or shadowed paths without its trusted invocation',async()=>{
+ const runtime=registerAuthorizationRuntime({registerTrustedToolPolicy:()=>{}},{agents:{ada:{repo:'/unused'}}},{openStore:()=>({mode:()=>'enforce'})});
+ const catalog={skills:[{name:'secret',path:'private/SKILL.md'}],shadowed:[{name:'secret',path:'shadowed/SKILL.md'}]};
+ const filtered=await runtime.filterSkills(catalog,{agentId:'ada',sessionKey:'session',toolCallId:'missing'});
+ assert.deepEqual(filtered.skills,[]);assert.deepEqual(filtered.shadowed,[]);
+});

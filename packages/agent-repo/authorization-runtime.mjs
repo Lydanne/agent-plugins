@@ -27,8 +27,11 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
  }
  async function filterSkills(catalog,context){
   const store=storeFor(context.agentId);if(!store||store.mode()==='audit')return catalog;
-  const host={...context,requester:{channel:context.channel??context.messageProvider,accountId:context.accountId,senderId:context.senderId}};
-  return serviceFor(context.agentId,store).filterSkills(catalog,host,{scopeId:context.runId&&context.sessionKey?JSON.stringify([context.sessionKey,context.runId]):undefined});
+  const invocation=context.toolCallId?invocationScopes.get(invocationKey(context)):undefined;
+  if(context.toolCallId&&!invocation)return {...catalog,skills:[],shadowed:[]};
+  const host={...context,requester:invocation?.requester??{channel:context.channel??context.messageProvider??context.messageChannel,accountId:context.accountId??context.agentAccountId,senderId:context.senderId??context.requesterSenderId}};
+  const scopeId=invocation?.scopeId??(context.runId&&context.sessionKey?JSON.stringify([context.sessionKey,context.runId]):undefined);
+  return {...await serviceFor(context.agentId,store).filterSkills(catalog,host,{scopeId}),shadowed:[]};
  }
  async function evaluate(event,host){
   if(!host?.agentId&&Object.keys(config.agents).length)return {block:true,blockReason:'Missing trusted Agent identity'};

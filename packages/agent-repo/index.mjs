@@ -30,7 +30,7 @@ import {createRepositoryRuntime} from './runtime-sync.mjs';
 import {parseAgentSessionKey} from 'openclaw/plugin-sdk/routing';
 import {resolveConfiguration,bindingFor} from './configuration.mjs';
 import {readProjects,inspectProject,agentSummary,selectProjectId} from './repositories.mjs';
-export function projectTool(config,context,hostConfig={},prepareScope,syncScope,{authorizeOperation}={}) {
+export function projectTool(config,context,hostConfig={},prepareScope,syncScope,{authorizeOperation,filterSkills}={}) {
  const binding=bindingFor(config,context);
  if(!binding)return null;
  return {
@@ -52,8 +52,15 @@ export function projectTool(config,context,hostConfig={},prepareScope,syncScope,
    if(peopleActions.includes(params.action)){if(params.projectId!==undefined||params.repository!==undefined)throw Error('人员查询不接受项目范围');return {content:[{type:'text',text:JSON.stringify({agentId:context.agentId,...await queryPeopleWithFallback(binding.repo,params,context,()=>authorizeOperation?.({toolName:'agent_repo_people_enrich',params},{...context,toolCallId:_id}))})}]};}
    if(Object.keys(params).some(key=>Object.hasOwn(peopleParameters,key)))throw Error('人员参数仅支持人员查询动作');
    if(params.repository!==undefined&&!['skills','sync'].includes(params.action))throw Error('repository is only supported for skills/sync');
-   if(params.action==='sync'){if(binding.sync?.enabled!==true||!syncScope)throw Error('Manual repository synchronization is unavailable; ask the administrator to enable Agent Repo sync');const {snapshot,...catalog}=await syncScope(binding,{...params,agentId:context.agentId,hostConfig,knowledgeDefaults:config.knowledge});return {content:[{type:'text',text:JSON.stringify(catalog)}]};}
-   if(params.action==='skills'){const {snapshot,...catalog}=await (prepareScope??repositorySkills)(binding,{...params,agentId:context.agentId,hostConfig,knowledgeDefaults:config.knowledge});return {content:[{type:'text',text:JSON.stringify(catalog)}]};}
+   if(['skills','sync'].includes(params.action)){
+    if(params.action==='sync'&&(binding.sync?.enabled!==true||!syncScope))throw Error('Manual repository synchronization is unavailable; ask the administrator to enable Agent Repo sync');
+    const invocation={...context,toolCallId:_id};
+    if(binding.sync?.enabled===true)await authorizeOperation?.({toolName:'agent_repo',params:{...params,action:'sync'}},invocation);
+    const prepare=params.action==='sync'?syncScope:prepareScope??repositorySkills;
+    const result=await prepare(binding,{...params,agentId:context.agentId,hostConfig,knowledgeDefaults:config.knowledge});
+    const {snapshot,...catalog}=filterSkills?await filterSkills(result,invocation):result;
+    return {content:[{type:'text',text:JSON.stringify(catalog)}]};
+   }
    const revision=await registryRevision(binding).catch(()=>null);
    const projects=await readProjects(binding.repo);
    if(revision&&await registryRevision(binding)!==revision)throw Error("Project registration changed while reading");
@@ -102,7 +109,7 @@ export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',re
  api.registerService?.({id:'agent-repo-skill-scopes',start:()=>{dispose();disposePeople=installPeople();disposeScope=installScopeProvider(config,hostConfig,runtime.prepareScope);try{disposeApi=installProjectServices(config,hostConfig,runtime.prepareScope,owner,prepareWorkerSkill);}catch(error){disposeScope();disposePeople();throw error;}},stop:()=>dispose()});
  api.registerTool(context=>projectTool(config,context,hostConfig(),
   (binding,options)=>createProjectService(binding,context.agentId,hostConfig,runtime.prepareScope).prepareExecutionScope({projectId:options.projectId,repository:options.repository}),
-  (binding,options)=>createProjectService(binding,context.agentId,hostConfig,(selected,scope)=>runtime.prepareScope(selected,{...scope,syncSubmodules:true})).prepareExecutionScope({projectId:options.projectId,repository:options.repository}),{authorizeOperation:authorization.authorizeOperation}));
+  (binding,options)=>createProjectService(binding,context.agentId,hostConfig,(selected,scope)=>runtime.prepareScope(selected,{...scope,syncSubmodules:true})).prepareExecutionScope({projectId:options.projectId,repository:options.repository}),{authorizeOperation:authorization.authorizeOperation,filterSkills:authorization.filterSkills}));
  api.registerTool(context=>{const binding=bindingFor(config,context);return binding?entitySyncTool(context,binding):null;},{optional:true});
  registerScheduledRequests(api,config,{authorizeSchedule:authorization.authorizeSchedule});
  registerRecycleService(api,config);

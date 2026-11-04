@@ -220,3 +220,16 @@ test('child repository metadata never inherits parent Git policy',async t=>{
  const selected=await repositorySkills(f.binding,{repository:'projects/demo/repositories/frontend'});
  assert.equal(selected.projectMetadata.git.delivery,'local');
 });
+test('skills and sync authorize side effects before preparation and filter returned catalogs',async()=>{
+ const prepared={repository:'projects/demo',skills:[{name:'allowed',path:'allowed'},{name:'denied',path:'denied'}],snapshot:{catalog:['allowed','denied']}};
+ let permit=false,preparations=0,checks=0;
+ const prepare=async()=>{preparations++;return prepared;};
+ const policies={authorizeOperation:async(event,context)=>{checks++;assert.equal(event.params.action,'sync');assert.equal(context.toolCallId,'call');if(!permit)throw Error('sync denied');},filterSkills:async catalog=>{assert.equal(catalog.snapshot,prepared.snapshot);return {...catalog,skills:catalog.skills.slice(0,1)};}};
+ const tool=projectTool({agents:{main:{repo:'/unused',sync:{enabled:true}}}},{agentId:'main'},{},prepare,prepare,policies);
+ for(const action of ['skills','sync'])await assert.rejects(tool.execute('call',{action}),/sync denied/);
+ assert.equal(preparations,0);permit=true;
+ for(const action of ['skills','sync']){const result=JSON.parse((await tool.execute('call',{action})).content[0].text);assert.deepEqual(result.skills,[prepared.skills[0]]);assert.equal(result.snapshot,undefined);}
+ assert.equal(preparations,2);assert.equal(checks,4);
+ const local=projectTool({agents:{main:{repo:'/unused'}}},{agentId:'main'},{},prepare,undefined,policies);
+ await local.execute('call',{action:'skills'});assert.equal(checks,4);assert.equal(preparations,3);
+});
