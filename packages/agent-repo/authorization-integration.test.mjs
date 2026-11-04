@@ -14,6 +14,7 @@ test('scan, default administrator grants, entity binding, execution and revocati
  store.saveBinding({id:'admin-binding',agentId:'ada',groupId:'administrator',entityId:'p',entityType:'person',membership:'self',status:'active'},{actor:'operator'});
  const service=createAuthorizationService({store,resolveIdentity:()=>person,readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'s',observedAt:new Date().toISOString(),complete:true,nodes:[{id:'p',type:'person',sourceId:'s',status:'active'}],edges:[]}),resolveOperation:resolveBuiltinAuthorization});
  assert.equal(await service.enforce({toolName:'agent_repo',params:{action:'entities'}},{}),undefined);
+ for(const action of ['list','inspect','knowledge_list','knowledge_search','knowledge_read','knowledge_validate','knowledge_graph'])assert.equal(await service.enforce({toolName:'agent_repo',params:{action,projectId:'xgj'}},{}),undefined);
  assert.equal((await service.enforce({toolName:'agent_repo',params:{action:'sync'}},{})).block,true);
  assert.equal((await service.enforce({toolName:'exec',params:{command:'anything'}},{})).block,true);
  store.saveBinding({...store.get('bindings','admin-binding'),status:'disabled'},{actor:'operator',expectedRevision:1});

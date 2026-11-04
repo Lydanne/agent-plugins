@@ -73,3 +73,11 @@ Worker 接纳新任务时通过进程内受信接口创建 job 级权限快照�
 ### 生命周期增量验证
 
 任务受理、启动前复核、父子快照、交付权限及技能子集映射的增量完成后，全仓 `pnpm typecheck`、`pnpm build`、`pnpm test` 均成功退出。AgentRepo Node 432 项、UI 182 项；Worker Node 479 项、UI 34 项通过。接口返回类型补充后另行通过 agent-repo-api 严格类型检查。生产与真实渠道交付未验证，验收清单未完成项继续保留。
+
+### AgentRepo 只读资源分域
+
+项目登记与本地仓库检查（list/inspect）、知识库查询（knowledge_list/search/read/validate/graph）和实体查询分别使用 projects、knowledge、entities 数据资源。每次调用同时要求对应工具动作的 execute 与数据资源的 read 权限；仅授权入口不能读取数据。规则可用实际参数 projectId、path、uid 等进一步限定查询；缺少被要求的参数时拒绝，不使用单项目缺省选择绕过参数条件。技能同步和可能远程补采写库的人员查询不继承这些只读适配。
+
+### 只读资源与浏览器增量验收
+
+新增项目、知识库资源后，全仓 typecheck、build、隔离 test 均通过；AgentRepo Node 434 项通过。扫描与默认组授权的集成用例另行验证新增动作。Playwright 使用实际构建产物和合成宿主数据，3 项通过：400px/1280px 下三个默认权限组与原子且可撤销策略编辑，以及只读管理员界面没有变更入口。此浏览器验证不连接生产，也不代替真实执行器端到端验收。
