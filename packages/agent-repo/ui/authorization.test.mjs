@@ -26,10 +26,17 @@ test('group default templates save reviewable drafts with independent atomic and
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  click(f.container,'配置新增资源默认授权');await settle();
  click(f.container,'原子且可撤销写入');await settle();
+ const predicates=[{path:'limit',op:'max',value:100}];
+ const input=f.container.querySelector('[aria-label="参数约束"]');assert.ok(input);
+ input.value=JSON.stringify(predicates);input.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
+ const labels=f.container.querySelector('[aria-label="必须具备的分类标签"]');assert.ok(labels);
+ labels.value='orders, internal';labels.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
  assert.equal(calls.some(call=>call.actionId==='authorization-save'),false);
  const form=f.container.querySelector('form');form.dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
  const saved=calls.find(call=>call.actionId==='authorization-save');assert.ok(saved);
  assert.equal(saved.payload.value.groupId,'administrator');assert.equal(saved.payload.value.kind,'default');
+ assert.deepEqual(saved.payload.value.parameters,predicates);
+ assert.deepEqual(saved.payload.value.selector,{labels:['orders','internal']});
  assert.deepEqual(saved.payload.value.conditions.atomicity,['guaranteed']);assert.deepEqual(saved.payload.value.conditions.recovery,['reversible']);
  assert.deepEqual(saved.payload.value.conditions.access,['write']);assert.ok(saved.payload.value.actions.includes('update'));
  assert.equal(saved.payload.value.actions.includes('grant'),false);
