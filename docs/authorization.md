@@ -32,6 +32,7 @@ agent-repo 提供权限事实、管理界面与判定服务；agent-worker 承�
 - Worker 技能目录按授权子集及已扫描版本过滤，独立工作区映射到实际技能路径。
 - 人员远程补采在请求前及写库前检查，继续使用原 Worker 权限上限；本地读取与补采写入分开。
 - Worker 结果交给交付桥前检查 transfer 权限。
+- 兼容 person_lookup 自动协作按原 job 检查人员查询权限；读取前、缓存结果回传前均重新检查。拒绝的人员查询不能经完成桥转交 Main 代查。
 
 宿主可信工具策略只处理带有效 Worker 调用范围的请求，普通 Main 调用直接交由 OpenClaw。已知 Worker CLI 请求丢失范围时拒绝，不能降级为 Main。Worker 代理调用的权限归属取决于原 job，不取决于检查代码运行在哪个进程。
 
@@ -42,6 +43,8 @@ agent-repo 提供权限事实、管理界面与判定服务；agent-worker 承�
 目前 run/reply/steer 仍保留要求全部动作的保守准入，尚未完成“普通任务准入”和“宽泛宿主执行”的拆分。不得在实际执行通道收敛前，仅放宽此检查而声称只读 Worker 已安全可用。后续需接入受控执行方式、验证不可绕过的操作限制，并核对 Worker 请求 Main 代理执行的路径。
 
 一期最终验收要求：Main 正常功能不受新策略影响；只读用户能使用 Worker 做只读任务；Worker 内部操作与技能分别授权，不能借 Shell、其他入口或 Main 代理绕过；恢复、子任务和撤权保持一致。当前实现尚未达到全部验收条件。
+
+执行器接口核对（2026-11-04）：[Codex App Server](https://learn.chatgpt.com/docs/app-server) 提供动态工具调用及文件沙箱设置，可用于接入 Worker 权限代理；但不能据此推断所有原生能力都会经过动态工具。[Codex Hooks](https://learn.chatgpt.com/docs/hooks#tool-coverage) 明确说明托管工具不走本地工具钩子、部分特殊路径可以跳过钩子，write_stdin 也不会再次触发 PreToolUse。因此单独添加 PreToolUse 不满足本项目的完整拦截要求，不能作为放宽任务准入的依据。下一步需要验证受控执行器的完整能力清单与不可绕过的隔离，再接入权限代理。
 
 ## 验证与交付边界
 

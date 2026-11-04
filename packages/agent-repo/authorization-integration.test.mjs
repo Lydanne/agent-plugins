@@ -49,7 +49,7 @@ test('discovery filters model tool names and freezes the first model-turn scope'
 });
 test('Worker admission and delivery share the original ceiling across child jobs',async t=>{
  const {registerAuthorizationRuntime}=await import('./authorization-runtime.mjs');
- const {admitAuthorizedTask}=await import('./dist/authorization-api.mjs');
+ const {admitAuthorizedTask,authorizeTaskOperation}=await import('./dist/authorization-api.mjs');
  const {permissionActions}=await import('./authorization-policy.mjs');
  const root=mkdtempSync(join(tmpdir(),'auth-worker-lifecycle-')),agentId='lifecycle-fixture',services=[];
  const person={id:'p',typeId:'person',sourceId:'s',status:'active',observedAt:new Date().toISOString(),source:{kind:'channel',namespace:'feishu',externalId:JSON.stringify(['account','app','sender'])}};
@@ -57,21 +57,27 @@ test('Worker admission and delivery share the original ceiling across child jobs
  const runtime=registerAuthorizationRuntime({registerTrustedToolPolicy:()=>{},registerService:s=>services.push(s)},{agents:{[agentId]:{repo:root}}},{openGraph:()=>graph});
  t.after(()=>{services.forEach(s=>s.stop());rmSync(root,{recursive:true,force:true});});
  const store=runtime.storeFor(agentId);
- scanPermissionResources(store,{plugins:{plugins:[{id:'agent-worker',version:'1',runtime:{state:'active'}}]},catalog:{agentId,groups:[]}},{actor:'scanner'});
+ scanPermissionResources(store,{plugins:{plugins:[{id:'agent-worker',version:'1',runtime:{state:'active'}},{id:'agent-repo',version:'1',runtime:{state:'active'}}]},catalog:{agentId,groups:[]}},{actor:'scanner'});
  store.saveBinding({id:'b',agentId,entityId:'p',entityType:'person',membership:'self',groupId:'internal',status:'active'},{actor:'operator'});
  store.saveRule({id:'run',groupId:'internal',effect:'allow',actions:[...permissionActions],selector:{resourceIds:['tool://agent-worker/agent_worker/run']}},{actor:'operator'});
  store.setMode('enforce',{actor:'operator'});
  const task={agentId,jobId:'original',sessionKey:'agent:'+agentId+':source',requester:{channel:'feishu',accountId:'account',senderId:'sender'}};
  await admitAuthorizedTask(task);
+ const lookup={toolName:'agent_repo',params:{action:'person',openId:'sender'}};
+ store.saveRule({id:'person',groupId:'internal',effect:'allow',actions:['read','execute'],selector:{resourceIds:['tool://agent-repo/agent_repo/person','data://agent-repo/entities']}},{actor:'operator'});
+ await assert.rejects(authorizeTaskOperation(task,lookup),/Permission denied/);
  store.saveRule({id:'deliver',groupId:'internal',effect:'allow',actions:['transfer'],selector:{resourceIds:['delivery://agent-worker/result']}},{actor:'operator'});
  await assert.rejects(admitAuthorizedTask({...task,phase:'delivery'}),/Permission denied/);
  await admitAuthorizedTask({...task,jobId:'child',parentJobId:'original'});
  await assert.rejects(admitAuthorizedTask({...task,jobId:'child',parentJobId:'original',phase:'delivery'}),/Permission denied/);
  await admitAuthorizedTask({...task,jobId:'fresh'});
  await admitAuthorizedTask({...task,jobId:'fresh',phase:'delivery'});
+ await authorizeTaskOperation({...task,jobId:'fresh'},lookup);
  store.saveBinding({...store.get('bindings','b'),status:'disabled'},{actor:'operator',expectedRevision:1});
  await assert.rejects(admitAuthorizedTask({...task,jobId:'fresh',phase:'delivery'}),/Permission denied/);
+ await assert.rejects(authorizeTaskOperation({...task,jobId:'fresh'},lookup),/Permission denied/);
  services.forEach(s=>s.stop());await assert.rejects(admitAuthorizedTask(task),/unavailable/);
+ await assert.rejects(authorizeTaskOperation(task,lookup),/unavailable/);
 });
 test('skill catalogs require granted use and matching scanned source revision',async t=>{
  const {createHash}=await import('node:crypto');

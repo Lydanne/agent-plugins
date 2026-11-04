@@ -3,6 +3,15 @@ import {existsSync,mkdirSync,readdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {readJson,writeJson} from './jobs.mjs';
 import {getPeopleService} from './dist/people-api.mjs';
+import {authorizeTaskOperation} from './dist/authorization-api.mjs';
+
+export async function authorizePersonCollaboration(job,call){
+ if(call.capability!=='person_lookup')return;
+ const p=job.provenance;
+ await authorizeTaskOperation({agentId:p.agentId,jobId:job.jobId,sessionKey:p.sessionKey,
+  requester:{channel:p.policyContext?.channel,accountId:p.accountId,senderId:p.senderId}},
+  {toolName:'agent_repo',params:{action:'person',openId:call.arguments.openId}});
+}
 
 // Source-bound, stable across tool retries/restarts. One delegation per topic and
 // repository in a human source revision; different bodies require explicit intent.
@@ -23,7 +32,7 @@ export function localPersonCall(call,p,getService=getPeopleService){
 
 // Host-only coordinator. Durable sidecar files never race the detached worker's
 // heartbeat writer. Unknown/unregistered calls always return to Main.
-export function createCollaborationService({root,jobs,bridge,personCall=localPersonCall,logger=console}){
+export function createCollaborationService({root,jobs,bridge,personCall=localPersonCall,authorizeCall=authorizePersonCollaboration,logger=console}){
  const directory=join(root,'collaboration');let stopped=true,timer,scheduled,inflight;
  const save=(id,value)=>writeJson(join(directory,id+'.json'),value);
  async function scan(){
@@ -58,13 +67,16 @@ export function createCollaborationService({root,jobs,bridge,personCall=localPer
    if(job.status==='awaiting_main'&&call){
     const key=call.callId,body=JSON.stringify(call);let record=state.calls[key];
     if(record&&record.body!==body){await observe('conflict:'+q.questionId,{kind:'plugin_call_conflict',callId:key});continue;}
+    await authorizeCall(job,call);
     if(!record){
      await observe('request:'+q.questionId,{kind:'plugin_requested',callId:key,call});
-     let result;try{result=personCall(call,p);}catch{result={ok:false,error:'local_lookup_failed'};}
+     let result;try{result=await personCall(call,p);}catch{result={ok:false,error:'local_lookup_failed'};}
      if(result.fallback)continue;
      if(JSON.stringify(result).length>12000)result={ok:false,error:'result_too_large'};
      record={body,result};state.calls[key]=record;save(job.jobId,state);
     }
+    await authorizeCall(job,call);
+    if(bridge.authorizeReply?.(p)!==true)continue;
     await observe('result:'+q.questionId,{kind:'plugin_result',callId:key,result:record.result});
     if(bridge.authorizeReply?.(p)!==true)continue;
     await jobs.reply(job.jobId,p.sessionKey,q.questionId,JSON.stringify({callId:key,...record.result}),{senderId:p.senderId,accountId:p.accountId},v=>bridge.authorizeReply?.(v)===true,false,undefined,{answerSource:'main_context',answerBasis:'宿主已登记的原任务人员本地只读查询'});

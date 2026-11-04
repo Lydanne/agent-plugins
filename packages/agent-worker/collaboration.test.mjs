@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,rmSync,readFileSync,existsSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
-import {hostRequestId,localPersonCall,createCollaborationService} from './collaboration.mjs';
+import {hostRequestId,localPersonCall,createCollaborationService,authorizePersonCollaboration} from './collaboration.mjs';
 import {parseContextRequest} from './context-request.mjs';
 import {createJobs,writeJson,readJson,requestKeyFor,USER_INPUT_WAIT_MS} from './jobs.mjs';
 const p={taskId:'task',revision:0,accountId:'a',chatId:'chat',sessionKey:'scope',senderId:'alice',agentId:'main',sourceMessageIds:['m'],requestMessageIds:['m'],people:{requester:{openId:'alice',accountId:'a',appId:'app'},mentions:[]}};
@@ -20,6 +20,16 @@ test('host ID survives selector equivalents/retries and separates source revisio
  assert.equal(a,hostRequestId({topic:'t',repository:'projects/xgj'},p));
  assert.notEqual(a,hostRequestId({topic:'t',projectId:'xgj'},{...p,revision:1}));
  assert.equal(hostRequestId({requestId:'explicit'},p),'explicit');assert.equal(hostRequestId({},{}),undefined);
+});
+test('person collaboration uses original task identity and propagates permission refusal',async()=>{
+ const {registerTaskAuthorization}=await import('./dist/authorization-api.mjs');
+ const agentId='person-proxy-identity',job={jobId:'job',provenance:{...p,agentId,policyContext:{channel:'feishu'}}};
+ const call={capability:'person_lookup',arguments:{openId:'alice'}},calls=[];
+ const dispose=registerTaskAuthorization(agentId,{admit:async()=>({scopeId:'unused'}),authorizeOperation:async(task,event)=>{calls.push({task,event});throw Error('Permission denied');}},Symbol());
+ try{
+  await assert.rejects(authorizePersonCollaboration(job,call),/Permission denied/);
+  assert.deepEqual(calls,[{task:{agentId,jobId:'job',sessionKey:'scope',requester:{channel:'feishu',accountId:'a',senderId:'alice'}},event:{toolName:'agent_repo',params:{action:'person',openId:'alice'}}}]);
+ }finally{dispose();}
 });
 test('structured calls are bounded and local lookup cannot escape source-bound people',()=>{
  const call={callId:'lookup-1',capability:'person_lookup',arguments:{openId:'alice'},purpose:'核验账号'};
@@ -76,6 +86,24 @@ test('automatic plugin collaboration informs Main and caches call results across
   let service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
   service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
   assert.equal(calls,1);assert.equal(notices,2);assert.equal(replies,2); // reply itself is idempotent
+ }finally{f.close();}
+});
+
+for(const phase of ['before_lookup','after_lookup','cached_result'])test('person proxy permission denial prevents result exposure: '+phase,async()=>{
+ const f=fixture('awaiting_main');let calls=0,replies=0,allowed=phase!=='before_lookup';const notices=[];
+ try{
+  const q={...f.q,pluginCall:{callId:'lookup',capability:'person_lookup',arguments:{openId:'alice'},purpose:'核验'},requestKind:'plugin'};
+  writeJson(join(f.root,f.id+'.json'),{...f.job,contextRequest:q,questions:[q]});
+  const opts={root:f.root,jobs:{reply:async()=>{replies++;}},bridge:{authorizeReply:()=>true,observe:async e=>notices.push(e)},
+   authorizeCall:async(job,call)=>{assert.equal(job.jobId,f.id);assert.deepEqual(call,q.pluginCall);if(!allowed)throw Error('Permission denied');},
+   personCall:async()=>{calls++;if(phase==='after_lookup')allowed=false;return {ok:true,person:{name:'private-result'}};},logger:{warn(){}}};
+  let service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
+  if(phase==='cached_result'){
+   assert.equal(replies,1);assert.equal(calls,1);allowed=false;notices.length=0;replies=0;
+   service=createCollaborationService(opts);service.start();await service.tick();await service.stop();
+  }
+  assert.equal(replies,0);assert.equal(calls,phase==='before_lookup'?0:1);
+  assert.equal(notices.some(e=>e.kind==='plugin_result'),false);
  }finally{f.close();}
 });
 

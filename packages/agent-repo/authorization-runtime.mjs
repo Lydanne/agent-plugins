@@ -42,6 +42,11 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
   if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
   const skills=task.skillCatalog&&store.mode()==='enforce'?await serviceFor(agentId,store).filterSkills(task.skillCatalog,host,{scopeId}):undefined;
   return {scopeId,...(skills?{skillPaths:skills.skills.map(skill=>skill.path)}:{})};
+ },async authorizeOperation(task,event){
+  if(!task.jobId||!task.sessionKey)throw Error('Missing Worker operation scope');
+  const store=storeFor(agentId),host={agentId,sessionKey:task.sessionKey,requester:task.requester};
+  const decision=await serviceFor(agentId,store).enforce(event,host,{scopeId:JSON.stringify(['worker-job',task.sessionKey,task.jobId])});
+  if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
  }},owner));
  }
  installTaskAuthorities();

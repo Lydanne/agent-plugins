@@ -31,3 +31,14 @@ test('task admission authority is Agent-scoped and fails closed after disposal',
  assert.equal(await admitAuthorizedTask({...task,agentId:'standalone-worker'}),undefined);
  dispose();await assert.rejects(admitAuthorizedTask(task),/unavailable/);
 });
+test('proxy operations require an installed operation authority in managed domains',async()=>{
+ const {registerTaskAuthorization,authorizeTaskOperation}=await import('./authorization.mjs');
+ const task={agentId:'proxy-fixture',jobId:'original',sessionKey:'session',requester:{senderId:'person'}},event={toolName:'agent_repo',params:{action:'person'}};
+ const owner=Symbol(),calls=[];
+ assert.equal(await authorizeTaskOperation(task,event),undefined);
+ let dispose=registerTaskAuthorization(task.agentId,{admit:async()=>({scopeId:'scope'})},owner);
+ await assert.rejects(authorizeTaskOperation(task,event),/unavailable/);dispose();
+ dispose=registerTaskAuthorization(task.agentId,{admit:async()=>({scopeId:'scope'}),authorizeOperation:async(t,e)=>{calls.push([t,e]);}},owner);
+ await authorizeTaskOperation(task,event);assert.deepEqual(calls,[[task,event]]);
+ dispose();await assert.rejects(authorizeTaskOperation(task,event),/unavailable/);
+});

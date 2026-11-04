@@ -52,3 +52,10 @@ export async function admitAuthorizedTask(task){
  if(!record.authority)throw Error('Task authorization authority unavailable');
  return record.authority.admit(task);
 }
+/** Host-side proxy operations retain the original task's requester and ceiling. */
+export async function authorizeTaskOperation(task,event){
+ const record=taskAuthorities.get(task.agentId);
+ if(!record)return undefined;
+ if(typeof record.authority?.authorizeOperation!=='function')throw Error('Task operation authorization unavailable');
+ return record.authority.authorizeOperation(task,event);
+}

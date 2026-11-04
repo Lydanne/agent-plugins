@@ -18,6 +18,7 @@ export interface AuthorizationTask {
  requester:{channel?:string;accountId?:string;senderId?:string};
 }
 export interface AuthorizationTaskGrant {scopeId:string;skillPaths?:string[]}
-export interface TaskAuthorizationAuthority {admit(task:AuthorizationTask):Promise<AuthorizationTaskGrant>}
+export interface TaskAuthorizationAuthority {admit(task:AuthorizationTask):Promise<AuthorizationTaskGrant>;authorizeOperation?(task:AuthorizationTask,event:AuthorizationEvent):Promise<void>}
 export function registerTaskAuthorization(agentId:string,authority:TaskAuthorizationAuthority,owner:symbol):()=>void;
 export function admitAuthorizedTask(task:AuthorizationTask):Promise<AuthorizationTaskGrant|undefined>;
+export function authorizeTaskOperation(task:AuthorizationTask,event:AuthorizationEvent):Promise<void>;
