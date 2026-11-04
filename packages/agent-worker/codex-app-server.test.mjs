@@ -12,6 +12,7 @@ function fixture(t,mode='live'){
  const send=x=>console.log(JSON.stringify(x));const toolCall={threadId:'${mode}'==='tool-wrong-scope'?'other':'thread-fixture',turnId:'turn-fixture',tool:'${mode}'==='tool-unknown'?'exec_command':'fixture_tool',callId:'call-fixture',arguments:{id:'fixture'}};const done=()=>{send({method:'item/completed',params:{threadId:'thread-fixture',turnId:'turn-fixture',item:{type:'agentMessage',text:'guided result',phase:'final_answer'}}});send({method:'turn/completed',params:{threadId:'thread-fixture',turn:{id:'turn-fixture',status:'completed'}}});};
  for await(const line of createInterface({input:process.stdin})){const r=JSON.parse(line);appendFileSync('requests.jsonl',line+'\\n');
  if(r.method==='initialize')send({id:r.id,result:{}});
+ if(r.method==='config/read')send({id:r.id,result:'${mode}'==='invalid-config'?{}:{config:{mcp_servers:{'fixture.native':{command:'fixture'}}}}});
  if(r.method==='thread/start'||r.method==='thread/resume')send({id:r.id,result:{thread:{id:'thread-fixture'}}});
  if(r.method==='turn/start'){send({id:r.id,result:{turn:{id:'turn-fixture'}}});send({method:'turn/started',params:{threadId:'thread-fixture',turn:{id:'turn-fixture'}}});if('${mode}'==='refresh'){send({method:'item/completed',params:{threadId:'thread-fixture',turnId:'turn-fixture',item:{type:'commandExecution',command:'forbidden'}}});}if('${mode}'==='complete')done();if('${mode}'.startsWith('tool')){send({id:'tool-call',method:'item/tool/call',params:toolCall});if('${mode}'==='tool-early-complete')done();}}
  if(r.id==='tool-call'&&!r.method){if('${mode}'==='tool-duplicate')send({id:'tool-replay',method:'item/tool/call',params:toolCall});else done();}if(r.id==='tool-replay'&&!r.method)done();
@@ -54,11 +55,17 @@ const definitions=[{type:'function',name:'fixture_tool',description:'Fixture onl
 const requestsOf=f=>readFileSync(join(f.root,'requests.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
 for(const threadId of [undefined,'thread-fixture'])test('host owns automatic skill context on '+(threadId?'resume':'start'),async t=>{
  const f=fixture(t,'complete');await runAppServerTurn({...f.options,threadId});
- const request=requestsOf(f).find(r=>r.method===(threadId?'thread/resume':'thread/start'));
+ const requests=requestsOf(f),request=requests.find(r=>r.method===(threadId?'thread/resume':'thread/start'));
  assert.equal(request.params.config['features.skip_host_skill_discovery'],true);
  assert.equal(request.params.config['skills.include_instructions'],false);
  assert.equal(request.params.config['skills.bundled.enabled'],false);
  assert.equal(request.params.config.project_doc_max_bytes,undefined);
+ assert.deepEqual(request.params.config.mcp_servers,{'fixture.native':{enabled:false}});
+ assert.ok(requests.findIndex(r=>r.method==='config/read')<requests.indexOf(request));
+});
+test('uninspectable MCP configuration prevents starting or resuming a thread',async t=>{
+ const f=fixture(t,'invalid-config');await assert.rejects(runAppServerTurn(f.options),/Cannot verify Worker native MCP/);
+ assert.equal(requestsOf(f).some(r=>r.method==='thread/start'||r.method==='thread/resume'||r.method==='turn/start'),false);
 });
 test('dynamic tool calls are dispatched to the host bridge in the active turn',async t=>{
  const f=fixture(t,'tool');let calls=0;
