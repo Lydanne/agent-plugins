@@ -13,7 +13,7 @@ const deliveryModes=['source','group','thread'];
 const editFields=['name','task','at','expr','timeZone','deliveryMode'];
 const stableInput=params=>JSON.stringify(Object.fromEntries(Object.entries(params).sort(([a],[b])=>a.localeCompare(b))));
 const text=(v,max)=>typeof v==='string'&&v.trim()&&v.length<=max;
-export function createScheduledRequests({stateDir,getCron,bridge=scheduledRequestBridge,now=Date.now}) {
+export function createScheduledRequests({stateDir,getCron,bridge=scheduledRequestBridge,now=Date.now,authorizeSchedule}) {
  mkdirSync(stateDir,{recursive:true,mode:0o700});
  const file=join(stateDir,'scheduled-requests.sqlite'),db=new DatabaseSync(file);chmodSync(file,0o600);
  db.exec(`PRAGMA busy_timeout=3000;
@@ -45,6 +45,9 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
    if(previous){if(stableInput({...previous.input,deliveryMode:previous.input.deliveryMode??'source'})!==stableInput(input))throw Error('requestId already belongs to different input');return publicRecord(previous);}
    if(!bridge.current?.(source))throw Error('Source authorization is no longer current');
    const r={id:randomUUID(),source,requestId:params.requestId,input,...input,status:'creating',createdAt:now()};
+   const authorizationScope=await authorizeSchedule?.(r,'create',params);if(authorizationScope)r.authorizationScope=authorizationScope;
+   if(!bridge.current?.(source))throw Error('Source authorization is no longer current');
+   if(all().some(item=>owned(item,source)&&item.requestId===params.requestId))return createRequest(params,source,paused,recordAudit);
    const auditId=recordAudit?auditBegin(db,{agentId:source.agentId,feature:'schedules',targetId:r.id,targetName:r.name,action:'create',actor:humanAuditActor(source),executor:'agent_schedule',requestId:params.requestId,requested:{name:r.name,schedule:r.schedule,deliveryMode:r.deliveryMode,projectId:r.projectId},at:now()}):null;save(r);
    try{
     // A fixed, tool-free script is only a clock tick. Business text stays in the private store.
@@ -96,6 +99,7 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
   const jobs=await cron().list({includeDisabled:true});const job=jobs.find(j=>j.id===r.jobId);
   // A user-edited native job cannot silently change the authorized plan or executor.
   if(!job||(job.enabled===false&&r.schedule.kind!=='at')||job.agentId!==r.source.agentId||job.description!=='agent-repo scheduled request '+r.id||job.payload?.kind!=='script'||job.payload?.script!==tickScript||job.delivery?.mode!=='none'||JSON.stringify(job.schedule)!==JSON.stringify(r.schedule))return;
+  await authorizeSchedule?.(r,'dispatch');
   const latestBeforeClaim=all().find(x=>x.id===r.id);
   if(latestBeforeClaim?.status!=='enabled'||(latestBeforeClaim.restorePending||workerBusy(latestBeforeClaim))||(latestBeforeClaim.managementRevision??0)!==(r.managementRevision??0)||signal?.aborted)return;
   if(!bridge.current)throw Error('Feishu scheduled source validator is unavailable');
@@ -246,10 +250,10 @@ export function createScheduledRequests({stateDir,getCron,bridge=scheduledReques
  return {manage,fire,recover,inspect,catalog,administer,trash,purgeTrash,audit:(agentId,p)=>auditQuery(db,agentId,p),close:()=>db.close()};
 }
 
-export function registerScheduledRequests(api,config){
+export function registerScheduledRequests(api,config,{authorizeSchedule}={}){
  if(!api.registerService||!api.on)return;
  let manager,controller;const pending=new Set();const inspect=agentId=>manager?.inspect(agentId)??Promise.resolve([]);const catalog=(agentId,options)=>{if(!manager)throw Error('定时任务服务不可用');return manager.catalog(agentId,options);};const trash=agentId=>{if(!manager)throw Error('回收站服务不可用');return manager.trash(agentId);};const purgeTrash=(agentId,cutoff)=>{if(!manager)throw Error('回收站服务不可用');const work=manager.purgeTrash(agentId,cutoff).finally(()=>pending.delete(work));pending.add(work);return work;};const audit=(agentId,p)=>{if(!manager)throw Error('审计服务不可用');return manager.audit(agentId,p);};const administer=(agentId,params,provenance)=>{if(!manager)throw Error('定时任务服务不可用');const work=manager.administer(agentId,params,provenance).finally(()=>pending.delete(work));pending.add(work);return work;};
- api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.()});Object.assign(scheduledRequestBridge,{inspect,catalog,administer,audit,trash,purgeTrash});},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;for(const [key,value] of Object.entries({inspect,catalog,administer,audit,trash,purgeTrash}))if(scheduledRequestBridge[key]===value)delete scheduledRequestBridge[key];}});
+ api.registerService({id:'agent-repo-scheduled-requests',start:ctx=>{if(!ctx?.getCron||!ctx.stateDir)return;controller=new AbortController();manager=createScheduledRequests({stateDir:join(ctx.stateDir,'agent-repo-scheduled-requests'),getCron:()=>ctx.getCron?.(),authorizeSchedule});Object.assign(scheduledRequestBridge,{inspect,catalog,administer,audit,trash,purgeTrash});},stop:async()=>{controller?.abort();await Promise.allSettled([...pending]);manager?.close();manager=undefined;for(const [key,value] of Object.entries({inspect,catalog,administer,audit,trash,purgeTrash}))if(scheduledRequestBridge[key]===value)delete scheduledRequestBridge[key];}});
  api.on('cron_reconciled',()=>{if(!manager)return;const work=manager.recover(controller.signal).catch(()=>api.logger.warn('Scheduled request recovery needs inspection')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.on('cron_changed',event=>{if(!manager)return;const work=manager.fire(event,controller.signal).catch(()=>api.logger.warn('Scheduled request failed; inspect its saved status before retrying')).finally(()=>pending.delete(work));pending.add(work);return work;},{timeoutMs:120000});
  api.registerTool(context=>!config.agents[context.agentId]?null:{name:'agent_schedule',label:'Ada scheduled requests',description:'Manage this human requester’s saved schedules in the current Feishu conversation. list/get/history/audit are read-only; audit returns requester, change diffs and operation outcomes; update patches name, task text within the saved constraints, time/timezone or deliveryMode without replacing the plan. group sends future results to the same group main chat; thread uses only the original thread. get/list return revision: pass it as expectedRevision and a stable requestId for update/resume/run. run requires explicit immediate-execution authorization, uses the native queue, and is not business completion. remove moves a plan to the management recycle bin and stops future triggers without cancelling active work; default retention is 30 days, configurable in the panel. Unknown results must be inspected, never recreated. Task edits require an explicit current human request and apply only to future runs; constraints, project and source permissions stay fixed. No arbitrary recipients or permission changes.',parameters:scheduledRequestToolParameters,async execute(_id,params){if(!manager)throw Error('Scheduled request service is unavailable');if(['create','update','resume','run'].includes(params.action)){const {readProjects}=await import('./repositories.mjs');const projects=await readProjects(config.agents[context.agentId].repo);const projectId=params.action==='create'?params.projectId:(await manager.manage({action:'get',id:params.id},context)).projectId;if(!Object.hasOwn(projects,projectId))throw Error('Registered project required');}return {content:[{type:'text',text:JSON.stringify(await manager.manage(params,context))}]};}},{optional:true});

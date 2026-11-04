@@ -51,5 +51,15 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
  }
  installTaskAuthorities();
  api.registerService?.({id:'agent-repo-authorization',start:installTaskAuthorities,stop:()=>{for(const dispose of taskDisposers.splice(0))dispose();for(const store of stores.values())store.close();stores.clear();services.clear();}});
- return {storeFor,evaluate,prepare,filterSkills};
+ async function authorizeSchedule(record,phase,parameters){
+  const source=record.source,store=storeFor(source.agentId);if(!store)throw Error('Schedule Agent is no longer configured');
+  const scopeId=JSON.stringify(['schedule',source.agentId,record.id]);
+  if(phase==='dispatch'&&record.authorizationScope!==scopeId){if(store.mode()==='enforce')throw Error('Schedule has no original permission scope');return;}
+  const host={agentId:source.agentId,sessionKey:source.sessionKey,requester:{channel:'feishu',accountId:source.accountId,senderId:source.senderId}};
+  const event={toolName:phase==='create'?'agent_schedule':'agent_schedule_dispatch',params:phase==='create'?{...parameters,action:'create'}:{id:record.id,projectId:record.projectId,task:record.task,deliveryMode:record.deliveryMode}};
+  const decision=await serviceFor(source.agentId,store).enforce(event,host,{scopeId});
+  if(decision?.block){if(store.mode()==='enforce')throw Error(decision.blockReason);return;}
+  return scopeId;
+ }
+ return {storeFor,evaluate,prepare,filterSkills,authorizeSchedule};
 }

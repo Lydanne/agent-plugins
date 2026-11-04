@@ -4,15 +4,15 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createScheduledRequests} from './scheduled-requests.mjs';
-function fixture(t){
+function fixture(t,authorizeSchedule){
  const stateDir=mkdtempSync(join(tmpdir(),'ada-schedule-test-'));const jobs=[];let current=true,active=false,delivered=[];
  const source={agentId:'main',accountId:'a',chatId:'group',sessionKey:'agent:main:feishu:group:g',sessionId:'session',senderId:'u',taskId:'source',revision:0,sourceMessageIds:['m'],requestMessageIds:['m']};
  const cron={add:async input=>{const job={...structuredClone(input),id:'job'+jobs.length};jobs.push(job);return job;},update:async(id,patch)=>Object.assign(jobs.find(j=>j.id===id),patch),remove:async id=>{jobs.splice(jobs.findIndex(j=>j.id===id),1);return {removed:true};},list:async()=>structuredClone(jobs)};
  const bridge={capture:ctx=>({...source,...ctx}),current:()=>current,jobsActive:()=>active,deliver:async(r,cb)=>{cb.assertCurrent();delivered.push(r);return {accepted:true,jobIds:['worker']};}};
- let manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000});t.after(()=>{manager.close();rmSync(stateDir,{recursive:true,force:true});});
+ let manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000,authorizeSchedule});t.after(()=>{manager.close();rmSync(stateDir,{recursive:true,force:true});});
  const input={action:'create',name:'Daily',requestId:'request',projectId:'xgj',task:'check target',constraints:'read-only target',expr:'0 9 * * *'};
  const event=(slot=2000)=>({action:'finished',status:'ok',jobId:jobs[0].id,agentId:'main',runAtMs:slot});
- return {stateDir,input,cron,jobs,source,bridge,delivered,event,get manager(){return manager;},reopen:()=>{manager.close();manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000});},revoke:()=>current=false,busy:()=>active=true};
+ return {stateDir,input,cron,jobs,source,bridge,delivered,event,get manager(){return manager;},reopen:()=>{manager.close();manager=createScheduledRequests({stateDir,getCron:()=>cron,bridge,now:()=>1000,authorizeSchedule});},revoke:()=>current=false,busy:()=>active=true};
 }
 test('native no-op scheduler stores no task content; binding and duplicate creation survive restart',async t=>{const f=fixture(t);const first=await f.manager.manage(f.input,{});assert.equal(f.jobs[0].payload.kind,'script');assert.equal(f.jobs[0].delivery.mode,'none');assert.deepEqual(f.jobs[0].payload.toolsAllow,[]);assert.ok(!JSON.stringify(f.jobs).includes('check target'));f.reopen();assert.equal((await f.manager.manage(f.input,{})).id,first.id);assert.equal(f.jobs.length,1);await assert.rejects(f.manager.manage({...f.input,task:'different'},{}),/different input/);});
 test('duplicate callbacks and recovery dispatch only once, retaining requester and project',async t=>{const f=fixture(t);await f.manager.manage(f.input,{});await Promise.all([f.manager.fire(f.event()),f.manager.fire(f.event())]);assert.equal(f.delivered.length,1);assert.equal(f.delivered[0].source.senderId,'u');assert.equal(f.delivered[0].projectId,'xgj');f.jobs[0].state={lastRunStatus:'ok',lastRunAtMs:2000};f.reopen();await f.manager.recover();assert.equal(f.delivered.length,1);});
@@ -320,4 +320,25 @@ test('task edit fences concurrent dispatch and unknown native mutation cannot be
  f.cron.update=async()=>{calls++;throw Error('lost acknowledgement');};await assert.rejects(f.manager.manage(p,{}),/未确认/);
  f.reopen();const retry=await f.manager.manage(p,{});assert.equal(retry.operation.status,'unknown');assert.equal(retry.status,'needs_review');assert.equal(calls,1);
  await f.manager.fire(f.event(4000));assert.equal(f.delivered.length,1);
+});
+
+test('permission refusal precedes native creation and every dispatch rechecks the saved scope',async t=>{
+ let deny=true;const phases=[];
+ const f=fixture(t,async(record,phase,parameters)=>{phases.push(phase);if(deny)throw Error('permission denied');if(phase==='create'){assert.equal(parameters.expr,'0 9 * * *');return 'scope:'+record.id;}assert.equal(record.authorizationScope,'scope:'+record.id);});
+ await assert.rejects(f.manager.manage(f.input,{}),/permission denied/);assert.equal(f.jobs.length,0);assert.equal((await f.manager.manage({action:'list'},{})).tasks.length,0);
+ deny=false;await f.manager.manage(f.input,{});f.reopen();deny=true;
+ await assert.rejects(f.manager.fire(f.event()),/permission denied/);assert.equal(f.delivered.length,0);
+ deny=false;await f.manager.fire(f.event());assert.equal(f.delivered.length,1);assert.deepEqual(phases,['create','create','dispatch','dispatch']);
+});
+test('concurrent admission checks preserve schedule request idempotency',async t=>{
+ let release;const gate=new Promise(resolve=>release=resolve);
+ const f=fixture(t,async record=>{await gate;return 'scope:'+record.id;});
+ const first=f.manager.manage(f.input,{}),second=f.manager.manage(f.input,{});release();
+ const results=await Promise.all([first,second]);assert.equal(results[0].id,results[1].id);assert.equal(f.jobs.length,1);
+});
+test('pause during an asynchronous dispatch check prevents delivery',async t=>{
+ let entered,release;const waiting=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ const f=fixture(t,async(record,phase)=>{if(phase==='dispatch'){entered();await gate;}return 'scope:'+record.id;});
+ const record=await f.manager.manage(f.input,{});const firing=f.manager.fire(f.event());await waiting;
+ await f.manager.manage({action:'pause',id:record.id},{});release();await firing;assert.equal(f.delivered.length,0);
 });

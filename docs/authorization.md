@@ -87,3 +87,11 @@ Worker 接纳新任务时通过进程内受信接口创建 job 级权限快照�
 扫描、默认授权预览/重算、保存、分类、发布和模式切换在处理完成结果、错误及忙碌状态前，校验原页面上下文仍然有效。切换 Agent 清除扫描摘要；旧请求不能刷新新 Agent 的目录。七类延迟响应回归均覆盖 Agent 切换期间的新目录加载状态；权限 UI 专项共 11 项通过，构建产物的 3 项浏览器检查通过。
 
 该增量的全仓 typecheck、build、隔离 test 均成功退出：AgentRepo Node 434 项、UI 189 项，Worker Node 479 项、UI 34 项通过。插件清单已随构建更新前端资源摘要；未部署。
+
+### 定时任务权限入口
+
+`agent_schedule` 的全部十个动作已登记独立资源：查询需要 execute/read，创建需要 execute/create/delegate，更新与暂停需要 execute/update，恢复额外需要 delegate，删除需要 execute/delete，立即运行需要 execute/delegate。未来触发独立检查 `delivery://agent-repo/schedule` 的 execute/delegate/transfer；授权创建入口不等于授权到时交付。
+
+创建前保存计划级权限上限，随后触发检查原上限及当前权限。强制模式下缺少原快照标记的旧计划不会自动取得当前权限。权限检查失败不会创建原生计划或向 Main 交付；等待检查期间暂停、来源失效及版本变化仍阻止交付。并发创建在检查结束后再次核对 requestId，保留原有幂等规则。此处覆盖计划交给 Main 的边界，后续模型及 Worker 调用仍执行各自权限检查。
+
+定时权限增量验证：全仓 typecheck、build、隔离 test 均成功退出；AgentRepo Node 439 项、UI 189 项，Worker Node 479 项、UI 34 项通过。补充“Agent 已移除”分支后运行时与集成测试 12 项通过，新增断言的集成测试再次通过。打包清单确认包含 authorization-schedules.mjs。尚未进行生产调度或真实渠道交付验证。

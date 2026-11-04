@@ -127,7 +127,8 @@
     "authorization-network.mjs",
     "authorization-files.mjs",
     "authorization-broad.mjs",
-    "authorization-worker.mjs"
+    "authorization-worker.mjs",
+    "authorization-schedules.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

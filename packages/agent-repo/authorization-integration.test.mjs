@@ -87,3 +87,25 @@ test('skill catalogs require granted use and matching scanned source revision',a
  store.saveRule({id:'deny-skill',groupId:'administrator',effect:'deny',actions:['execute'],selector:{kinds:['skill']}},{actor:'operator'});
  assert.equal((await service.filterSkills(catalog,{})).skills.length,0);
 });
+test('schedule permission ceiling survives new grants and current revocation',async t=>{
+ const {registerAuthorizationRuntime}=await import('./authorization-runtime.mjs');
+ const root=mkdtempSync(join(tmpdir(),'auth-schedule-')),agentId='schedule-fixture',services=[];
+ const person={id:'p',typeId:'person',sourceId:'s',status:'active',observedAt:new Date().toISOString(),source:{kind:'channel',namespace:'feishu',externalId:JSON.stringify(['account','app','sender'])}};
+ const runtime=registerAuthorizationRuntime({registerTrustedToolPolicy:()=>{},registerService:s=>services.push(s)},{agents:{[agentId]:{repo:root}}},{openGraph:()=>({list:()=>({entities:[person]}),get:()=>({entity:person}),relations:()=>({relations:[]})})});
+ t.after(()=>{services.forEach(s=>s.stop());rmSync(root,{recursive:true,force:true});});
+ const store=runtime.storeFor(agentId);
+ scanPermissionResources(store,{plugins:{plugins:[{id:'agent-repo',version:'1',runtime:{state:'active'}}]},catalog:{agentId,groups:[]}},{actor:'scanner'});
+ store.saveBinding({id:'b',agentId,entityId:'p',entityType:'person',membership:'self',groupId:'internal',status:'active'},{actor:'operator'});
+ store.saveRule({id:'create',groupId:'internal',effect:'allow',actions:['execute','create','delegate'],selector:{resourceIds:['tool://agent-repo/agent_schedule/create']},parameters:[{path:'expr',op:'equals',value:'0 9 * * *'}]},{actor:'operator'});
+ store.setMode('enforce',{actor:'operator'});
+ const original={id:'original',projectId:'demo',source:{agentId,sessionKey:'session',accountId:'account',senderId:'sender'}};
+ await assert.rejects(runtime.authorizeSchedule({...original,source:{...original.source,agentId:'removed-agent'}},'dispatch'),/no longer configured/);
+ original.authorizationScope=await runtime.authorizeSchedule(original,'create',{expr:'0 9 * * *'});
+ store.saveRule({id:'dispatch',groupId:'internal',effect:'allow',actions:['execute','delegate','transfer'],selector:{resourceIds:['delivery://agent-repo/schedule']}},{actor:'operator'});
+ await assert.rejects(runtime.authorizeSchedule(original,'dispatch'),/Permission denied/);
+ await assert.rejects(runtime.authorizeSchedule({...original,authorizationScope:undefined},'dispatch'),/original permission scope/);
+ const fresh={...original,id:'fresh'};fresh.authorizationScope=await runtime.authorizeSchedule(fresh,'create',{expr:'0 9 * * *'});
+ await runtime.authorizeSchedule(fresh,'dispatch');
+ store.saveBinding({...store.get('bindings','b'),status:'disabled'},{actor:'operator',expectedRevision:1});
+ await assert.rejects(runtime.authorizeSchedule(fresh,'dispatch'),/Permission denied/);
+});

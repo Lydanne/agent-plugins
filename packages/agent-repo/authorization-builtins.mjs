@@ -1,3 +1,4 @@
+import {scheduleOperation,scheduleResources} from './authorization-schedules.mjs';
 import {workerAuthorizationOperation,workerAuthorizationResources} from './authorization-worker.mjs';
 import {broadExecutorOperation,broadExecutorResources} from './authorization-broad.mjs';
 import {fileOperation,fileResources} from './authorization-files.mjs';
@@ -11,7 +12,7 @@ const readDomains=[
 const readDomainByAction=new Map(readDomains.flatMap(domain=>domain.actions.map(action=>[action,domain])));
 export function builtinAuthorizationResources(agentId){
  const base={agentId,provider:'agent-repo',status:'active',verification:'verified',enforcement:'enforced',labels:['entities'],behavior:{access:'read',atomicity:'not-applicable',recovery:'not-applicable',idempotency:'guaranteed',externalEffect:'none',sensitivity:'sensitive'}};
- return [...workerAuthorizationResources(agentId),...broadExecutorResources(agentId),...networkResources(agentId),...fileResources(agentId),
+ return [...scheduleResources(agentId),...workerAuthorizationResources(agentId),...broadExecutorResources(agentId),...networkResources(agentId),...fileResources(agentId),
   ...readDomains.flatMap(domain=>[
    {...base,id:'data://agent-repo/'+domain.id,kind:'data',name:domain.name,labels:[domain.id],actions:['discover','read'],definition:{adapter:domain.adapter}},
    ...domain.actions.map(action=>({...base,id:'tool://agent-repo/agent_repo/'+action,kind:'tool',name:'agent_repo '+action,labels:[domain.id],actions:['discover','read','execute'],definition:{adapter:domain.adapter,toolName:'agent_repo',action}})),
@@ -19,6 +20,7 @@ export function builtinAuthorizationResources(agentId){
  ];
 }
 export function resolveBuiltinAuthorization(event){
+ const schedule=scheduleOperation(event);if(schedule)return schedule;
  const worker=workerAuthorizationOperation(event);if(worker)return worker;
  const broad=broadExecutorOperation(event);if(broad)return broad;
  const file=fileOperation(event);if(file)return file;
