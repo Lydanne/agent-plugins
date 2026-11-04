@@ -1,4 +1,4 @@
-import {bindAuthorizationScope} from './authorization.mjs';
+import {bindAuthorizationScope,authorizeTaskOperation,filterTaskTools} from './authorization.mjs';
 import {createServer} from 'node:http';
 import {randomUUID,randomBytes} from 'node:crypto';
 import {isAbsolute} from 'node:path';
@@ -122,12 +122,15 @@ export function createWorkerCliService({getConfig,authorize,getJob,prepareContex
      try{
       const surface=await createSurface({...options,abortSignal:controller.signal,toolBindings:{...options.toolBindings,[authorityKey]:cap}});
       b.assertCurrent();controller.signal.throwIfAborted();
+      const task={agentId,jobId:b.context.jobId,sessionKey,requester:{channel:options.messageChannel,accountId:b.context.accountId,senderId:b.context.requesterId}};
+      const visible=input.method==='worker.catalog'||input.describe?await filterTaskTools(task,surface.map(entry=>entry.tool.name)):undefined;
+      b.assertCurrent();controller.signal.throwIfAborted();
       if(input.method==='worker.catalog'){
-       const plugins=new Map();for(const {tool,pluginId} of surface){const group=plugins.get(pluginId)??{pluginId,tools:[]};group.tools.push({name:tool.name,description:tool.description,taskBound:true});plugins.set(pluginId,group);}result={agentId,plugins:[...plugins.values()]};
+       const plugins=new Map();for(const {tool,pluginId} of surface){if(!visible.includes(tool.name))continue;const group=plugins.get(pluginId)??{pluginId,tools:[]};group.tools.push({name:tool.name,description:tool.description,taskBound:true});plugins.set(pluginId,group);}result={agentId,plugins:[...plugins.values()]};
       }else{
        const found=surface.find(entry=>entry.tool.name===name);if(!found)throw denied('Plugin is unavailable under the original task policy');
        const {tool,pluginId}=found;
-       if(input.describe)result={name,pluginId,parameters:tool.parameters,description:tool.description};
+       if(input.describe){if(!visible.includes(name))throw denied('Plugin discovery is not authorized');result={name,pluginId,parameters:tool.parameters,description:tool.description};}
        else{
         checkArguments(b.context,name,args);
         const callId='worker-cli:'+randomUUID();
@@ -138,6 +141,8 @@ export function createWorkerCliService({getConfig,authorize,getJob,prepareContex
          turnSourceChannel:options.messageChannel,turnSourceTo:options.messageTo,turnSourceAccountId:b.context.accountId,turnSourceThreadId:options.messageThreadId,assertActive:b.assertCurrent}});}finally{releaseScope();}
         if(hook.blocked)throw denied(hook.reason??'Original source policy denied this call');
         checkArguments(b.context,name,hook.params);b.assertCurrent();controller.signal.throwIfAborted();
+        await authorizeTaskOperation(task,{toolName:name,params:hook.params});
+        b.assertCurrent();controller.signal.throwIfAborted();
         const output=await tool.execute(callId,hook.params,controller.signal);
         b.assertCurrent();controller.signal.throwIfAborted();result={ok:true,toolName:name,output,source:'plugin'};
        }

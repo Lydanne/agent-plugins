@@ -59,3 +59,11 @@ export async function authorizeTaskOperation(task,event){
  if(typeof record.authority?.authorizeOperation!=='function')throw Error('Task operation authorization unavailable');
  return record.authority.authorizeOperation(task,event);
 }
+export async function filterTaskTools(task,names){
+ const record=taskAuthorities.get(task.agentId);
+ if(!record)return names;
+ if(typeof record.authority?.filterTools!=='function')throw Error('Task discovery authorization unavailable');
+ const allowed=await record.authority.filterTools(task,names);
+ if(!Array.isArray(allowed)||allowed.some(name=>!names.includes(name)))throw Error('Invalid task discovery authorization');
+ return allowed;
+}

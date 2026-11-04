@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createWorkerCliService,workerContextApi,workerCliEnvironment,connectWorkerCli,readWorkerCliContext,prepareWorkerCliOptions} from './worker-cli.mjs';
 const p={agentId:'main',sessionKey:'agent:main:feishu:group:test',accountId:'a',chatId:'c',senderId:'u',taskId:'source',revision:1};
-async function fixture({runPolicy,execute,pollMs=10}={}){
+async function fixture({runPolicy,execute,pollMs=10,provenance=p}={}){
+ const p=provenance;
  let status='running',authorized=true,workerId='execution-one';const seen=[],hooks=[];let factory;
  workerContextApi({registerTool:f=>{factory=f;}}).registerTool(context=>({name:'fixture_read',parameters:{type:'object',properties:{requester:{const:context.requesterSenderId}}},execute:async(id,args,signal)=>{seen.push({context,args,id,signal});return execute?execute(args,signal):{value:args.id};}}));
  const service=createWorkerCliService({getConfig:()=>({}),getJob:()=>({status,workerId,provenance:p}),authorize:()=>authorized,pollMs,
@@ -33,6 +34,28 @@ test('hook cannot replace bound account or bypass administrative action checks',
  for(const params of [{accountId:'b'},{action:'sync'}]){
   const f=await fixture({runPolicy:async()=>({params})});try{await assert.rejects(f.cli.request('tools.invoke',{name:params.action?'agent_repo':'fixture_read',args:params.action?{action:'list'}:{}}));assert.equal(f.seen.length,0);}finally{await f.service.stop();}
  }
+});
+test('Worker catalog, descriptions and rewritten calls retain task group permissions',async()=>{
+ const {registerTaskAuthorization}=await import('./authorization.mjs');
+ const agentId='permission-cli-fixture',provenance={...p,agentId,sessionKey:'agent:'+agentId+':source'},checks=[];let visible=true,allow=false;
+ const dispose=registerTaskAuthorization(agentId,{admit:async()=>({scopeId:'original'}),
+  filterTools:async(task,names)=>{assert.equal(task.jobId,'job');assert.equal(task.requester.senderId,'u');return visible?names.filter(name=>name==='fixture_read'):[];},
+  authorizeOperation:async(task,event)=>{checks.push({task,event});if(!allow)throw Error('permission denied');}},Symbol());
+ const f=await fixture({provenance,runPolicy:async()=>({params:{id:'rewritten'}})});
+ try{
+  assert.deepEqual((await f.cli.request('worker.catalog',{})).plugins.map(group=>group.tools.map(tool=>tool.name)),[['fixture_read']]);
+  await assert.rejects(f.cli.request('tools.invoke',{name:'feishu_doc'},{describe:true}));
+  assert.equal((await f.cli.request('tools.invoke',{name:'fixture_read'},{describe:true})).name,'fixture_read');
+  visible=false;
+  assert.deepEqual((await f.cli.request('worker.catalog',{})).plugins,[]);
+  await assert.rejects(f.cli.request('tools.invoke',{name:'fixture_read'},{describe:true}));
+  await assert.rejects(f.cli.request('tools.invoke',{name:'fixture_read',args:{id:'original'}}));
+  assert.equal(f.seen.length,0);assert.deepEqual(checks[0].event,{toolName:'fixture_read',params:{id:'rewritten'}});
+  assert.equal(checks[0].task.jobId,'job');assert.equal(checks[0].task.requester.senderId,'u');
+  allow=true;assert.equal((await f.cli.request('tools.invoke',{name:'fixture_read',args:{id:'original'}})).output.value,'rewritten');
+  dispose();await assert.rejects(f.cli.request('worker.catalog',{}));await assert.rejects(f.cli.request('tools.invoke',{name:'fixture_read',args:{}}));
+  assert.equal(f.seen.length,1);
+ }finally{dispose();await f.service.stop();}
 });
 test('in-flight calls abort on cancellation, source revocation, timeout and service stop',async()=>{
  for(const reason of ['cancel','revoke','timeout','stop']){

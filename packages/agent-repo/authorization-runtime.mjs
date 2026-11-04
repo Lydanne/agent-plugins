@@ -42,6 +42,12 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
   if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
   const skills=task.skillCatalog&&store.mode()==='enforce'?await serviceFor(agentId,store).filterSkills(task.skillCatalog,host,{scopeId}):undefined;
   return {scopeId,...(skills?{skillPaths:skills.skills.map(skill=>skill.path)}:{})};
+ },async filterTools(task,names){
+  if(!task.jobId||!task.sessionKey)throw Error('Missing Worker discovery scope');
+  const store=storeFor(agentId);
+  if(store.mode()==='audit')return names;
+  const allowed=await serviceFor(agentId,store).discover({agentId,sessionKey:task.sessionKey,requester:task.requester},{scopeId:JSON.stringify(['worker-job',task.sessionKey,task.jobId])});
+  return names.filter(name=>allowed.includes(name));
  },async authorizeOperation(task,event){
   if(!task.jobId||!task.sessionKey)throw Error('Missing Worker operation scope');
   const store=storeFor(agentId),host={agentId,sessionKey:task.sessionKey,requester:task.requester};

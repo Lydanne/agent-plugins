@@ -49,7 +49,7 @@ test('discovery filters model tool names and freezes the first model-turn scope'
 });
 test('Worker admission and delivery share the original ceiling across child jobs',async t=>{
  const {registerAuthorizationRuntime}=await import('./authorization-runtime.mjs');
- const {admitAuthorizedTask,authorizeTaskOperation}=await import('./dist/authorization-api.mjs');
+ const {admitAuthorizedTask,authorizeTaskOperation,filterTaskTools}=await import('./dist/authorization-api.mjs');
  const {permissionActions}=await import('./authorization-policy.mjs');
  const root=mkdtempSync(join(tmpdir(),'auth-worker-lifecycle-')),agentId='lifecycle-fixture',services=[];
  const person={id:'p',typeId:'person',sourceId:'s',status:'active',observedAt:new Date().toISOString(),source:{kind:'channel',namespace:'feishu',externalId:JSON.stringify(['account','app','sender'])}};
@@ -64,8 +64,9 @@ test('Worker admission and delivery share the original ceiling across child jobs
  const task={agentId,jobId:'original',sessionKey:'agent:'+agentId+':source',requester:{channel:'feishu',accountId:'account',senderId:'sender'}};
  await admitAuthorizedTask(task);
  const lookup={toolName:'agent_repo',params:{action:'person',openId:'sender'}};
- store.saveRule({id:'person',groupId:'internal',effect:'allow',actions:['read','execute'],selector:{resourceIds:['tool://agent-repo/agent_repo/person','data://agent-repo/entities']}},{actor:'operator'});
+ store.saveRule({id:'person',groupId:'internal',effect:'allow',actions:['discover','read','execute'],selector:{resourceIds:['tool://agent-repo/agent_repo/person','data://agent-repo/entities']}},{actor:'operator'});
  await assert.rejects(authorizeTaskOperation(task,lookup),/Permission denied/);
+ assert.deepEqual(await filterTaskTools(task,['agent_repo']),[]);
  store.saveRule({id:'deliver',groupId:'internal',effect:'allow',actions:['transfer'],selector:{resourceIds:['delivery://agent-worker/result']}},{actor:'operator'});
  await assert.rejects(admitAuthorizedTask({...task,phase:'delivery'}),/Permission denied/);
  await admitAuthorizedTask({...task,jobId:'child',parentJobId:'original'});
@@ -73,9 +74,11 @@ test('Worker admission and delivery share the original ceiling across child jobs
  await admitAuthorizedTask({...task,jobId:'fresh'});
  await admitAuthorizedTask({...task,jobId:'fresh',phase:'delivery'});
  await authorizeTaskOperation({...task,jobId:'fresh'},lookup);
+ assert.deepEqual(await filterTaskTools({...task,jobId:'fresh'},['agent_repo','unknown']),['agent_repo']);
  store.saveBinding({...store.get('bindings','b'),status:'disabled'},{actor:'operator',expectedRevision:1});
  await assert.rejects(admitAuthorizedTask({...task,jobId:'fresh',phase:'delivery'}),/Permission denied/);
  await assert.rejects(authorizeTaskOperation({...task,jobId:'fresh'},lookup),/Permission denied/);
+ assert.deepEqual(await filterTaskTools({...task,jobId:'fresh'},['agent_repo']),[]);
  services.forEach(s=>s.stop());await assert.rejects(admitAuthorizedTask(task),/unavailable/);
  await assert.rejects(authorizeTaskOperation(task,lookup),/unavailable/);
 });
