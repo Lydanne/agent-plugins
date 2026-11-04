@@ -175,3 +175,9 @@ test('completion retains durable process summaries and links supplemental runs t
  let received;const service=createCompletionService({root,bridge:{deliver:async(e,c)=>{received=e;c.onReceipt({messageId:'final'});}}});
  service.start();await flush();await service.stop();assert.deepEqual(received.collaboration,{parentJobId:'parent',supplementId:'supplement',events:[recorded]});
 }));
+test('delivery permission denial prevents handing reports to the completion bridge',()=>fixture(async root=>{
+ const j=job();submitted(root,j);writeJson(join(root,j.jobId+'.json'),j);let sent=0,checked=0;
+ const service=createCompletionService({root,logger:{warn(){}},authorizeDelivery:async(current,request)=>{checked++;assert.equal(current.jobId,j.jobId);assert.match(request.scope,/agent:main:/);throw Error('permission revoked');},bridge:{deliver:async()=>{sent++;}}});
+ service.start();await flush();await service.stop();
+ assert.equal(checked,1);assert.equal(sent,0);assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'pending');
+}));

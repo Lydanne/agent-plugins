@@ -11,3 +11,12 @@ export function getAuthorizationScope(context:AuthorizationInvocationContext):st
 
 export interface AuthorizationResource {id:string;agentId:string;kind:string;provider:string;name?:string;actions:PermissionAction[];labels?:string[];behavior?:Record<string,string>;definition?:Record<string,unknown>}
 export function authorizationAdapterResources(context:AuthorizationContext):Promise<Array<AuthorizationResource & {adapter:{id:string;revision:string};status:"active";verification:"verified";enforcement:"enforced"}>>;
+export interface AuthorizationTask {
+ agentId:string;jobId:string;parentJobId?:string;phase?:'delivery';sessionKey:string;parameters?:Record<string,unknown>;
+ skillCatalog?:{repository?:string;skills:Array<{name:string;path:string}>;snapshot:Record<string,unknown>};
+ requester:{channel?:string;accountId?:string;senderId?:string};
+}
+export interface AuthorizationTaskGrant {scopeId:string;skillPaths?:string[]}
+export interface TaskAuthorizationAuthority {admit(task:AuthorizationTask):Promise<AuthorizationTaskGrant>}
+export function registerTaskAuthorization(agentId:string,authority:TaskAuthorizationAuthority,owner:symbol):()=>void;
+export function admitAuthorizedTask(task:AuthorizationTask):Promise<AuthorizationTaskGrant|undefined>;

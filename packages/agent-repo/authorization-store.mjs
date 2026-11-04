@@ -56,13 +56,20 @@ export function createAuthorizationStore(root,{agentId,now=()=>new Date().toISOS
  }
  return {
   transaction(callback){return databaseTransaction(db,callback);},
-  taskScope(id,subjectId,groupIds){
+  taskScope(id,subjectId,groupIds,{parentScopeId}={}){
    if(typeof id!=='string'||!id||id.length>1024)throw Error('Invalid task scope identity');
    return databaseTransaction(db,()=>{
     const existing=db.prepare('SELECT value FROM auth_task_scopes WHERE id=?').get(id);
-    if(existing){const scope=JSON.parse(existing.value);if(scope.subjectId!==subjectId)throw Error('Task requester changed');return scope;}
-    const resources=list('resources').map(resource=>({id:resource.id,revision:resource.revision,rules:this.effectiveRules(resource.id).filter(rule=>groupIds.includes(rule.groupId))}));
-    const scope={id,subjectId,groupIds:[...groupIds],resources,createdAt:now()};
+    if(existing){const scope=JSON.parse(existing.value);if(scope.subjectId!==subjectId)throw Error('Task requester changed');if(parentScopeId!==undefined&&scope.parentScopeId!==parentScopeId)throw Error('Task parent changed');return scope;}
+    let parent;
+    if(parentScopeId!==undefined){
+     if(typeof parentScopeId!=='string'||parentScopeId===id)throw Error('Invalid parent task scope');
+     const row=db.prepare('SELECT value FROM auth_task_scopes WHERE id=?').get(parentScopeId);
+     if(!row)throw Error('Parent task scope missing');parent=JSON.parse(row.value);
+     if(parent.subjectId!==subjectId)throw Error('Parent task requester mismatch');
+    }
+    const resources=parent?parent.resources:list('resources').map(resource=>({id:resource.id,revision:resource.revision,rules:this.effectiveRules(resource.id).filter(rule=>groupIds.includes(rule.groupId))}));
+    const scope={id,subjectId,groupIds:[...(parent?.groupIds??groupIds)],resources,...(parent?{parentScopeId}:{}),createdAt:now()};
     db.prepare('INSERT INTO auth_task_scopes VALUES(?,?)').run(id,JSON.stringify(scope));audit(subjectId,'task.scope',id,{resourceCount:resources.length,groupIds});return scope;
    });
   },

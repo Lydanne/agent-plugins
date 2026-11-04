@@ -36,3 +36,18 @@ export async function authorizationAdapterResources(context){
  }
  return resources;
 }
+
+const taskAuthorities=globalThis[Symbol.for('openclaw-plugins.authorization-tasks.v1')]??=new Map();
+/** AgentRepo owns policy; Worker supplies only its already verified task provenance. */
+export function registerTaskAuthorization(agentId,authority,owner){
+ if(typeof agentId!=='string'||!agentId||typeof authority?.admit!=='function'||!owner)throw Error('Invalid task authorization authority');
+ const prior=taskAuthorities.get(agentId);if(prior?.owner!==undefined&&prior.owner!==owner)throw Error('Task authorization already registered');
+ const record={owner,authority};taskAuthorities.set(agentId,record);
+ return ()=>{if(taskAuthorities.get(agentId)===record)taskAuthorities.set(agentId,{owner,authority:null});};
+}
+export async function admitAuthorizedTask(task){
+ const record=taskAuthorities.get(task.agentId);
+ if(!record)return undefined; // Standalone Worker without an AgentRepo permission domain.
+ if(!record.authority)throw Error('Task authorization authority unavailable');
+ return record.authority.admit(task);
+}

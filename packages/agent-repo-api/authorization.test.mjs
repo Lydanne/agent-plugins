@@ -22,3 +22,11 @@ test('trusted resources are namespaced and operation records carry adapter revis
  const bad=registerAuthorizationAdapter('bad',{revision:'v1',resources:()=>[{id:'data://someone-else',agentId:'ada'}],match:()=>true,resolve:()=>undefined},Symbol());
  try{await assert.rejects(authorizationAdapterResources({agentId:'ada'}),/Invalid/);}finally{bad();}
 });
+test('task admission authority is Agent-scoped and fails closed after disposal',async()=>{
+ const {registerTaskAuthorization,admitAuthorizedTask}=await import('./authorization.mjs');
+ const calls=[],task={agentId:'admission-fixture',jobId:'job',sessionKey:'session',requester:{senderId:'person'}};
+ const dispose=registerTaskAuthorization(task.agentId,{admit:async input=>{calls.push(input);return {scopeId:'fixed'};}},Symbol());
+ assert.deepEqual(await admitAuthorizedTask(task),{scopeId:'fixed'});assert.deepEqual(calls,[task]);
+ assert.equal(await admitAuthorizedTask({...task,agentId:'standalone-worker'}),undefined);
+ dispose();await assert.rejects(admitAuthorizedTask(task),/unavailable/);
+});

@@ -124,12 +124,12 @@ export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',re
    if(location==='') {
     const projects=await readProjects(root);
     if(Object.keys(projects).length!==1){
-     const catalog=await agentSkills(binding,{hostConfig:hostConfig(),agentId:context.agentId});
+     const catalog=await authorization.filterSkills(await agentSkills(binding,{hostConfig:hostConfig(),agentId:context.agentId}),context);
      await runtime.capturePrompt(context,catalog);
      return {appendSystemContext:renderDataBlock('AgentRoleSkills',{skills:catalog.skills})+'\n'+renderDataBlock('ProjectRegistry',{projects:Object.values(projects).map(p=>({projectId:p.projectId,name:p.name,repository:p.repository}))})};
     }
    }
-   const result=await repositorySkills(binding,{repository:location||undefined,hostConfig:hostConfig(),agentId:context.agentId,knowledgeDefaults:config.knowledge});
+   const result=await authorization.filterSkills(await repositorySkills(binding,{repository:location||undefined,hostConfig:hostConfig(),agentId:context.agentId,knowledgeDefaults:config.knowledge}),context);
    await runtime.capturePrompt(context,result);
    const {snapshot,shadowed,instruction:_instruction,...catalog}=result;
    catalog.registryRevision=await registryRevision(binding);

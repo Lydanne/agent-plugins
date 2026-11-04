@@ -36,7 +36,7 @@ export async function scopeRuntime(config,params,provenance,hostConfig={}) {
  }
  const projectContext={agentId:context.agentId,root:result.root??result.snapshot.root,projectId:result.projectId??result.snapshot.projectId,repository:result.repository??result.snapshot.repository,cwd:result.cwd,scopeDirectory:result.scopeDirectory,registryRevision:result.registryRevision};
  const render=text=>text.replaceAll(config.cwd,result.cwd).replaceAll('{projectDir}',result.cwd).replaceAll('{agentRepo}',projectContext.root).replaceAll('{scopeDirectory}',projectContext.scopeDirectory??result.cwd);
- return {...config,...(result.workspacePool?{workspacePool:result.workspacePool}:{}),...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
+ return {...config,...(result.workspacePool?{workspacePool:result.workspacePool}:{}),...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,authorizationSkillCatalog:{repository:result.repository,skills:result.skills??[],snapshot:result.snapshot},executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
 }
 export async function readScopedSkillVersion(config) {
  const snapshot=config.scopedSkillSnapshot;

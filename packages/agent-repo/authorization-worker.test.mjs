@@ -6,7 +6,7 @@ import {workerToolActions} from '../agent-worker/cli-capabilities.mjs';
 import {resolveBuiltinAuthorization} from './authorization-builtins.mjs';
 
 test('Worker catalog covers every current action and unknown actions fail closed',()=>{
- const resources=workerAuthorizationResources('ada');
+ const resources=workerAuthorizationResources('ada').filter(r=>r.definition.toolName==='agent_worker');
  assert.deepEqual(resources.map(r=>r.definition.action).sort(),[...workerToolActions].sort());
  for(const resource of resources)assert.ok(resolveBuiltinAuthorization({toolName:'agent_worker',params:{action:resource.definition.action}}));
  for(const action of ['unknown','__proto__',undefined])assert.equal(workerAuthorizationOperation({toolName:'agent_worker',params:{action}}),undefined);

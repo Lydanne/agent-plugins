@@ -46,7 +46,18 @@ function hasRestorableCheckpoint(job) {
 const steeringWorkspaceUnavailable=job=>job.useWorkspace&&(job.workspaceSettlement||((job.workspaceSettled||job.workspaceRelease==='idle')&&!hasRestorableCheckpoint(job)));
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,prepareWorker,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,prepareWorker,authorizeAdmission,authorizeExecution=authorizeAdmission,logger}) {
+ function applySkillAuthorization(request,authorization){
+  if(!authorization?.skillPaths)return;
+  const runtime=request.runtime,snapshot=runtime?.scopedSkillSnapshot,original=runtime?.authorizationSkillCatalog?.snapshot;
+  if(!snapshot||!original||!Array.isArray(authorization.skillPaths)||authorization.skillPaths.some(path=>typeof path!=='string'||!original.catalog.includes(path)))throw Error('Invalid authorized skill subset');
+  const logical=runtime.workspacePool?.projectRepository,materialized=snapshot.projectRepository;
+  const map=path=>logical&&runtime.workspace&&path.startsWith(logical+'/')?materialized+path.slice(logical.length):path;
+  const allowed=new Set(authorization.skillPaths.map(map));
+  const catalog=snapshot.catalog.filter(path=>allowed.has(path));
+  const skillEntries=[...original.skillEntries,JSON.stringify({authorizedCatalog:catalog})];
+  request.runtime={...runtime,scopedSkillSnapshot:{...snapshot,catalog,skillEntries,skills:createHash('sha256').update(skillEntries.join('\n')).digest('hex')}};
+ }
  const revocations=createSourceRevocations(root);
  const lock=join(root,'scheduler-lock');
  let timer;
@@ -271,13 +282,29 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    // Persist the reservation BEFORE spawning. An interrupted dispatch remains
    // unknown and occupied, never automatically spawning a second business worker.
    writeJson(file,claimed);running.push(claimed);
-   let child,workerCli;
-   const failed=()=>{terminalJob({...claimed,status:'failed',error:'Could not start job worker',finishedAt:Date.now(),heartbeatAt:Date.now()},request);};
-   try{workerCli=prepareWorker?.(claimed,request);child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
-   catch{failed();continue;}
-   child.stdin.on('error',()=>{});child.once('error',failed);
-   writeJson(join(root,job.jobId+'.process.json'),{pid:child.pid,workerId:claimed.workerId});
-   child.stdin.end(JSON.stringify({...request,runtime:{...request.runtime,...(workerCli?{workerCli}:{})},params:request.resumeParams??request.params}));child.unref();
+   const spawnClaimed=()=>{
+    const current=readJson(file);
+    if(current.workerId!==claimed.workerId||current.status!=='running')return;
+    if(existsSync(join(root,job.jobId+'.cancel'))){terminalJob({...current,status:'cancelled',finishedAt:Date.now(),heartbeatAt:Date.now()},request);return;}
+    let child,workerCli;
+    const failed=()=>{const latest=readJson(file);if(latest.workerId===claimed.workerId&&latest.status==='running')terminalJob({...latest,status:'failed',error:'Could not start job worker',finishedAt:Date.now(),heartbeatAt:Date.now()},request);};
+    try{workerCli=prepareWorker?.(claimed,request);child=spawn(request.runtime?.node ?? node,[worker,root,job.jobId],{detached:true,stdio:['pipe','ignore','ignore'],env:workerEnvironment()});}
+    catch{failed();return;}
+    child.stdin.on('error',()=>{});child.once('error',failed);
+    writeJson(join(root,job.jobId+'.process.json'),{pid:child.pid,workerId:claimed.workerId});
+    child.stdin.end(JSON.stringify({...request,runtime:{...request.runtime,...(workerCli?{workerCli}:{})},params:request.resumeParams??request.params}));child.unref();
+   };
+   if(!authorizeExecution){spawnClaimed();continue;}
+   // Keep the reservation occupied while asynchronously rechecking current rights.
+   // Cancellation and generation changes are checked again under the scheduler lock.
+   void Promise.resolve().then(()=>authorizeExecution(claimed,request)).then(async authorization=>{
+    const release=await acquireLock(lock);try{applySkillAuthorization(request,authorization);writeJson(requestFile,request);spawnClaimed();}finally{release();}
+   }).catch(async error=>{
+    const release=await acquireLock(lock);try{
+     const current=readJson(file);
+     if(current.workerId===claimed.workerId&&current.status==='running')terminalJob({...current,status:existsSync(join(root,job.jobId+'.cancel'))?'cancelled':'failed',error:'Execution authorization failed: '+String(error.message),finishedAt:Date.now(),heartbeatAt:Date.now()},request);
+    }finally{release();}
+   }).catch(error=>logger?.error?.('Worker authorization result could not be persisted: '+String(error.message)));
   }
  }
  function tick(){
@@ -691,7 +718,9 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      if(!canStart&&all.filter(job=>queued(job)&&sameQueue(job,candidate)).length>=limits(candidate).maxQueuedJobs)return {status:'queue_full',...queueFields(taskClass),agentId:agentOf(candidate),accepted:false,message:'Waiting queue is full; no job was created.'};
      jobId=randomUUID();
      const job={...queueFields(taskClass),queueConfig,inputRequestKey,agentId:agentOf(candidate),timeoutMs:queueConfig.timeoutMs,jobId,requestKey,...projectFields(runtime),...modelFields(runtime),...(runtime?.projectContext?{requestBodyKey:requestKeyFor({...originalParams,repository:undefined,projectId:undefined},scope,provenance)}:{}),requestId:params.requestId,provenance,memoryReview:memoryHandoffSummary(params.memory),scope:scopeKey(scope),topic:params.topic,taskSummary:params.task.trim().slice(0,500),tags,resourceKeys,schedulerVersion:1,queueSequence:all.reduce((max,j)=>Math.max(max,j.queueSequence??0),0)+1,status:'queued',...(params.notify?{notification:{state:'pending',createdAt:Date.now()}}:{}),createdAt:Date.now(),heartbeatAt:Date.now()};
-     writeJson(join(root,jobId+'.request.json'),{params,scope,runtime});
+     const request={params,scope,runtime};
+     applySkillAuthorization(request,await authorizeAdmission?.(job,request));
+     writeJson(join(root,jobId+'.request.json'),request);
      writeJson(join(root,jobId+'.json'),job);
     }
     scheduleLocked();

@@ -72,3 +72,16 @@ test('broad executors never receive default administrator grants',t=>{
  const {store}=setup(t);store.saveResource({id:'exec',agentId:'ada',kind:'executor',provider:'openclaw',actions:['execute'],status:'active',verification:'verified',enforcement:'enforced',defaultAuthorization:'explicit-only'},{actor:'operator'});
  assert.deepEqual(store.applyDefaults('exec',{actor:'scanner'}),[]);assert.deepEqual(store.previewDefaults('exec').after,[]);assert.deepEqual(store.effectiveRules('exec'),[]);
 });
+test('continuation snapshots inherit the parent ceiling instead of newly granted rights',t=>{
+ const {store}=setup(t),resource={id:'parent-read',agentId:'ada',kind:'data',provider:'p',actions:['read'],status:'active',verification:'verified',enforcement:'enforced'};
+ store.saveResource(resource,{actor:'operator'});store.applyDefaults(resource.id,{actor:'scanner'});
+ const parent=store.taskScope('parent','person',['administrator']);
+ store.saveResource({...resource,id:'newly-added'},{actor:'operator'});store.applyDefaults('newly-added',{actor:'scanner'});
+ const child=store.taskScope('child','person',['administrator','internal'],{parentScopeId:'parent'});
+ assert.deepEqual(child.resources,parent.resources);assert.deepEqual(child.groupIds,parent.groupIds);
+ assert.equal(child.resources.some(row=>row.id==='newly-added'),false);
+ assert.deepEqual(store.taskScope('child','person',[]),child);
+ assert.throws(()=>store.taskScope('child','person',[],{parentScopeId:'another'}),/parent changed/);
+ assert.throws(()=>store.taskScope('foreign','someone-else',[],{parentScopeId:'parent'}),/requester mismatch/);
+ assert.throws(()=>store.taskScope('missing','person',[],{parentScopeId:'absent'}),/missing/);
+});

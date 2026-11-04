@@ -23,6 +23,11 @@ export function scanPermissionResources(store,{plugins,catalog,skills=[],command
   }
  }
  for(const skill of skills){if(typeof skill.name!=='string'||typeof skill.provider!=='string'||typeof skill.revision!=='string')throw Error('Invalid skill inventory');add('skill',skill.provider,skill.name,{description:text(skill.description),revision:skill.revision,path:text(skill.path)});}
+ for(const [id,candidate] of candidates){
+  if(candidate.kind!=='skill')continue;
+  const definition={...candidate.definition,adapter:'agent-repo-skill-catalog-v1'};
+  candidates.set(id,{...candidate,definition,definitionHash:digest(definition),status:'active',verification:'verified',enforcement:'enforced',behavior:{access:'read',sensitivity:'sensitive',externalEffect:'none',atomicity:'not-applicable',recovery:'not-applicable',idempotency:'guaranteed'}});
+ }
  for(const entry of commands){
   if(!active.has(entry.pluginId))continue;
   for(const tool of entry.tools??[]){

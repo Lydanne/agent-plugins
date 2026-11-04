@@ -63,7 +63,7 @@ export function readCollaboration(root,job){
 }
 
 /** Only opted-in new jobs have delivery records; never replay historical business results. */
-export function createCompletionService({root, bridge = completionBridge, logger = console, pollMs = 1000, beforeDeliver}) {
+export function createCompletionService({root, bridge = completionBridge, logger = console, pollMs = 1000, beforeDeliver, authorizeDelivery}) {
  const inflight = new Map();
  let controller = new AbortController();
  let timer, scheduled, stopped = true;
@@ -78,6 +78,12 @@ export function createCompletionService({root, bridge = completionBridge, logger
   const patchEvent=change=>patch(job.jobId,change,job.notification.eventKey);
   try {
    if(beforeDeliver){await beforeDeliver(job);const latest=readJson(fileOf(job.jobId));if(latest.status!==job.status||latest.notification?.eventKey!==job.notification.eventKey)return;}
+   if(authorizeDelivery){
+    if(readCompletionRequest(root,job).availability!=='available')throw Error('Delivery authorization source unavailable');
+    const request=readJson(join(root,job.jobId+'.request.json'));
+    await authorizeDelivery(job,request);signal.throwIfAborted();
+    const latest=readJson(fileOf(job.jobId));if(latest.status!==job.status||latest.notification?.eventKey!==job.notification.eventKey)return;
+   }
    patchEvent({state: 'processing', attempts: (job.notification.attempts ?? 0) + 1});
    const collaboration=readCollaboration(root,job);
    const outcome = await bridge.deliver({...completionEvent(job,readCompletionRequest(root,job)),...(collaboration?{collaboration}:{})}, {

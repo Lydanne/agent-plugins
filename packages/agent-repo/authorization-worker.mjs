@@ -11,7 +11,7 @@ const broadActions = new Set(['run', 'reply', 'steer']);
 const resourceId = action => 'tool://agent-worker/agent_worker/' + action;
 
 export function workerAuthorizationResources(agentId) {
-  return Object.entries(workerActions).map(([action, actions]) => {
+  return [{id:'delivery://agent-worker/result',agentId,provider:'agent-worker',kind:'delivery',name:'Worker result delivery',actions:['transfer'],status:'active',verification:'verified',enforcement:'enforced',labels:['worker','delivery'],behavior:{access:'write',externalEffect:'present',sensitivity:'sensitive',atomicity:'unknown',recovery:'irreversible',idempotency:'unknown'},definition:{adapter:'agent-worker-delivery-v1'}},...Object.entries(workerActions).map(([action, actions]) => {
     const broad = broadActions.has(action), readOnly = actions.length === 1 && actions[0] === 'read';
     return {
       id: resourceId(action), agentId, provider: 'agent-worker', kind: broad ? 'executor' : 'tool',
@@ -25,10 +25,11 @@ export function workerAuthorizationResources(agentId) {
       definition: {adapter: 'agent-worker-v1', toolName: 'agent_worker', action,
         ...(broad ? {requiresAllActions: true, confinement: 'none-added'} : {})},
     };
-  });
+  })];
 }
 
 export function workerAuthorizationOperation(event) {
+  if(event.toolName==='agent_worker_result_delivery')return {requirements:[{resourceId:'delivery://agent-worker/result',action:'transfer'}]};
   if (event.toolName !== 'agent_worker' || !Object.hasOwn(workerActions, event.params?.action)) return undefined;
   const action = event.params.action;
   return {requirements: [...new Set(['execute', ...workerActions[action]])].map(permission => ({resourceId: resourceId(action), action: permission}))};

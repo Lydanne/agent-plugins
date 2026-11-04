@@ -180,3 +180,57 @@ test('CLI authority rejects stale heartbeats, cancelled or lost executions with 
   writeJson(join(root,id+'.process.json'),{pid:process.pid,workerId});writeFileSync(join(root,id+'.cancel'),'cancel');assert.throws(()=>jobs.cliActive(id,scope));
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+test('admission denial prevents persisting or starting a new Worker task',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'worker-admission-'));let attempts=0;
+ const jobs=createJobs({root,node:process.execPath,worker:join(root,'must-not-run.mjs'),authorizeAdmission:async(job,request)=>{attempts++;assert.ok(job.jobId);assert.equal(request.scope,'source');throw Error('permission revoked');}});
+ try{
+  await assert.rejects(jobs.run({topic:'restricted',task:'work',context:'context',constraints:'read',waitSeconds:0},'source'),/permission revoked/);
+  assert.equal(attempts,1);assert.deepEqual(jobs.list('source'),[]);
+  const {readdirSync}=await import('node:fs');assert.equal(readdirSync(root).some(name=>name.endsWith('.request.json')),false);
+ }finally{jobs.stop();rmSync(root,{recursive:true,force:true});}
+});
+test('execution authorization is checked again after admission before spawning',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'worker-revoked-'));let admissions=0,executions=0,prepared=0;
+ const jobs=createJobs({root,node:process.execPath,worker:join(root,'must-not-run.mjs'),authorizeAdmission:async()=>{admissions++;},authorizeExecution:async()=>{executions++;throw Error('permission revoked');},prepareWorker:()=>{prepared++;}});
+ try{
+  const first=await jobs.run({topic:'revoked',task:'work',context:'context',constraints:'read',waitSeconds:0},'source');
+  const final=await jobs.wait(first.jobId,'source',2);
+  assert.equal(final.status,'failed');assert.match(final.error,/permission revoked/);
+  assert.equal(admissions,1);assert.equal(executions,1);assert.equal(prepared,0);
+  assert.equal(existsSync(join(root,first.jobId+'.process.json')),false);
+ }finally{jobs.stop();rmSync(root,{recursive:true,force:true});}
+});
+test('cancellation during an execution permission check cannot start a worker',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'worker-check-cancel-'));let finish,entered;const started=new Promise(resolve=>{entered=resolve;});let prepared=0;
+ const jobs=createJobs({root,node:process.execPath,worker:join(root,'must-not-run.mjs'),authorizeExecution:()=>{entered();return new Promise(resolve=>{finish=resolve;});},prepareWorker:()=>{prepared++;}});
+ try{
+  const first=await jobs.run({topic:'cancel',task:'work',context:'context',constraints:'read',waitSeconds:0},'source');
+  await started;jobs.cancel(first.jobId,'source');finish();
+  await new Promise(resolve=>setTimeout(resolve,50));
+  assert.equal(prepared,0);assert.equal(jobs.status(first.jobId,'source').status,'cancelled');assert.equal(existsSync(join(root,first.jobId+'.process.json')),false);
+ }finally{jobs.stop();rmSync(root,{recursive:true,force:true});}
+});
+test('admission persists only the authorized skill subset with a matching refresh fingerprint',async()=>{
+ const {mkdirSync}=await import('node:fs');const root=mkdtempSync(join(tmpdir(),'worker-skills-'));mkdirSync(join(root,'active'));
+ const snapshot={catalog:['skills/allowed/SKILL.md','skills/denied/SKILL.md'],skillEntries:['original'],skills:'old',projectRepository:'projects/p'};
+ const jobs=createJobs({root,node:process.execPath,worker:join(root,'unused.mjs'),getRuntime:()=>({scopedSkillSnapshot:snapshot,authorizationSkillCatalog:{snapshot}}),authorizeAdmission:async()=>({skillPaths:['skills/allowed/SKILL.md']})});
+ try{
+  const first=await jobs.run({topic:'skills',task:'work',context:'context',constraints:'read',waitSeconds:0},'source');
+  const saved=readJson(join(root,first.jobId+'.request.json')).runtime.scopedSkillSnapshot;
+  assert.deepEqual(saved.catalog,['skills/allowed/SKILL.md']);
+  assert.equal(saved.skills,createHash('sha256').update(saved.skillEntries.join('\n')).digest('hex'));
+  assert.deepEqual(snapshot.catalog,['skills/allowed/SKILL.md','skills/denied/SKILL.md']);
+ }finally{jobs.stop();rmSync(root,{recursive:true,force:true});}
+});
+test('execution skill permissions map logical paths into the assigned workspace',async()=>{
+ const {mkdirSync}=await import('node:fs');const root=mkdtempSync(join(tmpdir(),'worker-skill-workspace-'));mkdirSync(join(root,'active'));
+ const logical=['projects/p/.agents/skills/allowed/SKILL.md','projects/p/.agents/skills/denied/SKILL.md'];
+ const snapshot={catalog:logical.map(path=>path.replace('projects/p','workspace/p-1')),skillEntries:['original'],skills:'old',projectRepository:'workspace/p-1'};
+ let prepared;
+ const jobs=createJobs({root,node:process.execPath,worker:join(root,'unused.mjs'),getRuntime:()=>({scopedSkillSnapshot:snapshot,authorizationSkillCatalog:{snapshot:{...snapshot,catalog:logical}},workspace:{id:'p-1'},workspacePool:{projectRepository:'projects/p'}}),authorizeAdmission:async()=>({skillPaths:[logical[0]]})});
+ try{
+  const first=await jobs.run({topic:'skills',task:'work',context:'context',constraints:'read',waitSeconds:0},'source');
+  prepared=readJson(join(root,first.jobId+'.request.json')).runtime.scopedSkillSnapshot;
+  assert.deepEqual(prepared.catalog,['workspace/p-1/.agents/skills/allowed/SKILL.md']);
+ }finally{jobs.stop();rmSync(root,{recursive:true,force:true});}
+});
