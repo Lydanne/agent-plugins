@@ -76,7 +76,7 @@ Worker 接纳新任务时通过进程内受信接口创建 job 级权限快照�
 
 ### AgentRepo 只读资源分域
 
-项目登记与本地仓库检查（list/inspect）、知识库查询（knowledge_list/search/read/validate/graph）和实体查询分别使用 projects、knowledge、entities 数据资源。每次调用同时要求对应工具动作的 execute 与数据资源的 read 权限；仅授权入口不能读取数据。规则可用实际参数 projectId、path、uid 等进一步限定查询；缺少被要求的参数时拒绝，不使用单项目缺省选择绕过参数条件。技能同步和可能远程补采写库的人员查询不继承这些只读适配。
+项目登记与本地仓库检查（list/inspect）、知识库查询（knowledge_list/search/read/validate/graph）和实体查询分别使用 projects、knowledge、entities 数据资源。每次调用同时要求对应工具动作的 execute 与数据资源的 read 权限；仅授权入口不能读取数据。规则可用实际参数 projectId、path、uid 等进一步限定查询；缺少被要求的参数时拒绝，不使用单项目缺省选择绕过参数条件。技能同步不继承这些只读适配；人员本地查询属于实体读取，远程补采另行检查写入及传递权限。
 
 ### 只读资源与浏览器增量验收
 
@@ -95,3 +95,14 @@ Worker 接纳新任务时通过进程内受信接口创建 job 级权限快照�
 创建前保存计划级权限上限，随后触发检查原上限及当前权限。强制模式下缺少原快照标记的旧计划不会自动取得当前权限。权限检查失败不会创建原生计划或向 Main 交付；等待检查期间暂停、来源失效及版本变化仍阻止交付。并发创建在检查结束后再次核对 requestId，保留原有幂等规则。此处覆盖计划交给 Main 的边界，后续模型及 Worker 调用仍执行各自权限检查。
 
 定时权限增量验证：全仓 typecheck、build、隔离 test 均成功退出；AgentRepo Node 439 项、UI 189 项，Worker Node 479 项、UI 34 项通过。补充“Agent 已移除”分支后运行时与集成测试 12 项通过，新增断言的集成测试再次通过。打包清单确认包含 authorization-schedules.mjs。尚未进行生产调度或真实渠道交付验证。
+
+
+### 人员补采权限
+
+people/person/people_stats 的本地读取使用实体数据资源。仅当本地未命中且需要远程补采时，额外检查 `data://agent-repo/people-enrichment` 的 read/create/update/transfer。请求发出前与远程结果校验后、写库前分别检查；权限错误不会降级成查无结果或网络错误。本地命中和统计不要求补采权限。
+
+嵌套检查沿用可信 Worker 上下文的原 job 快照，后加授权不能扩大已受理任务；Agent、会话与任务范围不一致时拒绝。远程补采依旧遵守原有账号校验和人工更正保留逻辑。
+
+Main 的嵌套操作从外层可信策略检查获取调用范围，不假设工具工厂上下文具有 runId；强制模式下缺少原调用范围时拒绝补采。调用范围在服务停止时清理，缓存容量超限淘汰后同样拒绝，不退回当前新增权限。相关 Main/Worker 范围与补采专项合计 23 项通过。
+
+人员权限增量全仓 typecheck、build、隔离 test 均成功退出：AgentRepo Node 441 项、UI 189 项，Worker Node 479 项、UI 34 项通过。可信嵌套范围补充后，相关运行时、集成和人员查询 23 项另行通过。未部署或进行真实通讯录补采。

@@ -88,3 +88,11 @@ test('timed-out remote queries never persist a late result',async t=>{
  await Promise.resolve();t.mock.timers.tick(20001);
  const result=JSON.parse((await pending).content[0].text);assert.equal(result.lookup.reason,'feishu_lookup_timeout');release();await Promise.resolve();assert.equal(store.all().length,0);
 });
+test('read access does not permit enrichment and revocation during lookup prevents persistence',async t=>{
+ const {root,store}=fixture(t),{registerPeopleResolver}=await import('./dist/people-api.mjs');let calls=0,checks=0,deny=true;
+ const dispose=registerPeopleResolver(async()=>{calls++;deny=true;return {status:'found',people:[base]};},Symbol());t.after(dispose);
+ const tool=projectTool({agents:{main:{repo:root}}},{agentId:'main',requesterSenderId:'requester'}, {},undefined,undefined,{authorizeOperation:async(event,context)=>{checks++;assert.equal(event.toolName,'agent_repo_people_enrich');assert.equal(context.toolCallId,'call');if(deny)throw Error('enrichment denied');}});
+ await assert.rejects(tool.execute('call',{action:'person',openId:base.openId}),/enrichment denied/);assert.equal(calls,0);assert.equal(store.all().length,0);
+ deny=false;await assert.rejects(tool.execute('call',{action:'person',openId:base.openId}),/enrichment denied/);assert.equal(calls,1);assert.equal(store.all().length,0);assert.equal(checks,3);
+ store.observe(base);await tool.execute('call',{action:'person',openId:base.openId});await tool.execute('call',{action:'people_stats'});assert.equal(checks,3);
+});

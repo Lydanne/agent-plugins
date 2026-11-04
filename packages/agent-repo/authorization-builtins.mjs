@@ -5,14 +5,14 @@ import {fileOperation,fileResources} from './authorization-files.mjs';
 import {networkOperation,networkResources} from './authorization-network.mjs';
 /** These descriptors cover implementation-audited operations. Unknown actions fail closed. */
 const readDomains=[
- {id:'entities',name:'实体库资料',adapter:'agent-repo-entities-v1',actions:['entity_types','entities','entity','relation_types','relations','graph','entity_history']},
+ {id:'entities',name:'实体库资料',adapter:'agent-repo-entities-v1',actions:['entity_types','entities','entity','relation_types','relations','graph','entity_history','people','person','people_stats']},
  {id:'projects',name:'项目登记与仓库状态',adapter:'agent-repo-projects-v1',actions:['list','inspect']},
  {id:'knowledge',name:'项目知识库资料',adapter:'agent-repo-knowledge-v1',actions:['knowledge_list','knowledge_search','knowledge_read','knowledge_validate','knowledge_graph']},
 ];
 const readDomainByAction=new Map(readDomains.flatMap(domain=>domain.actions.map(action=>[action,domain])));
 export function builtinAuthorizationResources(agentId){
  const base={agentId,provider:'agent-repo',status:'active',verification:'verified',enforcement:'enforced',labels:['entities'],behavior:{access:'read',atomicity:'not-applicable',recovery:'not-applicable',idempotency:'guaranteed',externalEffect:'none',sensitivity:'sensitive'}};
- return [...scheduleResources(agentId),...workerAuthorizationResources(agentId),...broadExecutorResources(agentId),...networkResources(agentId),...fileResources(agentId),
+ return [{...base,id:'data://agent-repo/people-enrichment',kind:'data',name:'人员远程补采及入库',actions:['read','create','update','transfer'],behavior:{access:'write',atomicity:'unknown',recovery:'irreversible',idempotency:'unknown',externalEffect:'present',sensitivity:'sensitive'},definition:{adapter:'agent-repo-people-enrichment-v1'}},...scheduleResources(agentId),...workerAuthorizationResources(agentId),...broadExecutorResources(agentId),...networkResources(agentId),...fileResources(agentId),
   ...readDomains.flatMap(domain=>[
    {...base,id:'data://agent-repo/'+domain.id,kind:'data',name:domain.name,labels:[domain.id],actions:['discover','read'],definition:{adapter:domain.adapter}},
    ...domain.actions.map(action=>({...base,id:'tool://agent-repo/agent_repo/'+action,kind:'tool',name:'agent_repo '+action,labels:[domain.id],actions:['discover','read','execute'],definition:{adapter:domain.adapter,toolName:'agent_repo',action}})),
@@ -20,6 +20,7 @@ export function builtinAuthorizationResources(agentId){
  ];
 }
 export function resolveBuiltinAuthorization(event){
+ if(event.toolName==='agent_repo_people_enrich')return {requirements:['read','create','update','transfer'].map(action=>({resourceId:'data://agent-repo/people-enrichment',action}))};
  const schedule=scheduleOperation(event);if(schedule)return schedule;
  const worker=workerAuthorizationOperation(event);if(worker)return worker;
  const broad=broadExecutorOperation(event);if(broad)return broad;

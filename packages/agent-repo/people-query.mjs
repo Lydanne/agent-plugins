@@ -60,19 +60,21 @@ async function resolveOnce(resolver,root,input){
  inFlight.set(key,promise);return promise;
 }
 /** Validate and query locally before any network lookup. Stats and browsing stay local. */
-export async function queryPeopleWithFallback(root,params,context){
+export async function queryPeopleWithFallback(root,params,context,authorizeEnrichment){
  const local=queryPeople(root,params);
  if(local.total||params.action==='people_stats'||params.id)return {...local,lookup:{source:'local',status:'not_needed'}};
  const identifier=params.openId?{openId:params.openId}:params.email?{email:params.email}:params.query?.startsWith('ou_')?{openId:params.query}:params.query?.includes('@')?{email:params.query}:params.name||params.query?{name:params.name??params.query}:null;
  if(!identifier)return {...local,lookup:{source:'local',status:'unsupported',reason:'requires_openid_email_or_name'}};
  const resolver=getPeopleResolver();
  if(!resolver)return {...local,lookup:{source:'feishu',status:'unavailable',reason:'feishu_resolver_unavailable'}};
+ await authorizeEnrichment?.();
  let remote;
  try{remote=await resolveOnce(resolver,root,{agentId:context.agentId,...identifier,...(params.accountId?{accountId:params.accountId}:{}),...(params.appId?{appId:params.appId}:{}),contextAccountId:context.deliveryContext?.accountId??context.agentAccountId,sessionKey:context.sessionKey});}catch{return {...local,lookup:{source:'feishu',status:'error',reason:'feishu_request_failed'}};}
  if(remote.status!=='found')return {...local,lookup:{source:'feishu',status:remote.status,reason:remote.reason,...(remote.code!==undefined?{code:remote.code}:{}),...(remote.requiredScopes?{requiredScopes:remote.requiredScopes}:{}),truncated:remote.truncated??false}};
  // Providers are trusted host code; still reject identity scope mismatches before persistence.
  const observations=remote.people;
  if(!Array.isArray(observations)||!observations.length||observations.length>10||observations.some(p=>!p.accountId||!p.appId||!/^ou_[A-Za-z0-9]+$/.test(p.openId)||params.accountId&&p.accountId!==params.accountId||params.appId&&p.appId!==params.appId||params.openId&&p.openId!==params.openId||(context.deliveryContext?.accountId??context.agentAccountId)&&p.accountId!==(context.deliveryContext?.accountId??context.agentAccountId)))throw Error('飞书人员身份范围不匹配');
+ await authorizeEnrichment?.();
  const store=createPeopleStore(root);
  let saved=0,hidden=0;for(const observation of observations){if(store.observe(observation).deletedAt)hidden++;else saved++;}
  return {...queryPeople(root,params),lookup:{source:'feishu',status:'saved',saved,...(hidden?{hidden}:{}),truncated:remote.truncated??false}};

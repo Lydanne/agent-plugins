@@ -6,6 +6,8 @@ import {createEntityStore} from './entities.mjs';
 import {resolveAuthorizedOperation,getAuthorizationScope,registerTaskAuthorization} from './dist/authorization-api.mjs';
 export function registerAuthorizationRuntime(api,config,{openStore=createAuthorizationStore,openGraph=createEntityStore,resolveOperation=async(event,host)=>resolveBuiltinAuthorization(event)??await resolveAuthorizedOperation(event,host)}={}){
  const stores=new Map(),services=new Map(),taskDisposers=[];
+ const invocationScopes=new Map();
+ const invocationKey=host=>JSON.stringify([host.agentId,host.sessionKey,host.toolCallId]);
  const owner=Symbol.for('agent-repo.authorization-task-owner');
  function storeFor(agentId){const binding=config.agents[agentId];if(!binding)return null;if(!stores.has(agentId))stores.set(agentId,openStore(binding.repo,{agentId}));return stores.get(agentId);}
  function serviceFor(agentId,store){
@@ -31,7 +33,10 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
  async function evaluate(event,host){
   if(!host?.agentId&&Object.keys(config.agents).length)return {block:true,blockReason:'Missing trusted Agent identity'};
   try{const store=storeFor(host.agentId);if(!store)return;
-   const decision=await serviceFor(host.agentId,store).enforce(event,host,{scopeId:getAuthorizationScope(host)??(host.runId&&host.sessionKey?JSON.stringify([host.sessionKey,host.runId]):undefined)});return store.mode()==='enforce'?decision:undefined;
+   const scopeId=getAuthorizationScope(host)??(host.runId&&host.sessionKey?JSON.stringify([host.sessionKey,host.runId]):host.sessionKey&&host.toolCallId?JSON.stringify(['tool-call',host.sessionKey,host.toolCallId]):undefined);
+   const decision=await serviceFor(host.agentId,store).enforce(event,host,{scopeId});
+   if(scopeId&&host.toolCallId&&host.sessionKey){invocationScopes.set(invocationKey(host),{scopeId,requester:host.requester});if(invocationScopes.size>2048)invocationScopes.delete(invocationScopes.keys().next().value);}
+   return store.mode()==='enforce'?decision:undefined;
   }catch{return {block:true,blockReason:'Authorization service unavailable'};}
  }
  if(typeof api.registerTrustedToolPolicy!=='function')throw Error('Host lacks trusted tool policy support required by authorization');
@@ -50,7 +55,18 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
  }},owner));
  }
  installTaskAuthorities();
- api.registerService?.({id:'agent-repo-authorization',start:installTaskAuthorities,stop:()=>{for(const dispose of taskDisposers.splice(0))dispose();for(const store of stores.values())store.close();stores.clear();services.clear();}});
+ api.registerService?.({id:'agent-repo-authorization',start:installTaskAuthorities,stop:()=>{for(const dispose of taskDisposers.splice(0))dispose();for(const store of stores.values())store.close();stores.clear();services.clear();invocationScopes.clear();}});
+ async function authorizeOperation(event,context){
+  const store=storeFor(context.agentId);if(!store)return;
+  const worker=context.workerContext;
+  if(worker&&(worker.agentId!==context.agentId||worker.sessionKey!==context.sessionKey||!worker.jobId))throw Error('Worker permission scope mismatch');
+  const invocation=invocationScopes.get(invocationKey(context));
+  if(!worker&&!invocation&&store.mode()==='enforce')throw Error('Missing trusted invocation permission scope');
+  const host={...context,requester:invocation?.requester??{channel:context.messageChannel,accountId:context.agentAccountId??context.deliveryContext?.accountId,senderId:context.requesterSenderId}};
+  const scopeId=worker?JSON.stringify(['worker-job',worker.sessionKey,worker.jobId]):invocation?.scopeId;
+  const decision=await serviceFor(context.agentId,store).enforce(event,host,{scopeId});
+  if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
+ }
  async function authorizeSchedule(record,phase,parameters){
   const source=record.source,store=storeFor(source.agentId);if(!store)throw Error('Schedule Agent is no longer configured');
   const scopeId=JSON.stringify(['schedule',source.agentId,record.id]);
@@ -61,5 +77,5 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
   if(decision?.block){if(store.mode()==='enforce')throw Error(decision.blockReason);return;}
   return scopeId;
  }
- return {storeFor,evaluate,prepare,filterSkills,authorizeSchedule};
+ return {storeFor,evaluate,prepare,filterSkills,authorizeSchedule,authorizeOperation};
 }
