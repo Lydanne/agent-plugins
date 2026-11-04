@@ -35,6 +35,18 @@ test('native skill switches apply to start/resume/refresh and templates cannot o
   assert.throws(()=>hermesCommand(resolveQueueExecution({hermesTemplates:{codex:template}})),/skill policy conflict/);
  }
 });
+test('both adapters disable native extensions before startup and reject template re-enablement',()=>{
+ for(const adapter of ['codex-jsonl','codex-app-server']){
+  const template={...structuredClone(defaultHermesTemplates[adapter==='codex-jsonl'?'codex':'codex-live'])};
+  const config=resolveQueueExecution({hermesTemplates:{codex:template}});
+  const args=hermesCommand(config).args;
+  for(const feature of ['hooks','codex_hooks','plugin_hooks','plugins','remote_plugin','apps','connectors'])assert.ok(args.includes('features.'+feature+'=false'));
+  for(const extra of [['--enable','hooks'],['--enable=plugins'],['-c','features.plugin_hooks=true'],['--config=features.codex_hooks=true']]){
+   const overridden={...template,args:[...template.args,...extra]};
+   assert.throws(()=>hermesCommand(resolveQueueExecution({hermesTemplates:{codex:overridden}})),/policy conflict/);
+  }
+ }
+});
 test('templates reject unknown variables, malformed placeholders, reserved overrides and unsupported adapters',()=>{
  const template=structuredClone(defaultHermesTemplates.codex);
  for(const change of [{command:'{{missing}}'},{command:'{{cli}'},{adapter:'unimplemented'},{stdin:'changed'},{args:['exec','--json','-']},{variables:{cwd:'/wrong'}},{resumeArgs:['resume']}])assert.throws(()=>resolveConfiguration({hermesTemplates:{codex:{...template,...change}}}),/Hermes|hermesTemplates/);

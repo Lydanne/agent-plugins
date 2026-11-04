@@ -3,6 +3,7 @@ import {fileURLToPath} from 'node:url';
 import {StringDecoder} from 'node:string_decoder';
 import {codexSkillConfig} from './codex-skill-policy.mjs';
 import {disabledNativeMcpConfig} from './codex-mcp-policy.mjs';
+import {codexExtensionArgs,codexExtensionConfig,assertCodexExtensionArgs} from './codex-extension-policy.mjs';
 
 // One private server per execution, in the existing supervised process group.
 // No shared daemon, arbitrary thread attachment, turn interrupt or retry.
@@ -74,14 +75,19 @@ export async function runAppServerTurn({invocation,config,prompt,threadId,refres
  signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
  try{
   onProgress?.({executionPid:child.pid});
-  child.send({command:invocation.command,args:invocation.args});
+  const startupArgs=[...invocation.args];
+  // Direct adapter callers also receive the startup ceiling. Hermes normally
+  // supplies it already; reject partial or conflicting settings, never merge.
+  if(!startupArgs.some(arg=>arg.startsWith('features.hooks=')))startupArgs.push(...codexExtensionArgs);
+  assertCodexExtensionArgs(startupArgs);
+  child.send({command:invocation.command,args:startupArgs});
   await rpc('initialize',{clientInfo:{name:'agent-worker',version:'1.0.1'},capabilities:{experimentalApi:true}});write({method:'initialized'});
   const mcpConfig=disabledNativeMcpConfig(await rpc('config/read',{includeLayers:false,cwd:config.cwd}));
   const sandbox=refresh||config.approvalMode==='read-only'?'read-only':config.approvalMode==='workspace-write'?'workspace-write':'danger-full-access';
   // Worker supplies its permission-filtered skill snapshot in the prompt. Native
   // discovery must not append unrelated user, bundled or project skill catalogs.
   // This controls automatic context only; it is not a filesystem/tool sandbox.
-  const params={cwd:config.cwd,model:config.model,approvalPolicy:'never',sandbox,developerInstructions:config.executorInstructions.replaceAll('{projectDir}',config.cwd),config:{model_reasoning_effort:config.reasoningEffort,...codexSkillConfig,...mcpConfig},...(config.speed?{serviceTier:config.speed}:{})};
+  const params={cwd:config.cwd,model:config.model,approvalPolicy:'never',sandbox,developerInstructions:config.executorInstructions.replaceAll('{projectDir}',config.cwd),config:{model_reasoning_effort:config.reasoningEffort,...codexSkillConfig,...codexExtensionConfig,...mcpConfig},...(config.speed?{serviceTier:config.speed}:{})};
   const response=await rpc(threadId?'thread/resume':'thread/start',{...params,...(threadId?{threadId,excludeTurns:true}:toolBridge?{dynamicTools:definitions}:{})});
   if(threadId&&response.thread?.id!==threadId)throw Error('Original Worker session cannot be resumed safely');
   threadId=response.thread?.id;if(typeof threadId!=='string'||!threadId)throw Error('App server returned no thread');

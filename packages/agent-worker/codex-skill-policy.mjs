@@ -9,20 +9,26 @@ export const codexSkillArgs=Object.freeze(Object.entries(codexSkillConfig).flatM
 
 // Reject template overrides instead of depending on CLI merge/argument order.
 export function assertCodexSkillArgs(args){
+ assertCodexOwnedConfig(args,codexSkillConfig,'skill',['skills','features','skills.bundled']);
+}
+export function assertCodexOwnedConfig(args,policy,label,parents){
  const seen=new Set();
  for(let i=0;i<args.length;i++){
   const arg=args[i];
-  if(arg==='--disable'&&args[i+1]==='skip_host_skill_discovery'||arg==='--disable=skip_host_skill_discovery')throw Error('Hermes skill policy conflict');
+  for(const [key,value] of Object.entries(policy))if(key.startsWith('features.')){
+   const flag=value?'--disable':'--enable',feature=key.slice(9);
+   if(arg===flag&&args[i+1]===feature||arg===flag+'='+feature)throw Error('Hermes '+label+' policy conflict');
+  }
   const assignment=arg==='-c'||arg==='--config'?args[++i]:arg.startsWith('--config=')?arg.slice(9):arg.startsWith('-c')&&arg.length>2?arg.slice(2):undefined;
   if(typeof assignment!=='string')continue;
   const equal=assignment.indexOf('=');if(equal<0)continue;
-  if(assignment.slice(0,equal).includes('\\'))throw Error('Hermes skill policy conflict');
+  if(assignment.slice(0,equal).includes('\\'))throw Error('Hermes '+label+' policy conflict');
   const key=assignment.slice(0,equal).replace(/[\s"']/g,'');
-  if(key==='skills'||key==='features'||key==='skills.bundled')throw Error('Hermes skill policy conflict');
-  if(Object.hasOwn(codexSkillConfig,key)){
-   if(seen.has(key)||assignment.slice(equal+1).trim()!==String(codexSkillConfig[key]))throw Error('Hermes skill policy conflict');
+  if(parents.includes(key))throw Error('Hermes '+label+' policy conflict');
+  if(Object.hasOwn(policy,key)){
+   if(seen.has(key)||assignment.slice(equal+1).trim()!==String(policy[key]))throw Error('Hermes '+label+' policy conflict');
    seen.add(key);
   }
  }
- if(seen.size!==Object.keys(codexSkillConfig).length)throw Error('Hermes skill policy missing');
+ if(seen.size!==Object.keys(policy).length)throw Error('Hermes '+label+' policy missing');
 }

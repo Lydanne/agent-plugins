@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {runAppServerTurn} from '../../packages/agent-worker/codex-app-server.mjs';
 import {hermesCommand} from '../../packages/agent-worker/hermes-templates.mjs';
+import {createInterface} from 'node:readline';
 
 // Opt-in protocol tests against a real CLI binary, never the real account or model.
 const cli=process.env.WORKER_CODEX_CLI;
@@ -15,7 +16,26 @@ if(!cli)throw Error('Set WORKER_CODEX_CLI to the Codex CLI executable to run the
 const restrictions=['--disable','shell_tool','--disable','view_image','--disable','multi_agent','--disable','goals','--disable','hooks','--disable','plugins','-c','web_search="disabled"','-c','tools.experimental_request_user_input.enabled=false'];
 const model={slug:'worker-permission-fixture',display_name:'Fixture',description:null,supported_reasoning_levels:[],shell_type:'disabled',visibility:'list',supported_in_api:true,priority:0,availability_nux:null,upgrade:null,support_verbosity:false,default_verbosity:null,apply_patch_tool_type:null,truncation_policy:{mode:'bytes',limit:10000},experimental_supported_tools:[],node_repl_disabled:true,tool_mode:'direct',multi_agent_version:'disabled',base_instructions:'Offline permission fixture'};
 
-async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,patch=false,appServer=false,resume=false,skills=false,skillRestrictions=false,workerJsonl=false,mcpAttack=false}={}){
+async function trustFixtureHooks(root,cwd){
+ const child=spawn(cli,['app-server','--disable','plugins'],{cwd,detached:true,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},stdio:['pipe','pipe','ignore']});
+ const pending=new Map();let seq=0;
+ const send=value=>child.stdin.write(JSON.stringify(value)+'\n');
+ const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});send({id,method,params});});
+ const lines=createInterface({input:child.stdout});
+ lines.on('line',line=>{const response=JSON.parse(line),entry=pending.get(response.id);if(entry&&!response.method){pending.delete(response.id);response.error?entry.reject(Error('Fixture hook inspection failed')):entry.resolve(response.result);}});
+ const timer=setTimeout(()=>{for(const entry of pending.values())entry.reject(Error('Fixture hook inspection timeout'));},10000);
+ try{
+  await rpc('initialize',{clientInfo:{name:'fixture',version:'1'},capabilities:{experimentalApi:true}});send({method:'initialized'});
+  const response=await rpc('hooks/list',{cwds:[cwd]});
+  const hooks=response.data.flatMap(entry=>entry.hooks);assert.ok(hooks.length,'Fixture hooks were not discovered');
+  for(const hook of hooks){
+   assert.ok(hook.key.includes('worker-permission-probe-'),'Only isolated fixture hooks may be trusted');
+   await writeFile(join(root,'config.toml'),'\n[hooks.state.'+JSON.stringify(hook.key)+']\nenabled=true\ntrusted_hash='+JSON.stringify(hook.currentHash)+'\n',{flag:'a'});
+  }
+ }finally{clearTimeout(timer);lines.close();try{process.kill(-child.pid,'SIGKILL');}catch{}}
+}
+
+async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,patch=false,appServer=false,resume=false,skills=false,skillRestrictions=false,workerJsonl=false,mcpAttack=false,hooks=false}={}){
  const root=await mkdtemp(join(tmpdir(),'worker-permission-probe-')),requests=[];
  const cwd=join(root,'project');await mkdir(cwd);
  let child,server,timer,stdout='',stderr='';
@@ -30,6 +50,13 @@ async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,pat
    }
   }
   if(mcp)await writeFile(join(root,'config.toml'),'[mcp_servers.fixture]\ncommand = '+JSON.stringify(process.execPath)+'\nargs = ["-e",'+JSON.stringify('require("node:fs").writeFileSync('+JSON.stringify(join(root,'mcp-marker'))+',"started")')+']\n');
+  if(hooks){
+   const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
+   await writeFile(join(root,'hook.mjs'),'import{writeFileSync}from"node:fs";writeFileSync('+JSON.stringify(join(root,'hook-marker'))+',"started");console.log("{}");');
+   await writeFile(join(root,'config.toml'),'\n[features]\nhooks=true\n[hooks]\nSessionStart=[{hooks=[{type="command",command='+JSON.stringify(quote(process.execPath)+' '+quote(join(root,'hook.mjs')))+'}]}]\n',{flag:'a'});
+   await writeFile(join(root,'hooks.json'),JSON.stringify({hooks:{SessionStart:[{hooks:[{type:'command',command:quote(process.execPath)+' '+quote(join(root,'hook.mjs'))}]}]}}));
+   await trustFixtureHooks(root,cwd);
+  }
   server=createServer(async(req,res)=>{
    try{
     let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>2*1024*1024)throw Error('Fixture request too large');}
@@ -44,7 +71,7 @@ async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,pat
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const args=['exec','--skip-git-repo-check','--sandbox','read-only','--json','-c','model_provider="fixture"','-c',`model_providers.fixture={name="Fixture",base_url="http://127.0.0.1:${server.address().port}/v1",wire_api="responses",request_max_retries=0,stream_max_retries=0}`,'-m',model.slug,
-   ...(restricted?['-c','model_catalog_json='+JSON.stringify(join(root,'models.json')),...restrictions]:[]),...(skillRestrictions?['--enable','skip_host_skill_discovery','-c','skills.include_instructions=false','-c','skills.bundled.enabled=false','-c','project_doc_max_bytes=0']:[]),...mcpOverrides,'Return fixture complete.'];
+   ...(restricted?['-c','model_catalog_json='+JSON.stringify(join(root,'models.json')),...restrictions.filter((value,index)=>!hooks||!(value==='hooks'||value==='--disable'&&restrictions[index+1]==='hooks'))]:[]),...(skillRestrictions?['--enable','skip_host_skill_discovery','-c','skills.include_instructions=false','-c','skills.bundled.enabled=false','-c','project_doc_max_bytes=0']:[]),...mcpOverrides,'Return fixture complete.'];
   if(appServer){
    const calls=[];
    const serverArgs=['app-server',...args.slice(5,-1)];
@@ -53,7 +80,7 @@ async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,pat
    const options={invocation:{command:cli,args:serverArgs},config:{cwd,model:model.slug,approvalMode:'read-only',executorInstructions:'Offline fixture',reasoningEffort:'low'},prompt:'Call worker_plugin catalog.',deadline:Date.now()+20000,env:{PATH:process.env.PATH,HOME:root,CODEX_HOME:root},onProgress:progress=>{if(progress.sessionId){threadId=progress.sessionId;sessions.push(threadId);}},toolBridge:{definitions:[{type:'function',name:'worker_plugin',description:'Fixture catalog',inputSchema:{type:'object',properties:{action:{type:'string'}},required:['action'],additionalProperties:false}}],invoke:async input=>{calls.push({name:input.name,arguments:input.arguments});return {fixture:'host-authorized-result'};}}};
    const result=await runAppServerTurn(options);
    if(resume)assert.equal(await runAppServerTurn({...options,threadId,deadline:Date.now()+20000,toolBridge:{...options.toolBridge,invoke:async input=>{calls.push({name:input.name,arguments:input.arguments});return {fixture:'resumed-host-result'};}}}),'fixture complete');
-   return {requests,calls,result,sessions,mcpStarted:existsSync(join(root,'mcp-marker'))};
+   return {requests,calls,result,sessions,mcpStarted:existsSync(join(root,'mcp-marker')),hookStarted:existsSync(join(root,'hook-marker'))};
   }
   const generated=workerJsonl?hermesCommand({cli,cwd,model:model.slug,reasoningEffort:'low',executorInstructions:'Fixture worker instructions',approvalMode:'read-only',codexHome:root}).args:undefined;
   const providerArgs=args.slice(5);const modelIndex=providerArgs.indexOf('-m');providerArgs.splice(modelIndex,2);
@@ -63,7 +90,7 @@ async function probe({restricted=true,mcp=false,mcpOverrides=[],attack=false,pat
   timer=setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},20000);
   const code=await new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});
   assert.equal(code,0,stderr);assert.ok(requests.length,'CLI did not reach the local fixture');
-  return {requests,stdout,stderr,marker:existsSync(join(cwd,'marker')),mcpStarted:existsSync(join(root,'mcp-marker'))};
+  return {requests,stdout,stderr,marker:existsSync(join(cwd,'marker')),mcpStarted:existsSync(join(root,'mcp-marker')),hookStarted:existsSync(join(root,'hook-marker'))};
  }finally{
   clearTimeout(timer);if(child?.pid)try{process.kill(-child.pid,'SIGKILL');}catch{}
   if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
@@ -135,4 +162,10 @@ test('invented native MCP calls are rejected without starting the inherited serv
  const result=await probe({appServer:true,mcp:true,mcpAttack:true});
  assert.equal(result.mcpStarted,false);assert.equal(result.calls.length,0);
  assert.match(JSON.stringify(result.requests[1].input),/unsupported call: read_mcp_resource/);
+});
+test('native session hooks can execute even when model tools are disabled',async()=>{
+ const result=await probe({hooks:true});assert.equal(result.hookStarted,true,result.stderr);assert.deepEqual(names(result),[]);
+});
+for(const adapter of ['appServer','workerJsonl'])test('Worker '+adapter+' blocks trusted native session hooks',async()=>{
+ const result=await probe({hooks:true,[adapter]:true});assert.equal(result.hookStarted,false);
 });
