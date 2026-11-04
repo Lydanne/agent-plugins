@@ -61,6 +61,11 @@ test('Worker admission and delivery share the original ceiling across child jobs
  store.setMode('enforce',{actor:'operator'});
  const task={agentId,jobId:'original',sessionKey:'agent:'+agentId+':source',requester:{channel:'feishu',accountId:'account',senderId:'sender'}};
  await admitAuthorizedTask(task);
+ for(const action of ['reply','steer','await_user'])await authorizeTaskOperation(task,{toolName:'agent_worker',params:{action,jobId:task.jobId}});
+ store.saveRule({id:'deny-steer',groupId:'internal',effect:'deny',actions:['delegate'],selector:{resourceIds:['tool://agent-worker/agent_worker/steer']}},{actor:'operator'});
+ await assert.rejects(authorizeTaskOperation(task,{toolName:'agent_worker',params:{action:'steer',jobId:task.jobId}}),/Permission denied/);
+ await authorizeTaskOperation(task,{toolName:'agent_worker',params:{action:'reply',jobId:task.jobId}});
+ await admitAuthorizedTask(task);
  await admitAuthorizedTask({...task,phase:'delivery'});
  const lookup={toolName:'agent_repo',params:{action:'person',openId:'sender'}};
  store.saveRule({id:'person',groupId:'internal',effect:'allow',actions:['discover','read','execute'],selector:{resourceIds:['tool://agent-repo/agent_repo/person','data://agent-repo/entities']}},{actor:'operator'});

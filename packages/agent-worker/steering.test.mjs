@@ -10,18 +10,50 @@ import {runWorker} from './worker.mjs';
 import {sourceTaskBridge} from './source-tasks.mjs';
 import {completionBridge} from './completion.mjs';
 import {registerQuestionBridge} from './question-bridge.mjs';
-function fixture(){
+function fixture(options={}){
  const state=mkdtempSync(join(tmpdir(),'worker-steering-')),root=join(state,'jobs'),scope='agent:main:feishu:chat',id=randomUUID(),sessionId=randomUUID();mkdirSync(root);mkdirSync(join(root,'active'));
  const p={taskId:'original',revision:0,accountId:'a',chatId:'chat',chatType:'group',sessionKey:scope,senderId:'alice',sourceMessageIds:['original'],requestMessageIds:['original']};
  const params={topic:'same-task',task:'inspect',context:'fixture',constraints:'read only'},job={jobId:id,scope:createHash('sha256').update(scope).digest('hex'),requestKey:requestKeyFor(params,scope,p),provenance:p,status:'running',topic:params.topic,heartbeatAt:Date.now(),createdAt:Date.now(),questions:[],schedulerVersion:1,resumeSessionId:sessionId,timeoutMs:60000,resourceKeys:['record'],tags:[]};
  const runtime={state,cwd:state,skillsEnabled:false,model:'test'};
  writeJson(join(root,id+'.json'),job);writeJson(join(root,id+'.request.json'),{params,scope,runtime});
- const jobs=createJobs({root,node:process.execPath,worker:'unused'}),actor={senderId:'alice',accountId:'a'};
+ const jobs=createJobs({root,node:process.execPath,worker:'unused',...options}),actor={senderId:'alice',accountId:'a'};
  const source=(senderId='alice',messageId=randomUUID())=>({...p,taskId:messageId,senderId,sourceMessageIds:[messageId],...(senderId!=='alice'?{kind:'group_context'}:{})});
  const records=()=>readdirSync(join(root,'supplements')).filter(n=>n.endsWith('.json')).map(n=>readJson(join(root,'supplements',n)));
  const save=v=>writeJson(join(root,id+'.json'),v),read=()=>readJson(join(root,id+'.json'));
  return {state,root,scope,id,p,params,runtime,jobs,job,actor,source,sessionId,records,save,read,close:()=>rmSync(state,{recursive:true,force:true})};
 }
+test('steering checks task permission before saving, before enqueue and before deferred delivery',async()=>{
+ let allowed=false;const events=[];
+ const f=fixture({authorizeControl:async(job,request,event)=>{events.push(event);assert.equal(job.jobId,f.id);assert.equal(request.scope,f.scope);if(!allowed)throw Error('Permission denied');}});
+ try{
+  await assert.rejects(f.jobs.prepareSteering(f.id,f.scope,'evidence',f.actor,f.source(),()=>true),/Permission denied/);
+  assert.equal(f.read().steeringInputs,undefined);
+  allowed=true;const input=await f.jobs.prepareSteering(f.id,f.scope,'evidence',f.actor,f.source(),()=>true);
+  allowed=false;await assert.rejects(f.jobs.enqueueSteering(f.id,f.scope,input,()=>true),/Permission denied/);
+  assert.equal(existsSync(join(f.root,'supplements',input.questionId+'.json')),false);
+  allowed=true;await f.jobs.enqueueSteering(f.id,f.scope,input,()=>true);
+  allowed=false;await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});
+  assert.equal(f.records()[0].status,'blocked');assert.equal(f.records()[0].reason,'steering_permission_unavailable');
+  assert.ok(events.every(event=>event.params.action==='steer'&&event.params.jobId===f.id&&event.params.answer==='evidence'));
+ }finally{f.close();}
+});
+test('revocation does not relabel an in-flight steering delivery as prevented',async()=>{
+ let allowed=true;
+ const f=fixture({authorizeControl:async()=>{if(!allowed)throw Error('Permission denied');}});
+ try{
+  const input=await f.jobs.prepareSteering(f.id,f.scope,'in flight',f.actor,f.source(),()=>true);
+  await f.jobs.enqueueSteering(f.id,f.scope,input,()=>true);
+  const receipt=f.records()[0],file=join(f.root,'supplements',input.questionId+'.json');
+  writeJson(file,{...receipt,liveDelivery:{state:'sending'}});
+  allowed=false;await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});
+  assert.equal(f.records()[0].status,'accepted');
+  assert.equal(f.records()[0].liveDelivery.state,'sending');
+  f.save({...f.read(),status:'completed'});
+  await f.jobs.processSupplements(f.id,f.scope,()=>true,async()=>{});
+  assert.equal(f.records()[0].reason,'live_delivery_unknown');
+  assert.equal(f.records()[0].childJobId,undefined);
+ }finally{f.close();}
+});
 test('owner steering is durable, idempotent and waits until the current execution ends',async()=>{
  const f=fixture();try{
   const input=await f.jobs.prepareSteering(f.id,f.scope,'new evidence',f.actor,f.source(),()=>true);

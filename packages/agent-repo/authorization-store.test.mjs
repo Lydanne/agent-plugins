@@ -21,8 +21,10 @@ test('internal defaults admit Worker tasks and return results without granting b
  for(const group of ['administrator','internal']){
   for(const action of ['run','reply','steer'])assert.equal(allowed(group,'tool://agent-worker/agent_worker/'+action,['execute','delegate']),true);
   assert.equal(allowed(group,'delivery://agent-worker/result',['transfer']),true);
+  assert.equal(allowed(group,'tool://agent-worker/agent_worker/await_user',['execute','update','transfer']),true);
  }
  assert.equal(allowed('internal',write.id,['execute','update']),false);
+ assert.equal(allowed('internal','tool://agent-worker/agent_worker/cancel',['execute','update']),false);
  assert.equal(allowed('administrator',write.id,['execute','update']),true);
  assert.equal(allowed('external','tool://agent-worker/agent_worker/run',['execute','delegate']),false);
  assert.equal(allowed('external','delivery://agent-worker/result',['transfer']),false);

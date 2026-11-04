@@ -46,7 +46,13 @@ function hasRestorableCheckpoint(job) {
 const steeringWorkspaceUnavailable=job=>job.useWorkspace&&(job.workspaceSettlement||((job.workspaceSettled||job.workspaceRelease==='idle')&&!hasRestorableCheckpoint(job)));
 const waiting=new Set(['awaiting_main','awaiting_user']);
 const active=new Set(['queued','running','cancelling']);
-export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,prepareWorker,authorizeAdmission,authorizeExecution=authorizeAdmission,logger}) {
+export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=()=>({maxConcurrentJobs:3,maxQueuedJobs:100}),authorizeUserTimeout=()=>false,getUserTimeoutSubmission=()=>undefined,mainTimeoutGraceMs=0,getRequestId=()=>undefined,prepareWorkspace,settleWorkspace,prepareWorker,authorizeAdmission,authorizeExecution=authorizeAdmission,authorizeControl,logger}) {
+ async function checkControl(job,scope,params){
+  if(!authorizeControl)return;
+  const request=readJson(join(root,job.jobId+'.request.json'));
+  if(request.scope!==scope||requestKeyFor(request.params,scope,job.provenance)!==job.requestKey)throw Error('Original request binding mismatch');
+  await authorizeControl(job,request,{toolName:'agent_worker',params:{...params,jobId:job.jobId}});
+ }
  function applySkillAuthorization(request,authorization){
   if(!authorization?.skillPaths)return;
   const runtime=request.runtime,snapshot=runtime?.scopedSkillSnapshot,original=runtime?.authorizationSkillCatalog?.snapshot;
@@ -342,6 +348,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(typeof answer!=='string'||!answer.trim()||answer.length>16000)throw Error('Invalid steering context');
     if(!authorize({...job.provenance,attachmentSources:[...(job.provenance.attachmentSources??[]),bound]}))throw Error('Steering or original source is no longer current');
     if(['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
+    await checkControl(job,scope,{action:'steer',answer});
     const prior=job.steeringInputs?.find(r=>contributorSourceIdentity(r.source)===contributorSourceIdentity(bound));
     if(prior){if(prior.answer!==answer)throw Error('Steering input already saved differently');const receiptFile=join(root,'supplements',prior.questionId+'.json');if(existsSync(receiptFile)&&!['waiting','accepted'].includes(readJson(receiptFile).status))return prior;}
     if(steeringWorkspaceUnavailable(job))throw Error('Steering workspace is settling or already released');
@@ -360,6 +367,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if(!authorize({...job.provenance,attachmentSources:[...(job.provenance.attachmentSources??[]),input.source]}))throw Error('Steering or original source is no longer current');
     const owner=input.source.senderId===job.provenance.senderId;
     if(!owner&&!contributorPermission(job,input.source,request.requestId,input.questionId))throw Error('Steering requires requester approval');
+    await checkControl(job,scope,{action:'steer',answer:input.answer});
     if(['failed','timed_out','cancelled','unknown','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel')))throw Error('Task cannot accept steering');
     const directory=join(root,'supplements'),file=join(directory,input.questionId+'.json');
     if(existsSync(file)){const prior=readJson(file);if(prior.kind!=='steering'||prior.jobId!==jobId||prior.answer!==input.answer)throw Error('Steering binding mismatch');if(['waiting','accepted'].includes(prior.status)&&steeringWorkspaceUnavailable(job))throw Error('Steering workspace is settling or already released');return prior;}
@@ -515,6 +523,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     if((job.contextRequest.expiresAt<=Date.now()&&!savedBeforeDeadline(job.contextRequest,answerMetadata.userSubmittedAt))||existsSync(join(root,jobId+'.cancel')))throw Error('Question expired or task cancelled');
     const requestFile=join(root,jobId+'.request.json'),request=readJson(requestFile);
     if(requestKeyFor(request.params,scope,job.provenance)!==job.requestKey||request.scope!==scope)throw Error('Original request binding mismatch');
+    await checkControl(job,scope,{action:waitingForUser?'await_user':'reply',questionId,...(waitingForUser?{knownValues}:{answer})});
     if(waitingForUser){
      const merged=knownValues===undefined?job.contextRequest.knownValues:validateContextAnswers(job.contextRequest,{...job.contextRequest.knownValues,...validateContextAnswers(job.contextRequest,knownValues,{partial:true})},{partial:true});
      if(job.status==='awaiting_user'&&JSON.stringify(merged)===JSON.stringify(job.contextRequest.knownValues))return view(job);
@@ -630,6 +639,7 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
      if(['cancelled','cancelling'].includes(job.status)||existsSync(join(root,jobId+'.cancel'))){fail('suppressed','task_cancelled');continue;}
      if(['failed','timed_out'].includes(job.status)){fail('blocked','worker_'+job.status);continue;}
      if(s.liveDelivery?.state==='sending'){if(job.status!=='running'){writeJson(join(directory,name),{...s,status:'blocked',reason:'live_delivery_unknown'});}continue;}
+     if(s.kind==='steering')try{await checkControl(job,scope,{action:'steer',answer:s.answer});}catch{fail('blocked','steering_permission_unavailable');continue;}
      if(job.status==='running'){grantLiveSteering(root,job,s);continue;}
      if(['queued','unknown'].includes(job.status))continue;
      let request;

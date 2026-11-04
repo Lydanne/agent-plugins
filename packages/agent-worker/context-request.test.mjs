@@ -20,6 +20,16 @@ function fixture(){
  return {state,root,id,scope,params,provenance,close:()=>rmSync(state,{recursive:true,force:true})};
 }
 async function ask(f,runtime){return runWorker({...f,runtime,execute:async()=>({content:[{type:'text',text:JSON.stringify({contextRequest:question,sessionId:'original-thread',result:JSON.stringify({type:'request',...question})})}]})});}
+test('denied reply and await_user permissions preserve the pending question and original request',async()=>{
+ const f=fixture(),events=[];try{
+  const job=await ask(f),before=readJson(join(f.root,f.id+'.request.json'));
+  const jobs=createJobs({root:f.root,node:process.execPath,worker:'unused',authorizeControl:async(current,request,event)=>{assert.equal(current.jobId,f.id);assert.equal(request.scope,f.scope);events.push(event);throw Error('Permission denied');}});
+  for(const waitingForUser of [false,true])await assert.rejects(jobs.reply(f.id,f.scope,job.contextRequest.questionId,'answer',f.provenance,()=>true,waitingForUser),/Permission denied/);
+  assert.deepEqual(events.map(event=>event.params.action),['reply','await_user']);
+  assert.deepEqual(readJson(join(f.root,f.id+'.request.json')),before);
+  const after=readJson(join(f.root,f.id+'.json'));assert.equal(after.status,'awaiting_main');assert.equal(after.contextRequest.questionId,job.contextRequest.questionId);
+ }finally{f.close();}
+});
 test('only explicit bounded context request protocol pauses work',()=>{
  assert.equal(explainQueryError(Error('No matching pending question')).code,'QUESTION_UNAVAILABLE');assert.equal(explainQueryError(Error('Original task authorization is no longer current')).code,'CONTEXT_REPLY_FORBIDDEN');
  assert.equal(parseContextRequest('信息不足，请确认'),undefined);assert.equal(parseContextRequest('{"type":"other"}'),undefined);
