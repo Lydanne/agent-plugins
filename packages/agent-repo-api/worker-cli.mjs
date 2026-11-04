@@ -1,3 +1,4 @@
+import {bindAuthorizationScope} from './authorization.mjs';
 import {createServer} from 'node:http';
 import {randomUUID,randomBytes} from 'node:crypto';
 import {isAbsolute} from 'node:path';
@@ -130,10 +131,11 @@ export function createWorkerCliService({getConfig,authorize,getJob,prepareContex
        else{
         checkArguments(b.context,name,args);
         const callId='worker-cli:'+randomUUID();
-        const hook=await runPolicy({toolName:name,params:structuredClone(args),toolCallId:callId,signal:controller.signal,approvalMode:'deny',ctx:{
+        const releaseScope=bindAuthorizationScope({agentId,sessionKey,runId:b.context.workerId,toolCallId:callId},b.context.jobId);
+        let hook;try{hook=await runPolicy({toolName:name,params:structuredClone(args),toolCallId:callId,signal:controller.signal,approvalMode:'deny',ctx:{
          config,agentId,sessionKey,sessionId:options.sessionId,runId:b.context.workerId,cwd:options.cwd,workspaceDir:options.workspaceDir,
          channelId:b.context.chatId,requester:{channel:options.messageChannel,accountId:b.context.accountId,senderId:b.context.requesterId,senderIsOwner:options.senderIsOwner===true,roleIds:options.memberRoleIds},
-         turnSourceChannel:options.messageChannel,turnSourceTo:options.messageTo,turnSourceAccountId:b.context.accountId,turnSourceThreadId:options.messageThreadId,assertActive:b.assertCurrent}});
+         turnSourceChannel:options.messageChannel,turnSourceTo:options.messageTo,turnSourceAccountId:b.context.accountId,turnSourceThreadId:options.messageThreadId,assertActive:b.assertCurrent}});}finally{releaseScope();}
         if(hook.blocked)throw denied(hook.reason??'Original source policy denied this call');
         checkArguments(b.context,name,hook.params);b.assertCurrent();controller.signal.throwIfAborted();
         const output=await tool.execute(callId,hook.params,controller.signal);

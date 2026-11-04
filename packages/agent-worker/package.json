@@ -86,7 +86,8 @@
     "dist/workspace-git-checkpoint.mjs",
     "dist/workspace-files-checkpoint.mjs",
     "codex-app-server.mjs",
-    "live-steering.mjs"
+    "live-steering.mjs",
+    "dist/authorization-api.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

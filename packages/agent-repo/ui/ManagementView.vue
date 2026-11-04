@@ -8,6 +8,7 @@ import WorkerTasks from './WorkerTasks.vue';
 import AuditView from './AuditView.vue';
 import RecycleView from './RecycleView.vue';
 import EntitiesView from './EntitiesView.vue';
+import AuthorizationView from './AuthorizationView.vue';
 import ProjectsView from './ProjectsView.vue';
 import KnowledgeView from './KnowledgeView.vue';
 import LogsView from './LogsView.vue';
@@ -19,7 +20,7 @@ const knownAgent=computed(()=>/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(agentId.va
 const request=useManagementRequest(context,()=>agentId.value);
 const key=computed(()=>[agentId.value,context.value.host.connection.canRead,context.value.host.connection.canWrite,section.value,revision.value].join(':'));
 const currentModule=computed(()=>managementModules.find(item=>item.id===section.value)!);
-const moduleIcons:Record<string,string>={overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',projects:'M3 7V4h6l2 3h10v13H3z',worker:'M8 3h8v4H8z M5 7h14v14H5z M9 12h6 M9 16h4',entities:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M20 8v6 M17 11h6',knowledge:'M12 6C9 3 5 3 2 4v16c4-1 7-1 10 1 3-2 6-2 10-1V4c-3-1-7-1-10 2z M12 6v15',tasks:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20 M12 6v6l4 2',audit:'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4',logs:'M3 4h18v16H3z M7 8l4 4-4 4 M13 16h4'};
+const moduleIcons:Record<string,string>={authorization:'M12 3l8 4v6c0 5-8 9-8 9s-8-4-8-9V7z',overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',projects:'M3 7V4h6l2 3h10v13H3z',worker:'M8 3h8v4H8z M5 7h14v14H5z M9 12h6 M9 16h4',entities:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M20 8v6 M17 11h6',knowledge:'M12 6C9 3 5 3 2 4v16c4-1 7-1 10 1 3-2 6-2 10-1V4c-3-1-7-1-10 2z M12 6v15',tasks:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20 M12 6v6l4 2',audit:'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4',logs:'M3 4h18v16H3z M7 8l4 4-4 4 M13 16h4'};
 function choose(id:string){if(managementModules.some(m=>m.id===id))section.value=id;}
 watch(()=>context.value.props.section,value=>{if(value==='people')choose('entities');else if(value)choose(value);},{immediate:true});
 const auditInvoke=(action:string,payload:Record<string,unknown>)=>request.invoke<AuditPage>(action,payload);
@@ -42,6 +43,7 @@ defineExpose({refreshFromUpdate:()=>projects.value?.refreshFromUpdate()});
      </aside>
     <div :id="regionId" class="ar-management-body" role="region" :aria-label="currentModule.label+'内容'">
      <OverviewView :key="key" v-if="section==='overview'" :agent-id="agentId" :choose="choose" />
+     <AuthorizationView :key="key" v-else-if="section==='authorization'" :agent-id="agentId"/>
      <KnowledgeView :key="key" v-else-if="section==='knowledge'" :agent-id="agentId" />
      <WorkerTasks :key="key" v-else-if="section==='worker'" :agent-id="agentId" />
      <AuditView :key="key" v-else-if="section==='audit'" :invoke="auditInvoke" :safe="safe" />

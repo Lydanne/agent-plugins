@@ -1,3 +1,7 @@
+import {createFileTool} from './authorization-files.mjs';
+import {createNetworkTool} from './authorization-network.mjs';
+import {registerAuthorizationManagement} from './authorization-management.mjs';
+import {registerAuthorizationRuntime} from './authorization-runtime.mjs';
 import {knowledgeActions,knowledgeParameters,queryKnowledge} from './knowledge.mjs';
 import {workerContextApi} from './dist/worker-cli.mjs';
 import {registerPluginCli} from './dist/plugin-cli.mjs';
@@ -61,10 +65,14 @@ export function projectTool(config,context,hostConfig={},prepareScope,syncScope)
  };
 }
 export default {id:'agent-repo',name:'Agent Repo 支持 / Agent Repo support',register(api,{skillsHome}={}) {
- registerPluginCli(api,{pluginId:'agent-repo',tools:[{name:'agent_repo',actions:repoToolActions},{name:'agent_entity_sync',command:'entity-sync',actions:['register_type','upsert']},{name:'agent_schedule',command:'schedule',actions:scheduledRequestToolParameters.properties.action.enum}],actions:[...projectActions,...diagnosticActions],prefix:'projects-',local:localCli});
+ registerPluginCli(api,{pluginId:'agent-repo',tools:[{name:'agent_repo',actions:repoToolActions},{name:'agent_file',command:'file',actions:['read','create','write']},{name:'agent_network',command:'network'},{name:'agent_entity_sync',command:'entity-sync',actions:['register_type','upsert']},{name:'agent_schedule',command:'schedule',actions:scheduledRequestToolParameters.properties.action.enum}],actions:[...projectActions,...diagnosticActions],prefix:'projects-',local:localCli});
  if(api.registrationMode==='cli-metadata')return;
  api=workerContextApi(api);
  const config=resolveConfiguration(api.pluginConfig);
+ const authorization=registerAuthorizationRuntime(api,config);
+ api.registerTool(context=>{const binding=bindingFor(config,context);return binding?createFileTool(binding.repo):null;},{optional:true});
+ api.registerTool(context=>bindingFor(config,context)?createNetworkTool():null,{optional:true});
+ registerAuthorizationManagement(api,config,authorization,{readCatalog:createMainPluginCatalogReader({cliCommand:process.argv[1]?[process.execPath,process.argv[1]]:['openclaw'],gatewayRequest:api.runtime?.gateway?.request?(method,params)=>api.runtime.gateway.request(method,params):undefined})});
  const hostConfig=()=>api.config??{};
  const prepareWorkerSkill=createWorkerSkillPublisher(hostConfig,createMainPluginCatalogReader({
   cliCommand:process.argv[1]?[process.execPath,process.argv[1]]:['openclaw'],

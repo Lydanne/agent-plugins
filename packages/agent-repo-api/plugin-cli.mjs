@@ -2,6 +2,8 @@ import {connectWorkerCli,readWorkerCliContext} from './worker-cli.mjs';
 import {readFile} from 'node:fs/promises';
 import {setTimeout as delay} from 'node:timers/promises';
 
+const cliCatalog=globalThis[Symbol.for('openclaw-plugins.cli-catalog.v1')]??=new Map();
+export function registeredCliCapabilities(){return [...cliCatalog.values()].map(value=>structuredClone(value));}
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const kebab=value=>value.replace(/([a-z0-9])([A-Z])/g,'$1-$2').replaceAll('_','-').toLowerCase();
 export async function cliParameters(options,read=path=>readFile(path,'utf8')) {
@@ -76,6 +78,7 @@ export async function sessionOutput(rpc,pluginId,prefix,action,scope,payload) {
  return JSON.parse(chunks.join(''));
 }
 export function registerPluginCli(api,{pluginId,tools,actions,prefix,automation,automationClient,local},{connect=connectCli,write=value=>process.stdout.write(JSON.stringify(value)+'\n'),env=process.env}={}) {
+ cliCatalog.set(pluginId,{pluginId,tools:structuredClone(tools),management:structuredClone(actions??[]),prefix:prefix??'',automation:structuredClone(automation??[]),local:local?['inspect','plan']:[]});
  api.registerCli?.(({program,config})=>{
   const root=program.command(pluginId).description('Authenticated '+pluginId+' tools and management; preserves server permissions and source checks');
   const common=command=>command.option('--agent <id>','Agent ID').option('--session <key>','Session key (default: agent:<id>:main)')

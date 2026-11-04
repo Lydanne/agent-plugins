@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createAuthorizationStore} from './authorization-store.mjs';
+import {createAuthorizationService} from './authorization-service.mjs';
+import {scanPermissionResources} from './authorization-catalog.mjs';
+import {resolveBuiltinAuthorization} from './authorization-builtins.mjs';
+test('scan, default administrator grants, entity binding, execution and revocation compose',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'auth-integration-')),store=createAuthorizationStore(root,{agentId:'ada'});t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
+ scanPermissionResources(store,{plugins:{plugins:[{id:'agent-repo',runtime:{state:'active'},version:'1'}]},catalog:{agentId:'ada',groups:[{source:'plugin',pluginId:'agent-repo',tools:[{id:'agent_repo'}]}]}},{actor:'scanner'});
+ const person={id:'p',agentId:'ada',sourceId:'s',verified:true};
+ store.saveBinding({id:'admin-binding',agentId:'ada',groupId:'administrator',entityId:'p',entityType:'person',membership:'self',status:'active'},{actor:'operator'});
+ const service=createAuthorizationService({store,resolveIdentity:()=>person,readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'s',observedAt:new Date().toISOString(),complete:true,nodes:[{id:'p',type:'person',sourceId:'s',status:'active'}],edges:[]}),resolveOperation:resolveBuiltinAuthorization});
+ assert.equal(await service.enforce({toolName:'agent_repo',params:{action:'entities'}},{}),undefined);
+ assert.equal((await service.enforce({toolName:'agent_repo',params:{action:'sync'}},{})).block,true);
+ assert.equal((await service.enforce({toolName:'exec',params:{command:'anything'}},{})).block,true);
+ store.saveBinding({...store.get('bindings','admin-binding'),status:'disabled'},{actor:'operator',expectedRevision:1});
+ assert.equal((await service.enforce({toolName:'agent_repo',params:{action:'entities'}},{})).block,true);
+});
+test('persisted run ceiling prevents added grants while current revocation still applies',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'auth-ceiling-'));let store=createAuthorizationStore(root,{agentId:'ada'});t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
+ const resource={id:'r',agentId:'ada',kind:'data',provider:'fixture',actions:['read','update'],status:'active',verification:'verified',enforcement:'enforced'};
+ store.saveResource(resource,{actor:'operator'});store.saveBinding({id:'b',agentId:'ada',entityId:'p',entityType:'person',membership:'self',groupId:'internal',status:'active'},{actor:'operator'});
+ store.saveRule({id:'allow',groupId:'internal',actions:['read'],effect:'allow',selector:{}},{actor:'operator'});
+ const scope=store.taskScope('run','p',['internal']);assert.equal(scope.resources[0].rules[0].actions.includes('update'),false);
+ store.close();store=createAuthorizationStore(root,{agentId:'ada'});
+ store.saveRule({id:'allow',groupId:'internal',actions:['read','update'],effect:'allow',selector:{}},{actor:'operator',expectedRevision:1});
+ const subject={id:'p',agentId:'ada',sourceId:'s',verified:true};
+ const service=createAuthorizationService({store,resolveIdentity:()=>subject,readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'s',complete:true,observedAt:new Date().toISOString(),nodes:[{id:'p',type:'person',status:'active',sourceId:'s'}],edges:[]}),resolveOperation:event=>({requirements:[{resourceId:'r',action:event.action}]})});
+ assert.equal((await service.decide({action:'read'},{},{scopeId:'run'})).allowed,true);
+ assert.equal((await service.decide({action:'update'},{},{scopeId:'run'})).allowed,false);
+ assert.equal((await service.decide({action:'update'},{},{scopeId:'new-run'})).allowed,true);
+ store.saveRule({id:'deny',groupId:'internal',actions:['read'],effect:'deny',selector:{}},{actor:'operator'});
+ assert.equal((await service.decide({action:'read'},{},{scopeId:'run'})).allowed,false);
+ assert.throws(()=>store.taskScope('run','other',['administrator']),/requester/);
+});
+test('discovery filters model tool names and freezes the first model-turn scope',async t=>{
+ const root=mkdtempSync(join(tmpdir(),'auth-discovery-')),store=createAuthorizationStore(root,{agentId:'ada'});t.after(()=>{store.close();rmSync(root,{recursive:true,force:true});});
+ store.saveResource({id:'tool',agentId:'ada',kind:'tool',provider:'fixture',actions:['discover','execute'],definition:{toolName:'fixture'},status:'active',verification:'verified',enforcement:'enforced'},{actor:'operator'});
+ store.saveBinding({id:'b',agentId:'ada',groupId:'internal',entityId:'p',entityType:'person',membership:'self',status:'active'},{actor:'operator'});
+ const subject={id:'p',agentId:'ada',sourceId:'s',verified:true};
+ const service=createAuthorizationService({store,resolveIdentity:()=>subject,readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'s',complete:true,observedAt:new Date().toISOString(),nodes:[{id:'p',type:'person',status:'active',sourceId:'s'}],edges:[]}),resolveOperation:()=>undefined});
+ assert.deepEqual(await service.discover({}, {scopeId:'old'}),[]);
+ store.saveRule({id:'allow',groupId:'internal',effect:'allow',actions:['discover'],selector:{}},{actor:'operator'});
+ assert.deepEqual(await service.discover({}, {scopeId:'old'}),[]);assert.deepEqual(await service.discover({}, {scopeId:'new'}),['fixture']);
+});

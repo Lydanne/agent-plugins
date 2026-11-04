@@ -111,7 +111,23 @@
     "dist/workspace-checkpoints.mjs",
     "dist/workspace-checkpoint-transaction.mjs",
     "dist/workspace-git-checkpoint.mjs",
-    "dist/workspace-files-checkpoint.mjs"
+    "dist/workspace-files-checkpoint.mjs",
+    "authorization-policy.mjs",
+    "authorization-store.mjs",
+    "authorization-membership.mjs",
+    "authorization-service.mjs",
+    "authorization-graph.mjs",
+    "authorization-runtime.mjs",
+    "dist/authorization-api.mjs",
+    "authorization-management.mjs",
+    "ui/AuthorizationView.vue",
+    "authorization-catalog.mjs",
+    "authorization-builtins.mjs",
+    "authorization-skill-scan.mjs",
+    "authorization-network.mjs",
+    "authorization-files.mjs",
+    "authorization-broad.mjs",
+    "authorization-worker.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

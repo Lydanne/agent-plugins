@@ -30,11 +30,13 @@ test('multi-Agent bindings reject arbitrary ownership and tool registration is s
  const config=resolveConfiguration({agents:{main:{repo:f.repo,defaultProject:'demo'},other:{repo:other}}});
  assert.equal(bindingFor(config,{agentId:'missing'}),undefined);assert.equal(bindingFor(config,{agentId:'toString'}),undefined);
  assert.equal(projectTool(config,{sessionKey:'agent:main:chat'}),null);
- const factories=[];plugin.register({pluginConfig:config,registerTool:factory=>factories.push(factory)});
- assert.equal(factories[0]({agentId:'missing'}),null);
- const tool=factories[0]({agentId:'main'}),result=decode(await tool.execute('',{action:'list'}));
+ const factories=[];plugin.register({registerTrustedToolPolicy:()=>{},pluginConfig:config,registerTool:factory=>factories.push(factory)});
+ for(const factory of factories)assert.equal(factory({agentId:'missing'}),null);
+ const factory=factories.find(factory=>factory({agentId:'main'})?.name==='agent_repo');
+ assert.ok(factory);
+ const tool=factory({agentId:'main'}),result=decode(await tool.execute('',{action:'list'}));
  assert.equal(result.agentId,'main');assert.equal(result.projects[0].projectId,'demo');assert.ok(!('memory' in result.projects[0]));assert.equal(result.agent.memory.path,join(f.repo,'memory'));assert.equal(JSON.stringify(result).includes('private role body'),false);
- assert.deepEqual(decode(await factories[0]({agentId:'other'}).execute('',{action:'list'})).projects,[]);
+ assert.deepEqual(decode(await factory({agentId:'other'}).execute('',{action:'list'})).projects,[]);
  await assert.rejects(tool.execute('',{action:'inspect',agentId:'other'}),/arguments/);
  await assert.rejects(tool.execute('',{action:'inspect',projectId:'missing'}),/registered/);
  assert.equal(decode(await tool.execute('',{action:'inspect'})).project.git.state,'missing');
@@ -117,9 +119,9 @@ test('CLI inspect and plan use explicit inputs and do not write configuration',a
  const plan=await main(['plan','--repo',f.repo,'--agent-id','main','--config',configPath]);assert.ok(plan.patch.plugins.entries['agent-repo']);assert.equal(await readFile(configPath,'utf8'),body);
  await assert.rejects(main(['inspect','--repo',f.repo,'--shell','any']),/arguments/);
 });
-test('manifest publishes only the read-only project tool and a strict binding schema',async()=>{
+test('manifest declares controlled tools and a strict binding schema',async()=>{
  const manifest=JSON.parse(await readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8'));
- assert.equal(manifest.id,plugin.id);assert.deepEqual(manifest.contracts.tools,['agent_repo','agent_entity_sync','agent_schedule']);assert.equal(manifest.configSchema.additionalProperties,false);assert.ok(manifest.uiHints.agents.label.includes(' / '));
+ assert.equal(manifest.id,plugin.id);assert.deepEqual(manifest.contracts.tools,['agent_repo','agent_entity_sync','agent_schedule','agent_network','agent_file']);assert.equal(manifest.configSchema.additionalProperties,false);assert.ok(manifest.uiHints.agents.label.includes(' / '));
 });
 
 

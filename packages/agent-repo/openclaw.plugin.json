@@ -9,7 +9,12 @@
     "tools": [
       "agent_repo",
       "agent_entity_sync",
-      "agent_schedule"
+      "agent_schedule",
+      "agent_network",
+      "agent_file"
+    ],
+    "trustedToolPolicies": [
+      "agent-repo-authorization"
     ]
   },
   "activation": {
@@ -219,9 +224,9 @@
     }
   },
   "controlUi": {
-    "entry": "dist/control-ui/5f6cbea515b728eb676e/index.js",
+    "entry": "dist/control-ui/101ef5b5839df61b1c61/index.js",
     "styles": [
-      "dist/control-ui/5f6cbea515b728eb676e/index.css"
+      "dist/control-ui/101ef5b5839df61b1c61/index.css"
     ]
   },
   "cliCommands": [

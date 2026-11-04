@@ -25,4 +25,6 @@ await copyFile(new URL('../packages/agent-repo-api/worker-source.mjs',import.met
 
 await copyFile(new URL('../packages/agent-repo-api/plugin-cli.mjs',import.meta.url),'dist/plugin-cli.mjs');
 
-await copyFile(new URL('../packages/agent-repo-api/worker-cli.mjs',import.meta.url),'dist/worker-cli.mjs');
+await writeFile('dist/worker-cli.mjs',(await readFile(new URL('../packages/agent-repo-api/worker-cli.mjs',import.meta.url),'utf8')).replace("from './authorization.mjs'","from './authorization-api.mjs'"));
+
+await copyFile(new URL('../packages/agent-repo-api/authorization.mjs',import.meta.url),'dist/authorization-api.mjs');

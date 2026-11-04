@@ -31,6 +31,10 @@
     "./worker-cli": {
       "types": "./worker-cli.d.mts",
       "import": "./worker-cli.mjs"
+    },
+    "./authorization": {
+      "types": "./authorization.d.mts",
+      "import": "./authorization.mjs"
     }
   },
   "files": [
@@ -57,12 +61,14 @@
     "workspace-checkpoints.mjs",
     "workspace-checkpoint-transaction.mjs",
     "workspace-git-checkpoint.mjs",
-    "workspace-files-checkpoint.mjs"
+    "workspace-files-checkpoint.mjs",
+    "authorization.mjs",
+    "authorization.d.mts"
   ],
   "scripts": {
     "build": "node --check index.mjs && node --check ui-navigation.mjs && node --check people.mjs && node --check entities.mjs && node --check maintenance.mjs && node --check diagnostics.mjs && node --check worker-source.mjs && node --check plugin-cli.mjs && node --check worker-cli.mjs",
     "test": "node --test *.test.mjs",
-    "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck entities.type-test.mts diagnostics.type-test.mts"
+    "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck entities.type-test.mts diagnostics.type-test.mts authorization.type-test.mts"
   },
   "engines": {
     "node": ">=24.19.0"

@@ -50,7 +50,7 @@ test('program API scopes registry ownership, safely disposes generations and blo
 
 test('plugin installs scoped entity producers and releases them on stop with optional AI write tool',async t=>{
  const {root}=fixture(t),services=[],tools=[];
- plugin.register({pluginConfig:{agents:{'entity-fixture':{repo:root}}},registerTool:(factory,options)=>tools.push({factory,options}),registerService:service=>services.push(service)});
+ plugin.register({registerTrustedToolPolicy:()=>{},pluginConfig:{agents:{'entity-fixture':{repo:root}}},registerTool:(factory,options)=>tools.push({factory,options}),registerService:service=>services.push(service)});
  const lifecycle=services.find(service=>service.id==='agent-repo-skill-scopes');t.after(()=>lifecycle.stop());
  assert.ok(getEntityService({agentId:'entity-fixture'}));const write=tools.find(tool=>tool.factory({agentId:'entity-fixture'})?.name==='agent_entity_sync');assert.equal(write.options.optional,true);assert.equal(write.factory({agentId:'foreign'}),null);
  lifecycle.stop();assert.equal(getEntityService({agentId:'entity-fixture'}),undefined);await lifecycle.start();assert.ok(getEntityService({agentId:'entity-fixture'}));
@@ -58,11 +58,12 @@ test('plugin installs scoped entity producers and releases them on stop with opt
 
 test('context guidance is scoped to the bound Agent and the detailed skill ships with the plugin',async t=>{
  const {root}=fixture(t),services=[],hooks=[];
- plugin.register({pluginConfig:{agents:{'context-fixture':{repo:root}}},registerTool:()=>{},registerService:s=>services.push(s),on:(event,handler)=>hooks.push({event,handler})});
+ plugin.register({registerTrustedToolPolicy:()=>{},pluginConfig:{agents:{'context-fixture':{repo:root}}},registerTool:()=>{},registerService:s=>services.push(s),on:(event,handler)=>hooks.push({event,handler})});
  t.after(()=>services.forEach(s=>s.stop?.()));
- const boundary=hooks.find(h=>h.event==='before_prompt_build');
- assert.equal(boundary.handler({}, {agentId:'other'}),undefined);
- const text=boundary.handler({}, {agentId:'context-fixture'}).appendSystemContext;
+ const boundaries=hooks.filter(h=>h.event==='before_prompt_build');
+ for(const boundary of boundaries)assert.equal(await boundary.handler({}, {agentId:'other'}),undefined);
+ const results=await Promise.all(boundaries.map(boundary=>boundary.handler({}, {agentId:'context-fixture'})));
+ const text=results.find(result=>result?.appendSystemContext?.includes('合同 v2'))?.appendSystemContext;
  assert.match(text,/合同 v2/);assert.ok(text.length<160);
  const fs=await import('node:fs/promises');
  const manifest=JSON.parse(await fs.readFile(new URL('./openclaw.plugin.json',import.meta.url),'utf8'));

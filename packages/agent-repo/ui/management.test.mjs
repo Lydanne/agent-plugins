@@ -14,7 +14,7 @@ test('AgentRepo is a global management center and personnel is only one of its m
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),{ctx,calls}=fixtureHost();ctx.host.sessions.selectedKey='';
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
  assert.match(f.container.textContent,/AgentRepo/);assert.match(f.container.textContent,/管理概览/);assert.equal(calls.length,6);
- const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体库','知识库','定时任务','审计','日志']);
+ const nav=f.container.querySelector('[aria-label="AgentRepo 功能模块"]');assert.deepEqual([...nav.querySelectorAll('button')].map(node=>node.textContent),['概览','项目与技能','Worker 任务','实体库','权限中心','知识库','定时任务','审计','日志']);
  click(f.container,'打开实体库');await settle();assert.equal(f.container.querySelector('[aria-label="AgentRepo 所属 Agent"]'),null);assert.ok(f.container.querySelector('[aria-label="人员库所属 Agent"]')===null);assert.match(f.container.textContent,/实体库/);
  assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-entities');
  click(f.container,'项目与技能');await settle();assert.ok(f.container.querySelector('[aria-label="搜索技能或关联 CLI"]'));assert.equal(calls.at(-1).sessionKey,'agent:main:agent-repo-management');
