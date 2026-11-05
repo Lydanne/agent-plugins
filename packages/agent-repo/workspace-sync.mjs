@@ -1,3 +1,4 @@
+import {projectHasReaders} from './dist/project-read-lease.mjs';
 import {gitSyncDiagnostic} from './preparation-error.mjs';
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -57,6 +58,7 @@ async function syncWorkspace(config, expectedRemoteUrl) {
       gitEnvironment: config.gitEnvironment,
       onProgress: config.onProgress,
       repositorySubmodules: config.project.repositorySubmodules,
+      strictDefaultBranch: config.project.strictDefaultBranch,
       submodules: config.project.submodules ?? []
     }, config.project.expectedUrl);
     if (!projectResult.ok) return { ...projectResult, reason: `Project Repo: ${projectResult.reason}` };
@@ -142,6 +144,7 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       lock = await open(lockPath, "wx", 0o600);
     }
     await lock.writeFile(String(process.pid));
+    if(await projectHasReaders(root))throw new SyncBlocked("项目正在被 Worker 只读任务使用，延后同步", "PROJECT_IN_USE");
     const check = async (cwd, allowDetached, targetBranch = branch) => {
       if (await realpath(await git(cwd, ["rev-parse", "--show-toplevel"])) !== cwd) throw new SyncBlocked(`${repo}尚未初始化`);
       if (cwd === root && expectedRemoteUrl && await git(cwd, ["remote", "get-url", remote]) !== expectedRemoteUrl) throw new SyncBlocked("项目远端在同步期间变更，已保留现场");
@@ -318,7 +321,7 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       if (!await exists(join(directory, ".git"))) throw new SyncBlocked(`${repo}尚未初始化，请管理员准备子模块`);
       if (await realpath(directory) !== directory) throw new SyncBlocked(`${repo}目录不能是外部软链接`);
       if (await git(root, ["config", "--file", ".gitmodules", "--get", `submodule.${entry.name}.url`]) !== await git(directory, ["remote", "get-url", targetRemote])) throw new SyncBlocked(`${repo} ${targetRemote} 与子模块声明不一致，请管理员核对`);
-      repositoryHeads[entry.name] = await update(directory, true, targetBranch, targetRemote);
+      repositoryHeads[entry.name] = await update(directory, config.strictDefaultBranch!==true, targetBranch, targetRemote);
     }
     return await afterSync({
       ok: true,

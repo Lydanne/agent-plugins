@@ -1,3 +1,4 @@
+import {applyDirectoryPolicy} from './directory-policy.mjs';
 import {sameRegistryExceptPool,validateWorkspace} from './dist/workspace-pool.mjs';
 import {getAgentRepoService,AgentRepoError} from './dist/agent-repo-api.mjs';
 import {realpath,readFile} from 'node:fs/promises';
@@ -36,7 +37,7 @@ export async function scopeRuntime(config,params,provenance,hostConfig={}) {
  }
  const projectContext={agentId:context.agentId,root:result.root??result.snapshot.root,projectId:result.projectId??result.snapshot.projectId,repository:result.repository??result.snapshot.repository,cwd:result.cwd,scopeDirectory:result.scopeDirectory,registryRevision:result.registryRevision};
  const render=text=>text.replaceAll(config.cwd,result.cwd).replaceAll('{projectDir}',result.cwd).replaceAll('{agentRepo}',projectContext.root).replaceAll('{scopeDirectory}',projectContext.scopeDirectory??result.cwd);
- return {...config,...(result.workspacePool?{workspacePool:result.workspacePool}:{}),...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,authorizationSkillCatalog:{repository:result.repository,skills:result.skills??[],snapshot:result.snapshot},executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)};
+ return applyDirectoryPolicy({...config,...(result.workspacePool?{workspacePool:result.workspacePool}:{}),...(mainCapabilitySkill?{mainCapabilitySkill}:{}),cwd:result.cwd,skillContextRoot:projectContext.root,projectContext,executionScope:executionScopeOf(result,context.agentId),scopedSkillSnapshot:result.snapshot,authorizationSkillCatalog:{repository:result.repository,skills:result.skills??[],snapshot:result.snapshot},executorInstructions:render(config.executorInstructions),delegationInstructions:render(config.delegationInstructions)});
 }
 export async function readScopedSkillVersion(config) {
  const snapshot=config.scopedSkillSnapshot;
@@ -62,7 +63,7 @@ export async function readScopedSkillVersion(config) {
   if(actual!==root&&actual!==root+'/'+projectRepository&&actual!==root+'/'+snapshot.repository)throw Error('Repository skill source escapes selected scope');
   if(actual!==item.root||await realpath((await git(actual,['rev-parse','--show-toplevel'])).trim())!==actual)throw Error('Repository changed after task submission; task was not started');
   if((await git(actual,['rev-parse','HEAD'])).trim()!==item.head){
-   if(actual!==root){if(!pooled)throw Error('Repository changed after task submission; task was not started');await git(actual,['merge-base','--is-ancestor',item.head,'HEAD']);if((await git(actual,['diff','--name-only',item.head,'HEAD','--',item.directory,'AGENTS.md'])).trim())throw Error('Workspace instructions changed after task submission');}
+   if(actual!==root){if(!pooled&&config.directoryPolicy?.mode!=='project-read-only')throw Error('Repository changed after task submission; task was not started');if(!pooled||config.workspacePool?.allowBranchSwitch!==true)await git(actual,['merge-base','--is-ancestor',item.head,'HEAD']);if((await git(actual,['diff','--name-only',item.head,'HEAD','--',item.directory,'AGENTS.md'])).trim())throw Error('Workspace instructions changed after task submission');}
    else
    if(!/^[a-f0-9]{40,64}$/.test(item.head)||(await git(root,['diff','--name-only',item.head,'HEAD','--','skills','SOUL.md','AGENTS.md','IDENTITY.md'])).trim())throw Error('Agent role or skills changed after task submission; task was not started');
   }

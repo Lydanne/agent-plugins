@@ -81,5 +81,9 @@ export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,pr
  if(!command.trim()||command.includes('\n')||command.includes('\r'))throw Error('Invalid Hermes command');
  // Do not allow another template flag to undo the host-owned read-only refresh policy.
  if(refresh&&template.adapter==='codex-jsonl'&&(args.includes('--dangerously-bypass-approvals-and-sandbox')||args.filter(a=>a==='--sandbox'||a==='-s').length!==1||args.some(a=>/^(?:--sandbox=|-s=|sandbox_mode=|--full-auto$)/.test(a))))throw Error('Hermes refresh policy conflict');
+ if(config.directoryPolicy?.mode==='project-read-only'){
+  const policies=args.flatMap((arg,index)=>arg==='--sandbox'||arg==='-s'?[args[index+1]]:[]);
+  if((template.adapter==='codex-jsonl'&&(policies.length!==1||policies[0]!== (refresh?'read-only':config.approvalMode)))||args.some(arg=>/^(?:--dangerously-bypass-approvals-and-sandbox|--full-auto|--approve-for-me|--permission-profile|--add-dir|--sandbox=|-s=)/.test(arg)||/^(?:-c=?|--config=)?(?:sandbox_mode|sandbox_workspace_write|sandbox_read_only|permissions\.)/.test(arg)))throw Error('Hermes directory policy conflict');
+ }
  return {command,args,stdin:substitute(template.stdin,values),adapter:template.adapter};
 }

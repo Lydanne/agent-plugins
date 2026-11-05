@@ -13,7 +13,7 @@
     }
   },
   "scripts": {
-    "build": "node --check cli-capabilities.mjs && node --check database.mjs && node --check recycle-bin.mjs && node --check audit.mjs && node --check graph-sync.mjs && node --check graph.mjs && node --check graph-storage.mjs && node --check graph-schema.mjs && node --check scheduled-requests.mjs && node ../../scripts/build-agent-repo-api.mjs && node --check entities.mjs && node --check people-query.mjs && node --check people.mjs && node --check index.mjs && node --check repositories.mjs && node --check project-context.mjs && node --check knowledge.mjs && node --check knowledge-index.mjs && node --check configuration.mjs && node --check cli.mjs && node --check preparation.mjs && node --check repository-skills.mjs && node --check scheduled-tasks.mjs && node --check repository-log.mjs && node --check sync-history.mjs && node --check scheduled-sync.mjs && node --check runtime-sync.mjs && node --check workspace-sync.mjs && node --check project-service.mjs && node --check worker-skill.mjs && node --check skill-maintenance.mjs && node --check worker-skill-lock.mjs && node --check plugin-catalog.mjs && node --check worker-protocol.mjs && node --check project-inspector.mjs && node --check subagents.mjs && node build-ui.mjs && node --check diagnostic-source.mjs && node --check log-console.mjs",
+    "build": "node --check project-sync-queue.mjs && node --check cli-capabilities.mjs && node --check database.mjs && node --check recycle-bin.mjs && node --check audit.mjs && node --check graph-sync.mjs && node --check graph.mjs && node --check graph-storage.mjs && node --check graph-schema.mjs && node --check scheduled-requests.mjs && node ../../scripts/build-agent-repo-api.mjs && node --check entities.mjs && node --check people-query.mjs && node --check people.mjs && node --check index.mjs && node --check repositories.mjs && node --check project-context.mjs && node --check knowledge.mjs && node --check knowledge-index.mjs && node --check configuration.mjs && node --check cli.mjs && node --check preparation.mjs && node --check repository-skills.mjs && node --check scheduled-tasks.mjs && node --check repository-log.mjs && node --check sync-history.mjs && node --check scheduled-sync.mjs && node --check runtime-sync.mjs && node --check workspace-sync.mjs && node --check project-service.mjs && node --check worker-skill.mjs && node --check skill-maintenance.mjs && node --check worker-skill-lock.mjs && node --check plugin-catalog.mjs && node --check worker-protocol.mjs && node --check project-inspector.mjs && node --check subagents.mjs && node build-ui.mjs && node --check diagnostic-source.mjs && node --check log-console.mjs",
     "test": "node --test *.test.mjs && pnpm run test:ui",
     "typecheck": "vue-tsc --noEmit -p tsconfig.ui.json",
     "test:ui": "vitest run --config vitest.ui.config.ts"
@@ -129,7 +129,9 @@
     "authorization-broad.mjs",
     "authorization-worker.mjs",
     "authorization-schedules.mjs",
-    "authorization-reviewed.mjs"
+    "authorization-reviewed.mjs",
+    "dist/project-read-lease.mjs",
+    "project-sync-queue.mjs"
   ],
   "engines": {
     "node": ">=24.19.0"

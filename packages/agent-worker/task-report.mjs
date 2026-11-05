@@ -19,8 +19,10 @@ export function finalizeJobReport({job,params,runtime}) {
    createdAt:job.createdAt,startedAt:job.startedAt,finishedAt:job.finishedAt},
   artifactPaths:Array.isArray(result.reportPaths)?[...new Set(result.reportPaths.filter(path=>typeof path==='string'))]:[],storage:{state:'inline'}};
  job.taskReport=report;
- const cwd=runtime?.cwd ?? result.cwd;
- const reportDirectory=(runtime?.reportDirectory ?? '.tmp/codex-query')+'/'+job.jobId;
+ const readOnlyProject=runtime?.directoryPolicy?.mode==='project-read-only'||!!runtime?.projectContext&&!runtime.workspace;
+ const cwd=readOnlyProject?runtime.state:runtime?.cwd ?? result.cwd;
+ const reportDirectory=(readOnlyProject?'reports':runtime?.reportDirectory ?? '.tmp/codex-query')+'/'+job.jobId;
+ if(readOnlyProject&&!runtime.workspacePool)report.execution.cwd=runtime.cwd;
  try {
   if(!cwd || !/^[0-9a-f-]{36}$/i.test(job.jobId))throw Error('report_workspace_unavailable');
   const root=realpathSync(cwd);

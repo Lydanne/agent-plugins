@@ -351,3 +351,11 @@ test('conventional wiki directories and independent Git checkouts are readable w
   assert.equal(result.wikiHead,undefined);
  }
 });
+
+test('project reader lease defers synchronization without changing HEAD, then permits safe fast-forward',async()=>{
+ const {acquireProjectReadLease}=await import('./dist/project-read-lease.mjs');
+ const f=fixture(),before=git(f.root,'rev-parse','HEAD'),next=f.commit(f.seed,'code.txt','updated');
+ const release=await acquireProjectReadLease(f.root);
+ try{const result=await syncWorkspace(f.config);assert.equal(result.ok,false);assert.equal(result.code,'PROJECT_IN_USE');assert.equal(git(f.root,'rev-parse','HEAD'),before);}finally{await release();}
+ assert.equal((await syncWorkspace(f.config)).ok,true);assert.equal(git(f.root,'rev-parse','HEAD'),next);
+});

@@ -13,7 +13,7 @@ import {readdir,readFile,stat,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
 const uuid=/^[0-9a-f-]{36}$/i;
 const active=new Set(['queued','running','cancelling','unknown','awaiting_main','awaiting_user']);
-const directoryFields=entry=>({cwd:entry.useWorkspace&&!entry.workspace?undefined:entry.cwd,workspacePending:entry.useWorkspace===true&&!entry.workspace,directoryKind:entry.workspace?'workspace':'project'});
+const directoryFields=entry=>({directoryMode:entry.project?.directoryMode,cwd:entry.useWorkspace&&!entry.workspace?undefined:entry.cwd,workspacePending:entry.useWorkspace===true&&!entry.workspace,directoryKind:entry.workspace?'workspace':'project'});
 const listGroup=row=>row.status==='unknown'?'unknown':active.has(row.status)?'active':'history';
 const groupPriority={active:2,unknown:1,history:0};
 function listProgress(job){

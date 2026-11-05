@@ -1,3 +1,5 @@
+import {applyDirectoryPolicy,assertDirectoryReady,checkReadOnlyProject} from './directory-policy.mjs';
+import {acquireProjectReadLease} from './dist/project-read-lease.mjs';
 import {beginFileAudit,captureFileAudit} from './file-audit.mjs';
 import {deliverLiveSteering} from './live-steering.mjs';
 import {tryLock,acquireLock} from './locks.mjs';
@@ -16,7 +18,7 @@ import {executeQuery} from './index.mjs';
 
 export async function runWorker({root,id,params,scope,runtime,execute=executeQuery,pollMs=1000}) {
  const file=join(root,id+'.json');
- let job=readJson(file);let liveTurn,livePending;let auditTimer,auditPending,auditReady=false;
+ let job=readJson(file);let liveTurn,livePending;let auditTimer,auditPending,auditReady=false,releaseProject;
  const audit=()=>auditPending??(auditPending=captureFileAudit({root,id}).catch(()=>{}).finally(()=>{auditPending=null;}));
  const deliver=()=>{if(liveTurn&&!livePending){const turn=liveTurn;livePending=deliverLiveSteering({root,id,workerId:job.workerId,turn,send:turn.send,signal:controller.signal}).catch(()=>{controller.abort();}).finally(()=>{livePending=null;});}};
  const controller=new AbortController();
@@ -58,6 +60,9 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});await persistBoundary();
   await checkJobWorkspace(runtime??{});
+  runtime=applyDirectoryPolicy(runtime??{});assertDirectoryReady(runtime);
+  if(runtime.directoryPolicy?.mode==='project-read-only')releaseProject=await acquireProjectReadLease(runtime.cwd,{signal:controller.signal});
+  await checkReadOnlyProject(runtime);
   auditReady=await beginFileAudit({root,id,cwd:runtime?.cwd??job.cwd,isolated:!!runtime?.workspace,resumed:job.executionRounds.length>1}).catch(()=>false);
   if(auditReady){await audit();auditTimer=setInterval(()=>{void audit();},15000);}
   runtime={...runtime,workerCli:runtime?.workerCli??{context:{version:1,workerId:job.workerId??randomUUID(),jobId:id,agentId:job.provenance?.agentId,sessionKey:scope,task:params.task,constraints:params.constraints}}};
@@ -86,6 +91,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
 
  }catch(e){delete job.result;job.status=controller.signal.aborted?'cancelled':e.code==='EXECUTION_TIMEOUT' || String(e.message).includes('exceeded 10 minutes')?'timed_out':'failed';job.error=String(e.message);}
  finally {
+  try {
   clearInterval(auditTimer);if(auditPending)await auditPending;
   if(auditReady)await captureFileAudit({root,id,final:job.status!=='awaiting_main'}).catch(()=>{});
   const lastRound=job.executionRounds?.at(-1);if(lastRound&&!lastRound.finishedAt)lastRound.finishedAt=Date.now();
@@ -98,6 +104,7 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   if(existsSync(owner)&&readJson(owner).jobId===id)rmSync(join(root,'active'),{recursive:true,force:true});
   // A cancellation arriving after terminal persistence still blocks pending steering.
   if(job.status==='cancelled')rmSync(join(root,id+'.cancel'),{force:true});
+  }finally{await releaseProject?.();}
  }
  return job;
 }

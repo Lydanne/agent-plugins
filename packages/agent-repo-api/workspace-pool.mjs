@@ -47,7 +47,7 @@ export async function workspacePlan(project,result){
  }
  const target=result.repository===project.repository?'.':result.repository.slice(project.repository.length+1);
  if(!repositories.some(r=>r.path===target))throw Error('Selected repository is not in workspace sources');
- return {root,managed:true,projectId:project.projectId,maxSize:project.workspacePool.maxSize,projectRepository:project.repository,target,repositories};
+ return {root,managed:true,allowBranchSwitch:true,projectId:project.projectId,maxSize:project.workspacePool.maxSize,projectRepository:project.repository,target,repositories};
 }
 export async function allocateWorkspace(plan,owner,expected){
  return transaction(plan.root,async state=>{
@@ -79,7 +79,7 @@ export async function allocateWorkspace(plan,owner,expected){
    slot={id,index,path,projectId:plan.projectId,dependencies:{}};state.workspaces[id]=slot;
   }
   if(slot.repositories&&JSON.stringify(slot.repositories.map(r=>[r.path,r.url]))!==JSON.stringify(plan.repositories.map(r=>[r.path,r.url])))throw Error('Workspace repository layout changed; inspect preserved directory');
-  Object.assign(slot,{owner,assignmentId:randomUUID(),status:'preparing',preparerPid:process.pid,repositories:plan.repositories,branch:'codex/worker-'+owner.slice(0,36),target:plan.target,createdAt:Date.now()});delete slot.error;delete slot.releaseFailure;
+  Object.assign(slot,{allowBranchSwitch:plan.allowBranchSwitch===true,owner,assignmentId:randomUUID(),status:'preparing',preparerPid:process.pid,repositories:plan.repositories,branch:'codex/worker-'+owner.slice(0,36),target:plan.target,createdAt:Date.now()});delete slot.error;delete slot.releaseFailure;
   return {...structuredClone(slot),needsPreparation:true};
  });
 }
@@ -180,7 +180,7 @@ export async function validateWorkspace(plan,lease,{settling=false}={}){
  if(await safePath(plan.root,'workspace/'+s.id)!==s.path||await realpath(s.path)!==s.path)throw Error('Workspace path changed');
  for(const repo of s.repositories){const cwd=repo.path==='.'?s.path:await safePath(s.path,repo.path);
   if(await realpath(await poolGit(cwd,['rev-parse','--show-toplevel']))!==cwd||await poolGit(cwd,['remote','get-url','origin'])!==repo.url)throw Error('Workspace repository identity changed');
-  if(repo.path===s.target&&await poolGit(cwd,['branch','--show-current'])!==s.branch)throw Error('Workspace branch changed');
+  if(!s.allowBranchSwitch&&repo.path===s.target&&await poolGit(cwd,['branch','--show-current'])!==s.branch)throw Error('Workspace branch changed');
  }
  return s;
 }

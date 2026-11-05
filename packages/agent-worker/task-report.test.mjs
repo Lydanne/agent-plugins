@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,readFileSync,rmSync,statSync,readdirSync,symlinkSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,realpathSync,mkdirSync,readFileSync,rmSync,statSync,readdirSync,symlinkSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -98,4 +98,16 @@ test('exhausted execution budget terminates without executing another round',()=
  let called=false;
  const job=await runWorker({root,id,params,scope:'test',runtime:{cwd},execute:async()=>{called=true;return response({result:'unexpected'});}});
  assert.equal(called,false);assert.equal(job.status,'timed_out');assert.equal(job.executionRounds.length,1);
+}));
+test('read-only project reports are persisted by the host outside the source repository',()=>fixture(async base=>{
+ const cwd=join(base,'project'),state=join(base,'state');mkdirSync(cwd);mkdirSync(state);const job={jobId:randomUUID(),status:'completed',result:response({result:'只读结果'})};
+ finalizeJobReport({job,params,runtime:{cwd,state,directoryPolicy:{version:1,mode:'project-read-only'}}});
+ assert.deepEqual(readdirSync(cwd),[]);assert.equal(job.taskReport.storage.state,'written');assert(job.taskReport.storage.path.startsWith(realpathSync(state)+'/reports/'));assert.equal(job.taskReport.execution.cwd,cwd);
+}));
+test('Worker holds a project read lease through execution and saves a deliverable report outside source',()=>fixture(async base=>{
+ const {execFileSync}=await import('node:child_process'),{projectHasReaders}=await import('./dist/project-read-lease.mjs');
+ const cwd=join(base,'project'),state=join(base,'state'),root=join(state,'jobs');mkdirSync(cwd);mkdirSync(root,{recursive:true});execFileSync('git',['init','-b','main',cwd],{stdio:'ignore'});
+ const id=randomUUID();writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',createdAt:1});
+ const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,state,executorInstructions:'fixture',projectContext:{cwd},approvalMode:'dangerously-bypass-approvals-and-sandbox'},execute:async(_p,_c,runtime)=>{assert.equal(runtime.approvalMode,'read-only');assert.equal(await projectHasReaders(cwd),true);return response({result:'complete'});}});
+ assert.equal(job.status,'completed');assert.equal(await projectHasReaders(cwd),false);assert.deepEqual(readdirSync(cwd),['.git']);assert.equal(job.reports.length,1);assert.match(job.reports[0].content,/complete/);
 }));

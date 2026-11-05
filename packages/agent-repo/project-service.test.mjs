@@ -29,7 +29,7 @@ async function fixture(t,{count=2,sync=false}={}){
  const calls=[],runtime=createRepositoryRuntime(config,()=>host,{synchronize:async settings=>{calls.push(settings.root);return {ok:true};}});
  const api=createProjectService(config.agents.main,'main',()=>host,runtime.prepareScope),stop=installProjectServices(config,()=>host,runtime.prepareScope,{});t.after(stop);
  const baseline=workerConfiguration({cwd:root,skillContextRoot:'',state:join(temp,'state'),projectRouting:'auto'});
- return {temp,root,projects,api,baseline,host,calls,stop,binding:config.agents.main};
+ return {temp,root,projects,api,baseline,host,calls,runtime,stop,binding:config.agents.main};
 }
 test('preparation failures retain controlled blockers and Git diagnostics without leaking raw exceptions',async t=>{
  const f=await fixture(t,{sync:true,count:1});
@@ -60,7 +60,7 @@ test('read-only discovery and explicit selection expose versioned project scope 
  await assert.rejects(f.api.prepareExecutionScope({projectId:'missing'}),{code:'PROJECT_NOT_FOUND'});
  await assert.rejects(f.api.prepareExecutionScope({projectId:'a',expectedRegistryRevision:'stale'}),{code:'REGISTRY_CHANGED'});
  const result=await scopeRuntime(f.baseline,{projectId:'a',repository:'projects/a/repositories/frontend'},{agentId:'main',sessionKey:'agent:main:test'},f.host);
- assert.equal(result.cwd,f.root+'/projects/a');assert.equal(result.skillContextRoot,f.root);assert.equal(result.projectContext.projectId,'a');assert.deepEqual(f.calls,[f.root+'/projects/a']);
+ assert.equal(result.cwd,f.root+'/projects/a');assert.equal(result.skillContextRoot,f.root);assert.equal(result.projectContext.projectId,'a');assert.deepEqual(f.calls,[]);await f.runtime.projectSync.tick();assert.deepEqual(f.calls,[f.root+'/projects/a']);
  assert.ok(result.scopedSkillSnapshot.catalog.includes('projects/a/repositories/frontend/.agents/skills/common/SKILL.md'));assert.ok(!result.scopedSkillSnapshot.catalog.some(path=>path.startsWith('projects/b/')));
  assert.equal(result.projectContext.scopeDirectory,f.root+'/projects/a/repositories/frontend');await readScopedSkillVersion(result);
  await git(f.root+'/projects/a',['remote','set-url','origin','https://example.invalid/changed.git']);await assert.rejects(readScopedSkillVersion(result),/branch or origin changed/);
@@ -114,5 +114,5 @@ test('workspace selector is opt-in, exposes pool config and maps skill scope int
  f.projects.a.workspacePool={enabled:false,maxSize:1};await writeFile(join(f.root,'projects.json'),JSON.stringify({schemaVersion:1,projects:f.projects}));await readScopedSkillVersion(runtime);await commit(f.root);await readScopedSkillVersion(runtime);
  const registryText=await readFile(join(f.root,'projects.json'),'utf8'),staged=JSON.parse(registryText);staged.projects.a.branch='other';await writeFile(join(f.root,'projects.json'),JSON.stringify(staged));await git(f.root,['add','projects.json']);await writeFile(join(f.root,'projects.json'),registryText);await assert.rejects(readScopedSkillVersion(runtime),/registration changed/);await git(f.root,['add','projects.json']);
  const resumed=await prepareJobWorkspace(runtime,runtime.workspace.owner);assert.equal(resumed.workspace.assignmentId,runtime.workspace.assignmentId);assert.equal(resumed.executionScope,runtime.executionScope);
- await git(runtime.cwd,['switch','-c','wrong']);await assert.rejects(readScopedSkillVersion(runtime),/branch/);
+ await git(runtime.cwd,['switch','-c','task-investigation']);await readScopedSkillVersion(runtime);assert.equal((await git(join(f.root,'projects/a'),['branch','--show-current'])).trim(),'main');
 });

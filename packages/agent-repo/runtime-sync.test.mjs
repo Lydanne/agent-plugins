@@ -68,7 +68,7 @@ function assertBlocked(result) {
 }
 
 // Hooks receive private chat content but only repository settings go into sync.
-test('before_dispatch awaits both preparations using the trusted session Agent and canonical root', async t => {
+test('before_dispatch awaits role preparation and queues project synchronization using the trusted Agent', async t => {
   const f = await fixture(t); let releaseRoot, rootEntered;
   const rootStarted = new Promise(resolve => { rootEntered = resolve; });
   const rootWait = new Promise(resolve => { releaseRoot = resolve; });
@@ -83,7 +83,7 @@ test('before_dispatch awaits both preparations using the trusted session Agent a
   await rootStarted; assert.equal(finished, false); assert.equal(f.calls.length, 1);
   assert.deepEqual(f.calls[0].settings, { enabled: true, root: f.root, timeoutMs: 30000,
     branch: 'main', remote: 'origin', preserveLocalMemory: true, includeUpstream: false, submodules: [] });
-  releaseRoot(); assert.equal(await pending, undefined); assert.equal(finished, true);
+  releaseRoot(); assert.equal(await pending, undefined); assert.equal(finished, true);assert.equal(f.calls.length,1);await runtime.projectSync.tick();
   assert.equal(f.calls[1].settings.root, join(f.root, 'projects/demo'));
   assert.equal(f.calls[1].settings.repositorySubmodules, true);
   assert.deepEqual(f.calls[1].settings.submodules, [{name:'wiki',path:'wiki'}]);
@@ -116,7 +116,7 @@ test('skill, compaction and command-like prose still prepare the selected projec
   for (const content of ['/skill review', '/compact', '/read-wiki 查询资料', '/subagents-extra list', '请执行 /subagents list', '/help unexpected']) {
     const f=await fixture(t),runtime=f.runtime();
     assert.equal(await runtime.beforeDispatch({content},dispatchContext),undefined);
-    assert.equal(f.calls.length,2,content);
+    assert.equal(f.calls.length,1,content);await runtime.projectSync.tick();assert.equal(f.calls.length,2,content);
   }
 });
 
@@ -125,7 +125,7 @@ test('configured generic channels use their own trusted message ID prefix', asyn
   const runtime = f.runtime();
   assert.equal(await runtime.beforeDispatch({ content: 'normal' }, dispatchContext), undefined);
   assert.equal(await runtime.beforeDispatch({ content: 'normal' }, { ...dispatchContext, channelId: 'slack', messageId: 'slack-real-123' }), undefined);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length,1);await runtime.projectSync.tick();assert.equal(f.calls.length, 2);
 });
 
 test('sync failure and exceptions return an explicit handled result instead of throwing or loading stale skills', async t => {
@@ -137,7 +137,7 @@ test('sync failure and exceptions return an explicit handled result instead of t
   }
   let count = 0;
   const runtime = f.runtime({ synchronize: async () => ({ ok: ++count === 1 }) });
-  assertHandled(await runtime.beforeDispatch({ content: 'normal' }, dispatchContext)); assert.equal(count, 2);
+  assert.equal(await runtime.beforeDispatch({ content: 'normal' }, dispatchContext),undefined);assert.equal(count,1);await runtime.projectSync.tick();assert.equal(count, 2);
 });
 
 test('legacy root and account-level Feishu sync block native synchronization without touching repositories', async t => {
@@ -172,8 +172,8 @@ test('project registration is reread after root synchronization and applies the 
     else{await git(settings.root,['remote','set-url','origin',expectedUrl]);await git(settings.root,['branch','-m',settings.branch]);}
     return { ok: true };
   } });
-  assert.equal(await runtime.beforeDispatch({ content: 'normal' }, dispatchContext), undefined);
-  assert.equal(f.calls.length, 2); assert.equal(f.calls[1].expectedUrl, nextUrl); assert.equal(f.calls[1].settings.branch, 'release');
+  assertHandled(await runtime.beforeDispatch({ content: 'normal' }, dispatchContext));
+  assert.equal(f.calls.length,1);assert.equal((await git(join(f.root,'projects/demo'),['branch','--show-current'])).trim(),'main');
 });
 
 test('multiple projects prepare only the role even with an operator defaultProject', async t => {
@@ -269,7 +269,7 @@ test('two bound Agents synchronize only their own root and project and cannot re
   });
   const helperContext = { ...dispatchContext, sessionKey: 'agent:helper:feishu:group:fixture' };
   assert.equal(await runtime.beforeDispatch({ content: 'normal' }, helperContext), undefined);
-  assert.deepEqual(calls.map(call => call.root), [helper.root, join(helper.root, 'projects/demo')]);
+  assert.deepEqual(calls.map(call => call.root),[helper.root]);await runtime.projectSync.tick();assert.deepEqual(calls.map(call => call.root), [helper.root, join(helper.root, 'projects/demo')]);
   const helperRun = { ...runContext, agentId: 'helper', sessionKey: helperContext.sessionKey };
   const catalog = await repositorySkills(helper.binding, { agentId: 'helper' });
   await runtime.capturePrompt(helperRun, catalog);
@@ -360,15 +360,15 @@ test('dispatch and worker preparation across runtime instances share an Agent qu
   return {ok:true};
  };
  const first=f.runtime({synchronize}),second=f.runtime({synchronize});
- const turn=first.beforeDispatch({content:'first'},dispatchContext);
+ const turn=first.prepareScope(f.binding,{agentId:'main',projectId:'demo',syncSubmodules:true});
  await inProject;
  const next=second.beforeDispatch({content:'second'},{...dispatchContext,messageId:'om_second'});
  const worker=second.prepareScope(f.binding,{agentId:'main',repository:'projects/demo'});
  await new Promise(setImmediate);
- assert.deepEqual(f.calls,[f.root,join(f.root,'projects/demo')]);
- release();assert.equal(await turn,undefined);assert.equal(await next,undefined);
+ assert.deepEqual(f.calls,[join(f.root,'projects/demo')]);
+ release();assert.equal((await turn).projectId,'demo');assert.equal(await next,undefined);
  assert.equal((await worker).projectId,'demo');
- assert.deepEqual(f.calls,[f.root,join(f.root,'projects/demo'),f.root,join(f.root,'projects/demo'),join(f.root,'projects/demo')]);
+ assert.deepEqual(f.calls,[join(f.root,'projects/demo'),f.root,join(f.root,'projects/demo')]);
 });
 
 test('external registration updates during project preparation block dispatch and worker acceptance',async t=>{
@@ -382,7 +382,7 @@ test('external registration updates during project preparation block dispatch an
    }
    return {ok:true};
   }});
-  if(mode==='dispatch')assertHandled(await runtime.beforeDispatch({content:'normal'},dispatchContext));
+  if(mode==='dispatch'){assert.equal(await runtime.beforeDispatch({content:'normal'},dispatchContext),undefined);await runtime.projectSync.tick();}
   else await assert.rejects(runtime.prepareScope(f.binding,{agentId:'main',repository:'projects/demo'}),/准备期间改变/);
   const changed=await repositorySkills(f.binding,{agentId:'main'});
   await assert.rejects(runtime.capturePrompt(runContext,changed),/分支或远端/);
@@ -418,12 +418,13 @@ test('missing or denied host hook permissions block dispatch, prompt and worker 
   assertHandled(result);assert.match(result.text,/hooks 权限/);
   await assert.rejects(runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo'}),/hooks 权限/);
   await assert.rejects(runtime.capturePrompt(runContext,await repositorySkills(f.binding)),/hooks 权限/);
+  runtime.promptFailure(runContext,new Error('hooks denied'));
   assertBlocked(await runtime.beforeAgentRun({},runContext));
   assert.equal(await runtime.beforeDispatch({content:'/stop'},dispatchContext),undefined);
  }
  assert.deepEqual(f.calls,[]);
  f.setHostConfig({});assert.equal(await runtime.beforeDispatch({content:'normal'},dispatchContext),undefined);
- assert.equal(f.calls.length,2);
+ assert.equal(f.calls.length,1);await runtime.projectSync.tick();assert.equal(f.calls.length,2);
 });
 
 
@@ -450,7 +451,7 @@ test('daily mode excludes all child sync from inbound and Worker preparation; sc
 test('single-project daily inbound updates roots only while child indexes remain usable',async t=>{
  const f=await fixture(t,{sync:{enabled:true,submoduleSchedule:{time:'08:00',timeZone:'Asia/Shanghai'}}}),runtime=f.runtime();
  assert.equal(await runtime.beforeDispatch({content:'normal'},dispatchContext),undefined);
- assert.equal(f.calls.length,2);assert.equal(f.calls[1].settings.repositorySubmodules,false);assert.deepEqual(f.calls[1].settings.submodules,[]);
+ assert.equal(f.calls.length,1);await runtime.projectSync.tick();assert.equal(f.calls.length,2);assert.equal(f.calls[1].settings.repositorySubmodules,true);assert.deepEqual(f.calls[1].settings.submodules,[{name:'wiki',path:'wiki'}]);
  const catalog=await runtime.prepareScope(f.binding,{agentId:'main'});assert(catalog.skills.length>0);
  assert.equal(f.calls.at(-1).settings.repositorySubmodules,false);
 });
@@ -477,24 +478,18 @@ test('manual synchronization still blocks local state and does not leak private 
  await assert.rejects(f.runtime({synchronize:async()=>({ok:false,reason:'repositories/frontend has local changes'})}).prepareScope(f.binding,{agentId:'main',syncSubmodules:true}),/frontend has local changes/);
 });
 
-test('ordinary local changes skip automatic synchronization but permit dispatch, prompt and Worker preparation',async t=>{
+test('dirty project copies block admission without discarding local or role changes',async t=>{
  const f=await fixture(t),project=join(f.root,'projects/demo');
  await writeFile(join(f.root,'local-code.mjs'),'role repository code work');
  await writeFile(join(project,'local-code.mjs'),'project code work');
  const runtime=f.runtime({synchronize:async()=>({ok:false,code:'LOCAL_CHANGES',reason:'存在本地改动，已保留现场'})});
- assert.equal(await runtime.beforeDispatch({content:'private chat never logged'},dispatchContext),undefined);
- const catalog=await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo'});
- assert.equal(catalog.synchronization.skipped,true);assert.equal(catalog.synchronization.ok,false);
- await runtime.capturePrompt(runContext,catalog);assert.equal((await runtime.beforeAgentRun({},runContext)).outcome,'pass');
+ assertHandled(await runtime.beforeDispatch({content:'private chat never logged'},dispatchContext));
+ await assert.rejects(runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',backgroundSync:true}),/只读副本存在本地改动/);
  const {readRepositoryLogs}=await import('./repository-log.mjs');const logs=await readRepositoryLogs(f.root,'main');
- assert.equal(logs.records.length,3);assert(logs.records.every(row=>row.status==='skipped'));
- assert(!JSON.stringify(logs).includes('private chat'));assert(logs.records.some(row=>row.repository==='projects/demo'));
+ assert(logs.records.some(row=>row.status==='failed'));assert(!JSON.stringify(logs).includes('private chat'));
  await assert.rejects(runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',syncSubmodules:true}),/本地改动/);
- await writeFile(join(project,'AGENTS.md'),'unreviewed rules');
- assertHandled(await runtime.beforeDispatch({content:'normal'},dispatchContext));
  assert.equal(await readFile(join(project,'local-code.mjs'),'utf8'),'project code work');
 });
-
 
 test('Agent-owned Git environment reaches inbound, Worker and scheduled sync without leaking across bindings',async t=>{
  const environment={CUSTOM_SYNC_MARKER:'1',EXTRA_HOOK_MODE:'scoped'};
@@ -503,7 +498,7 @@ test('Agent-owned Git environment reaches inbound, Worker and scheduled sync wit
  assert.equal(await runtime.beforeDispatch({content:'normal'},dispatchContext),undefined);
  await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo'});
  assert.equal((await runtime.scheduledSync('main','2026-10-20')).ok,true);
- assert.ok(f.calls.length>=5);
+ await runtime.projectSync.tick();assert.ok(f.calls.length>=5);
  for(const call of f.calls)assert.deepEqual(call.settings.gitEnvironment,environment);
  f.calls[0].settings.gitEnvironment.CUSTOM_SYNC_MARKER='mutated by caller';
  assert.equal(f.binding.sync.gitEnvironment.CUSTOM_SYNC_MARKER,'1');
@@ -565,4 +560,22 @@ test('selected project skills expose the default wiki entrypoint without loading
  const result=await repositorySkills(f.binding,{projectId:'demo'});
  assert.deepEqual(result.knowledge,{path:wiki,available:true,source:'default',kind:'directory',entrypoint:join(wiki,'README.md')});
  assert.match(result.instruction,/knowledge.entrypoint/);assert.ok(!JSON.stringify(result.knowledge).includes('another'));
+});
+
+test('background project preparation returns local committed scope without awaiting network and logs failure',async t=>{
+ const f=await fixture(t);let fail;const network=new Promise(resolve=>{fail=resolve;});const runtime=f.runtime({synchronize:async settings=>{f.calls.push(settings);return network;}});
+ const result=await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',backgroundSync:true});assert.equal(result.synchronization.state,'queued');assert.equal(f.calls.length,0);
+ const pending=runtime.projectSync.tick();await new Promise(resolve=>setTimeout(resolve,50));fail({ok:false,code:'AGENT_REPO_GIT_NETWORK_FAILED',reason:'network unavailable'});await pending;
+ assert.equal(f.calls.length,1);const {readRepositoryLogs}=await import('./repository-log.mjs');const logs=await readRepositoryLogs(f.root,'main');assert(logs.records.some(r=>r.stage==='后台项目同步'&&r.status==='failed'));
+ assert.equal((await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',backgroundSync:true})).projectId,'demo');
+});
+test('background project sync coalesces requests and waits for active read leases',async t=>{
+ const f=await fixture(t),runtime=f.runtime();const options={agentId:'main',projectId:'demo',backgroundSync:true};await runtime.prepareScope(f.binding,options);await runtime.prepareScope(f.binding,options);
+ const {acquireProjectReadLease}=await import('./dist/project-read-lease.mjs');const release=await acquireProjectReadLease(join(f.root,'projects/demo'));await runtime.projectSync.tick();assert.equal(f.calls.length,0);await release();
+ await runtime.projectSync.stop();
+});
+test('readonly project admission rejects dirty sources and nondefault branches even without synchronization',async t=>{
+ const f=await fixture(t,{sync:{enabled:false}}),runtime=f.runtime(),root=join(f.root,'projects/demo'),options={agentId:'main',projectId:'demo',backgroundSync:true};
+ await writeFile(join(root,'untracked.txt'),'keep');await assert.rejects(runtime.prepareScope(f.binding,options),/只读副本存在本地改动/);assert.equal(await readFile(join(root,'untracked.txt'),'utf8'),'keep');await rm(join(root,'untracked.txt'));
+ await git(root,['switch','-c','feature']);await assert.rejects(runtime.prepareScope(f.binding,options),/分支或远端/);assert.equal((await git(root,['branch','--show-current'])).trim(),'feature');
 });

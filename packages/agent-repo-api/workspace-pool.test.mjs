@@ -184,3 +184,8 @@ test('completed restoration with lost acknowledgement verifies files instead of 
  await assert.rejects(restoreParkedWorkspace(f.plan,slot,options));
  assert.equal(await readFile(join(slot.path,'output'),'utf8'),'unexpected edit');
 });
+test('new workspace policy permits branch switching while preserving assignment and source branch',async t=>{
+ const f=await fixture(t),plan={...f.plan,allowBranchSwitch:true};const slot=await prepareWorkspace(plan,await allocateWorkspace(plan,randomUUID()),{install:f.install});
+ await poolGit(slot.path,['switch','-c','inspect-release']);assert.equal((await validateWorkspace(plan,slot)).assignmentId,slot.assignmentId);assert.equal(await poolGit(f.source,['branch','--show-current']),'main');
+ await assert.rejects(validateWorkspace(plan,{...slot,owner:randomUUID()}),/assignment/);
+});

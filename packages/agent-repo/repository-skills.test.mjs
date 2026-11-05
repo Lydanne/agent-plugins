@@ -24,6 +24,7 @@ async function fixture(t) {
  await skill(root,'skills','role');await skill(root,'skills','protected');
  await skill(roots[1],'.agents/skills','common');await skill(roots[1],'.agents/skills','override');await skill(roots[1],'.agents/skills','protected');
  await skill(roots[2],'.agents/skills','override');await skill(roots[2],'.agents/skills','frontend');await skill(roots[3],'.agents/skills','backend');
+ await git(roots[1],['remote','add','origin','https://example.test/repo.git']);
  for(const path of roots)await commit(path);
  return {root,roots,binding:{repo:root,defaultProject:'demo'}};
 }
@@ -49,7 +50,7 @@ test('public prompt hook uses trusted workspace only; explicit selection never b
  const host={plugins:{entries:{'agent-worker':{config:{codexHome}}}}};
  const runtime={gateway:{request:async(method,params)=>method==='plugins.list'?{plugins:[{id:'agent-repo',runtime:{state:'active'}}]}:{agentId:params.agentId,groups:[]}}};
  plugin.register({registerTrustedToolPolicy:()=>{},pluginConfig:{agents:{main:f.binding}},config:host,runtime,registerTool:()=>{},on:(name,hook)=>hooks[name]=hook,registerService:service=>services.push(service)},{skillsHome:codexHome});t.after(()=>services.forEach(s=>s.stop()));
- services[0].stop();services[0].start();
+ const scopes=services.find(service=>service.id==='agent-repo-skill-scopes');scopes.stop();scopes.start();
  const restarted=await scopeRuntime({cwd:f.roots[1],skillContextRoot:f.root,executorInstructions:'fixture',delegationInstructions:'fixture'},{},{agentId:'main'});assert.equal(restarted.cwd,f.roots[1]);assert.equal(restarted.mainCapabilitySkill.agentId,'main');assert.ok(restarted.mainCapabilitySkill.path.startsWith(codexHome));
  const frontend=await hooks.before_prompt_build({prompt:'irrelevant path'},{agentId:'main',workspaceDir:f.roots[2]});assert.ok(frontend.appendSystemContext.includes('"repository":"projects/demo/repositories/frontend"'));
  const base=await hooks.before_prompt_build({prompt:'projects/demo/repositories/backend'},{agentId:'main',workspaceDir:f.root});assert.ok(base.appendSystemContext.includes('"repository":"projects/demo"'));assert.ok(!base.appendSystemContext.includes('"name":"backend"'));

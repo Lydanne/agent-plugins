@@ -1,3 +1,5 @@
+import {createProjectSyncQueue} from './project-sync-queue.mjs';
+import {acquireProjectReadLease,projectHasReaders,checkProjectChildren} from './dist/project-read-lease.mjs';
 import {preparationDiagnostic,diagnosticError} from './preparation-error.mjs';
 import {writeRepositoryLog} from './repository-log.mjs';
 import {realpath} from 'node:fs/promises';
@@ -33,6 +35,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
  // Run IDs are used only to bind the version captured by a prompt hook to its
  // model gate. They are never used as a receipt for a different dispatch.
  const runs=new Map();
+ const projectSync=createProjectSyncQueue({clock,logger});
  const attemptKey=Symbol('repository-prompt-attempt');let attemptSequence=0;
  const runKey=context=>JSON.stringify([context.agentId,context.sessionKey,context.runId]);
  function beginPrompt(context){
@@ -72,6 +75,28 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
  async function checkProject(project) {
   if((await git(project.paths.repository,['branch','--show-current'])).trim()!==project.branch||(await git(project.paths.repository,['remote','get-url','origin'])).trim()!==project.url)throw new PreparationError('项目分支或远端与当前登记不一致，本轮已停止。');
  }
+ async function checkSharedProject(project) {
+  await checkProject(project);
+  await checkProjectChildren(project.paths.repository,project.branch);
+  const root=project.paths.repository;
+  if(await realpath(root)!==root||await realpath((await git(root,['rev-parse','--show-toplevel'])).trim())!==root||(await git(root,['rev-parse','--show-superproject-working-tree'])).trim())throw new PreparationError('登记项目必须是独立 Git 根目录，不能是 Git Submodule 或软链接。');
+  if((await git(root,['status','--porcelain=v1','--untracked-files=all','--ignore-submodules=all'])).trim())throw new PreparationError('projects 只读副本存在本地改动，已保留现场；写入或切换分支任务须使用 workspace。');
+ }
+ function enqueueProject(binding,agentId,project) {
+  if(!enabled(binding))return {mode:'background',state:'disabled'};
+  return projectSync.enqueue(binding.repo+':'+project.projectId,async()=>{
+   // Prompt gates must observe the same role/skill version they captured.
+   prune();if([...runs.entries()].some(([key,run])=>!run.failed&&JSON.parse(key)[0]===agentId))return false;
+   try{
+    const registry=await readRegistry(binding),current=registry.projects[project.projectId];
+    if(!current||current.url!==project.url||current.branch!==project.branch||current.repository!==project.repository)throw new PreparationError('后台同步前项目登记改变，已取消旧同步请求。');
+    if(await projectHasReaders(current.paths.repository))return false;
+    await sync(binding,agentId,current,{root:false,submodules:true,allowLocalChanges:false});
+    await assertRegistry(binding,registry);
+    await log(binding,agentId,{repository:current.repository,stage:'后台项目同步',status:'completed',effect:'默认分支已安全快进更新；后续任务读取新版本。'});
+   }catch(error){if(error.code==='PROJECT_IN_USE')return false;await log(binding,agentId,{repository:project.repository,stage:'后台项目同步',status:'failed',...preparationDiagnostic(error),effect:'保留本地副本，不中断已受理任务；后续请求可重新触发同步。'});logger?.warn?.('agent-repo: background project sync failed; inspect repository logs');}
+  });
+ }
  async function select(projects,options={}) {
   if(options.repository!==undefined)repositorySelector(options.repository);
   const selected=options.repository===undefined?undefined:Object.values(projects).find(project=>options.repository===project.repository||options.repository.startsWith(project.repository+'/repositories/'));
@@ -80,7 +105,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   return projects[selectProjectId(projects,options.projectId??selected?.projectId)];
  }
  function projectConfig(project,submodules=true) {
-  return {path:project.repository,expectedUrl:project.url,branch:project.branch,remote:'origin',
+  return {path:project.repository,expectedUrl:project.url,branch:project.branch,remote:'origin',strictDefaultBranch:true,
    repositorySubmodules:submodules,
    submodules:submodules&&project.knowledge===project.repository+'/wiki'?[{name:'wiki',path:'wiki'}]:[]};
  }
@@ -97,12 +122,24 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
    await log(binding,agentId,{repository:project?.repository??'Agent Repo',stage:'仓库同步',status:skipped?'skipped':'failed',reason:result?.reason??'仓库准备失败。',...(result?.code?{code:result.code,cause:result.reason}:{}),effect:skipped?'已跳过同步，继续使用本地资料；技能及角色仍需通过校验。':'准备未通过'});
    if(skipped)return {...result,skipped:true};
    if(/^AGENT_REPO_GIT_[A-Z_]+$/.test(result?.code??''))throw diagnosticError({code:result.code,cause:result.reason});
-   throw new PreparationError(result?.reason??'仓库准备失败。');
+   throw Object.assign(new PreparationError(result?.reason??'仓库准备失败。'),{code:result?.code});
   }
   return result;
  }
  async function prepareScope(binding,options) {
   options={...options,knowledgeDefaults:config.knowledge};
+  if(options.backgroundSync===true&&options.syncSubmodules!==true){
+   let release;
+   try{
+    if(enabled(binding))await checkWorkspace(binding,options.agentId);
+    const registry=await readRegistry(binding),project=await select(registry.projects,options);
+    release=await acquireProjectReadLease(project.paths.repository,{timeoutMs:5000});
+    await checkSharedProject(project);
+    const catalog=await repositorySkills(binding,options);await assertRegistry(binding,registry);await validate({catalog});
+    return {...catalog,synchronization:enqueueProject(binding,options.agentId,project)};
+   }catch(error){await log(binding,options.agentId,{repository:options.repository??options.projectId??'Project Repo',stage:'本地项目校验',status:'failed',...preparationDiagnostic(error),effect:'未修改本地副本；执行范围准备未通过'});throw error;}
+   finally{await release?.();}
+  }
   if(!enabled(binding))return repositorySkills(binding,options);
   return serializePreparation(binding.repo,async()=>{
    await checkWorkspace(binding,options.agentId);
@@ -165,7 +202,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
     const ids=Object.keys(registry.projects);
     // defaultProject is an operator planning hint, never a task fallback.
     const project=ids.length===1?registry.projects[ids[0]]:undefined;
-    if(project)await sync(binding,agentId,project,{root:false});
+    if(project){await checkSharedProject(project);enqueueProject(binding,agentId,project);}
     const catalog=project?await repositorySkills(binding,{agentId,hostConfig:getHostConfig(),projectId:project.projectId,knowledgeDefaults:config.knowledge}):await agentSkills(binding,{agentId,hostConfig:getHostConfig()});
     await assertRegistry(binding,registry);
     await validate({catalog});
@@ -223,6 +260,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
    const project=registry.projects[record.catalog.projectId];
    if(!project||record.catalog.cwd!==project.paths.repository||record.catalog.snapshot.projectRepository!==project.repository)throw new PreparationError('项目登记范围与本轮技能快照不一致，本轮已停止。');
    await checkProject(project);
+  await checkProjectChildren(project.paths.repository,project.branch);
   }
   await assertRegistry(binding,registry);
  }
@@ -239,5 +277,5 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   }catch(error){await log(binding,context.agentId,{repository:'Agent Repo',stage:'模型准备校验',status:'failed',reason:failureText(error),...preparationDiagnostic(error),runId:context.runId,effect:'本轮未开始'});return {outcome:'block',reason:preparationDiagnostic(error).code,message:failureText(error),category:'repository_sync'};}
  }
  function endRun(context) {if(context.runId)runs.delete(JSON.stringify([context.agentId,context.sessionKey,context.runId]));}
- return {scheduledSync,beforeDispatch,prepareScope,beginPrompt,capturePrompt,promptFailure,beforeAgentRun,endRun};
+ return {projectSync,scheduledSync,beforeDispatch,prepareScope,beginPrompt,capturePrompt,promptFailure,beforeAgentRun,endRun};
 }
