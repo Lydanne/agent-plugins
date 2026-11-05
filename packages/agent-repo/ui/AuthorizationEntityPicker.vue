@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,ref,watch} from 'vue';
-import {Button,NativeSelect,StatusNotice,useHostContext} from '@openclaw-plugins/control-ui-kit';
+import {Button,Input,NativeSelect,StatusNotice,useHostContext} from '@openclaw-plugins/control-ui-kit';
 import {useManagementRequest} from './management-request';
 interface Entity {id:string;name:string;type:string;sourceId:string;sourceLabel?:string}
 interface Relation {fromId:string;toId:string;type:string}
@@ -9,6 +9,7 @@ const props=defineProps<{agentId:string;entityType:string;modelValue:string;disa
 const emit=defineEmits<{ 'update:modelValue':[value:string];validity:[value:boolean] }>();
 const context=useHostContext(),request=useManagementRequest(context,()=>props.agentId,'agent-repo','authorization-');
 const directory=ref<Directory|null>(null),loading=ref(false),error=ref(''),organization=ref(''),departments=ref<string[]>([]);
+const search=ref('');
 const other='__unassociated__';
 const entities=computed(()=>directory.value?.entities??[]),byId=computed(()=>new Map(entities.value.map(e=>[e.id,e])));
 const organizations=computed(()=>entities.value.filter(e=>e.type==='organization'));
@@ -60,6 +61,9 @@ async function load(){const valid=request.capture();loading.value=true;error.val
 watch(()=>props.agentId,()=>{organization.value='';departments.value=[];void load();},{immediate:true});
 watch(()=>props.entityType,()=>{emit('update:modelValue','');organization.value='';departments.value=[];});
 watch(()=>props.modelValue,(value)=>{if(value&&value!==departments.value.at(-1)&&value!==organization.value&&!people.value.some(e=>e.id===value))restore();});
+const searchResults=computed(()=>search.value.trim()?entities.value.filter(e=>e.type===props.entityType&&[e.name,e.id,e.sourceLabel].some(v=>v?.toLowerCase().includes(search.value.trim().toLowerCase()))):[]);
+const fullPath=(e:Entity)=>pathTo(e.id).map(id=>byId.value.get(id)?.name??id).join(' / ');
+function chooseSearch(value:string){emit('update:modelValue',value);search.value='';}
 const selected=computed(()=>byId.value.get(props.modelValue));
 watch([selected,loading,()=>props.entityType],()=>emit('validity',!loading.value&&selected.value?.type===props.entityType),{immediate:true});
 </script>
@@ -68,10 +72,11 @@ watch([selected,loading,()=>props.entityType],()=>emit('validity',!loading.value
   <p v-if="loading" role="status">正在读取组织和实体…</p>
   <StatusNotice v-if="error" tone="error">{{error}} <Button type="button" variant="outline" @click="load">重试</Button></StatusNotice>
   <template v-if="directory">
+   <label>搜索实体<Input v-model="search" aria-label="搜索实体" placeholder="按姓名、名称或 ID 查找" :disabled="disabled"/></label><label v-if="search.trim()">搜索结果（{{searchResults.length}}）<NativeSelect aria-label="实体搜索结果" :disabled="disabled" model-value="" @update:model-value="chooseSearch(String($event))"><option value="">{{searchResults.length?'请选择搜索结果':'没有匹配实体'}}</option><option v-for="item in searchResults" :key="item.id" :value="item.id">{{fullPath(item)}} · {{label(item)}}</option></NativeSelect></label>
    <label>组织<NativeSelect aria-label="组织" :model-value="organization" :disabled="disabled||loading" @update:model-value="chooseOrganization(String($event))"><option value="">请选择组织</option><option v-for="item in organizations" :key="item.id" :value="item.id">{{label(item)}}</option><option v-if="entityType!=='organization'&&detached.length" :value="other">未关联组织的实体</option></NativeSelect></label>
    <label v-for="(options,index) in levels" :key="index">{{index===0?'部门':'下级部门 '+index}}<NativeSelect :aria-label="index===0?'部门':'下级部门 '+index" :model-value="departments[index]??''" :disabled="disabled||loading" @update:model-value="chooseDepartment(index,String($event))"><option value="">{{index===0?'请选择部门':'停留在当前部门'}}</option><option v-for="item in options" :key="item.id" :value="item.id">{{label(item)}}</option></NativeSelect></label>
-   <label v-if="entityType==='person'&&organization">人员<NativeSelect aria-label="人员" :model-value="modelValue" :disabled="disabled||loading||!people.length" @update:model-value="emit('update:modelValue',String($event))"><option value="">{{people.length?'请选择人员':'当前范围暂无直属人员'}}</option><option v-for="item in people" :key="item.id" :value="item.id">{{label(item)}}</option></NativeSelect></label>
-   <p v-if="selected">已选择：{{selected.name}} <small>{{selected.sourceLabel}}</small></p>
+   <label v-if="entityType==='person'&&organization">人员<NativeSelect aria-label="人员" :model-value="modelValue" :disabled="disabled||loading||!people.length" @update:model-value="emit('update:modelValue',String($event))"><option value="">{{people.length?'请选择人员':levels.length>departments.length?'请继续选择部门':'当前范围暂无直属人员'}}</option><option v-for="item in people" :key="item.id" :value="item.id">{{label(item)}}</option></NativeSelect></label>
+   <p v-if="selected">已选择：{{fullPath(selected)}} <small>{{selected.sourceLabel}}</small></p>
    <StatusNotice v-else-if="modelValue" tone="warning">原绑定实体已停用或不可读取，请重新选择后保存。</StatusNotice>
    <p v-if="!entities.length">暂无可选实体，请先在实体库中同步组织和人员资料。</p>
   </template>
