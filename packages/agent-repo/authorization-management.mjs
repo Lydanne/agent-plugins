@@ -11,11 +11,23 @@ import {createEntityStore} from './entities.mjs';
 export function registerAuthorizationManagement(api,config,runtime,{openGraph=createEntityStore,readCatalog}={}){
  const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);
  if(!register)return;
- for(const action of ['catalog','save','mode','defaults','scan','classify','review','simulate','publish','previewDefaults','recomputeDefaults'])register({id:'authorization-'+action,description:'Current Agent permission administration',requiredScopes:[action==='catalog'?'operator.read':'operator.admin'],handler:async ctx=>{
+ for(const action of ['catalog','entityOptions','save','mode','defaults','scan','classify','review','simulate','publish','previewDefaults','recomputeDefaults'])register({id:'authorization-'+action,description:'Current Agent permission administration',requiredScopes:[action==='catalog'?'operator.read':'operator.admin'],handler:async ctx=>{
   try{
    const id=ctx.agentId,binding=config.agents[id];if(!binding)throw Error('Unknown Agent');
    const scopes=ctx.client?.scopes??[];if(!scopes.includes('operator.admin')&&!scopes.includes(action==='catalog'?'operator.read':'operator.admin'))throw Error('Permission administration requires operator.admin');
    const store=runtime.storeFor(id),actor='operator:'+String(ctx.client?.connId??'unknown');
+   if(action==='entityOptions'){
+    if(Object.keys(ctx.payload??{}).length)throw Error('Invalid entity options arguments');
+    const graph=openGraph(binding.repo),entities=[],relations=[];
+    function collect(method,input,key,target,max){
+     let offset=0;
+     for(;;){const page=graph[method]({...input,offset,limit:100});target.push(...page[key]);if(target.length>max)throw Error('实体资料量较大，暂无法读取完整选择列表');if(page.nextOffset==null)break;if(page.nextOffset<=offset)throw Error('Invalid entity pagination');offset=page.nextOffset;}
+    }
+    for(const typeId of ['organization','department','person'])collect('list',{typeId},'entities',entities,10000);
+    for(const typeId of ['belongs_to','parent_department','member_of'])collect('relations',{typeId,status:'active'},'relations',relations,30000);
+    const active=entities.filter(entity=>entity.status==='active'),ids=new Map(active.map(entity=>[entity.id,entity]));
+    return {ok:true,result:{agentId:id,entities:active.map(entity=>({id:entity.id,name:entity.name,type:entity.typeId,sourceId:entity.sourceId,sourceLabel:[entity.source?.namespace,entity.source?.scope].filter(Boolean).join(' · ')})),relations:relations.filter(edge=>ids.has(edge.fromId)&&ids.has(edge.toId)&&ids.get(edge.fromId).sourceId===edge.sourceId&&ids.get(edge.toId).sourceId===edge.sourceId).map(edge=>({fromId:edge.fromId,toId:edge.toId,type:edge.typeId}))}};
+   }
    if(action==='catalog')return {ok:true,result:{agentId:id,mode:store.mode(),canAdmin:scopes.includes('operator.admin'),actions:permissionActions,groups:store.list('groups'),resources:store.list('resources').map(resource=>({...resource,reviewEligible:canReviewResource(resource)})),rules:store.list('rules'),bindings:store.list('bindings'),audit:store.history(),policyVersions:store.policyVersions()}};
    const p=ctx.payload??{};
    if(['previewDefaults','recomputeDefaults'].includes(action)){if(Object.keys(p).some(k=>!['resourceId','context','expectedRevision'].includes(k)))throw Error('Invalid default preview arguments');return {ok:true,result:store[action](p.resourceId,{context:p.context??{},expectedRevision:p.expectedRevision,actor})};}
@@ -53,7 +65,7 @@ export function registerAuthorizationManagement(api,config,runtime,{openGraph=cr
    if(!Object.hasOwn(methods,p.kind))throw Error('Invalid collection');
    if(p.kind==='bindings'){
     const entity=openGraph(binding.repo).get(p.value.entityId).entity;
-    if(!entity||entity.typeId!==p.value.entityType)throw Error('Entity reference is missing or has a different type');
+    if(!entity||entity.status!=='active'||entity.typeId!==p.value.entityType)throw Error('Entity reference is missing or has a different type');
    }
    const value={...p.value};delete value.revision;
    if(['bindings','resources'].includes(p.kind))value.agentId=id;

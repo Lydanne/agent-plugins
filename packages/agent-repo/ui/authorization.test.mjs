@@ -4,6 +4,7 @@ import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {browserFixture,uiContext,settle,click} from '../../../scripts/control-ui-test.mjs';
 const catalog={agentId:'main',mode:'audit',canAdmin:true,actions:['discover','read','execute'],groups:[{id:'administrator',name:'管理员组',revision:1},{id:'internal',name:'内部组',revision:1},{id:'external',name:'外部组',revision:1}],resources:[],rules:[],bindings:[],audit:[]};
+const directory={agentId:'main',entities:[{id:'org',name:'测试组织',type:'organization'},{id:'department',name:'研发部',type:'department'},{id:'child',name:'平台组',type:'department'},{id:'person',name:'测试人员',type:'person'},{id:'loose',name:'未关联人员',type:'person'}],relations:[{fromId:'department',toId:'org',type:'belongs_to'},{fromId:'child',toId:'org',type:'belongs_to'},{fromId:'child',toId:'department',type:'parent_department'},{fromId:'person',toId:'child',type:'member_of'}]};
 test('permission center renders built-in groups without mutating and offers admin actions',async()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
  const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:catalog};});ctx.props={...ctx.props,section:'authorization'};
@@ -104,12 +105,12 @@ test('scanned tool review requires classified behavior and explicit confirmation
 test('new department bindings default to direct members and preserve explicit descendants on edit',async()=>{
  const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
  const binding={id:'department-binding',revision:1,groupId:'internal',entityId:'department',entityType:'department',membership:'descendants',status:'active'};
- const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:{...catalog,bindings:[binding]}};});ctx.props={...ctx.props,section:'authorization'};
+ const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:params.actionId==='authorization-entityOptions'?directory:{...catalog,bindings:[binding]}};});ctx.props={...ctx.props,section:'authorization'};
  f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'实体绑定');await settle();click(f.container,'新增实体绑定');await settle();
  const field=label=>[...f.container.querySelectorAll('label')].find(node=>node.textContent.startsWith(label));
  const type=field('实体类型').querySelector('select');type.value='department';type.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();
  assert.equal(field('覆盖范围').querySelector('select').value,'members');
- const entity=field('实体 ID').querySelector('input');entity.value='department';entity.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
+ for(const [label,value] of [['组织','org'],['部门','department']]){const select=field(label).querySelector('select');select.value=value;select.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();}
  f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
  assert.equal(calls.find(call=>call.actionId==='authorization-save').payload.value.membership,'members');
  click(f.container,'编辑');await settle();assert.equal(field('覆盖范围').querySelector('select').value,'descendants');
@@ -124,4 +125,19 @@ test('editing a multi-resource rule keeps each existing resource ID separate',as
  assert.equal(input.value,ids.join(' '));input.value+=' tool://fixture/three';input.dispatchEvent(new f.window.Event('input',{bubbles:true}));await settle();
  f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
  assert.deepEqual(calls.find(call=>call.actionId==='authorization-save').payload.value.selector.resourceIds,[...ids,'tool://fixture/three']);
+});
+
+test('entity cascade selects nested people, clears lower levels and supports unassociated people',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
+ const ctx=uiContext(async(_method,p)=>{calls.push(p);return {ok:true,result:p.actionId==='authorization-entityOptions'?directory:catalog};});ctx.props={...ctx.props,section:'authorization'};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();click(f.container,'实体绑定');await settle();click(f.container,'新增实体绑定');await settle();
+ const field=label=>[...f.container.querySelectorAll('label')].find(n=>n.textContent.startsWith(label))?.querySelector('select');
+ const choose=async(label,value)=>{const select=field(label);assert.ok(select,label);select.value=value;select.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();};
+ await choose('组织','org');await choose('部门','department');await choose('下级部门 1','child');await choose('人员','person');
+ assert.ok(f.container.textContent.includes('已选择：测试人员'));
+ await choose('组织','__unassociated__');assert.equal(field('人员').value,'');assert.equal(field('部门'),undefined);
+ const save=[...f.container.querySelectorAll('button')].find(b=>b.textContent==='保存');assert.equal(save.disabled,true);
+ await choose('人员','loose');assert.equal(save.disabled,false);
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ assert.equal(calls.find(p=>p.actionId==='authorization-save').payload.value.entityId,'loose');
 });

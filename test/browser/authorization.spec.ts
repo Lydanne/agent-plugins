@@ -34,3 +34,14 @@ for(const width of [400,1280])test(`resource review requires explicit confirmati
  const calls=await page.evaluate(()=>(window as any).fixture.calls.filter((call:any)=>call.actionId==='authorization-review'));
  expect(calls).toHaveLength(1);expect(calls[0].payload).toEqual({resourceId:'tool://fixture/lookup',expectedRevision:2,confirmed:true});
 });
+
+for(const width of [400,1280])test(`entity cascade follows organization and nested departments at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900});await page.goto('/?section=authorization');
+ await page.getByRole('button',{name:'实体绑定',exact:true}).click();await page.getByRole('button',{name:'新增实体绑定',exact:true}).click();
+ await page.getByLabel('组织',{exact:true}).selectOption('org');await page.getByLabel('部门',{exact:true}).selectOption('dept');
+ await page.getByLabel('下级部门 1',{exact:true}).selectOption('child');await page.getByLabel('人员',{exact:true}).selectOption('person');
+ await expect(page.getByText('已选择：张三')).toBeVisible();await expect(page.getByRole('button',{name:'保存',exact:true})).toBeEnabled();
+ await page.screenshot({path:'.tmp/entity-picker-'+width+'.png',fullPage:true});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+ await page.getByLabel('组织',{exact:true}).selectOption('');await expect(page.getByRole('button',{name:'保存',exact:true})).toBeDisabled();
+});
