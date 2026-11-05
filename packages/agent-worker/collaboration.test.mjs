@@ -279,3 +279,27 @@ test('only explicit source revocation suppresses supplements and rechecks author
   }finally{f.close();}
  }
 });
+
+test('supplement scan groups before sorting and rechecks changed receipts before observation',async()=>{
+ const f=fixture('completed');try{
+  const directory=join(f.root,'supplements');mkdirSync(directory);
+  const make=(jobId,createdAt)=>({supplementId:randomUUID(),jobId,createdAt,status:'waiting',question:f.q});
+  const later=make(f.id,20),earlier=make(f.id,10),other=make(randomUUID(),1);
+  for(const record of [later,earlier,other])writeJson(join(directory,record.supplementId+'.json'),record);
+  const scan=await f.jobs.supplementScan();
+  assert.deepEqual(scan.get(f.id).map(v=>v.record.supplementId),[earlier.supplementId,later.supplementId]);
+  writeJson(join(directory,earlier.supplementId+'.json'),{...earlier,status:'suppressed',reason:'source_invalid',notificationSuppressed:true});
+  const events=[];await f.jobs.processSupplements(f.id,f.scope,()=>true,async e=>events.push(e),scan);
+  assert.deepEqual(events.map(e=>e.supplementId),[later.supplementId]);
+ }finally{f.close();}
+});
+
+test('collaboration inventories supplements once for all historical jobs in a tick',async()=>{
+ const f=fixture('completed');let service;try{
+  for(let i=0;i<12;i++){const id=randomUUID();writeJson(join(f.root,id+'.json'),{...f.job,jobId:id,questions:[]});}
+  let scans=0,processed=0;const snapshot=new Map();
+  service=createCollaborationService({root:f.root,jobs:{supplementScan:async()=>{scans++;return snapshot;},processSupplements:async(id,scope,authorize,observe,scan)=>{assert.equal(scan,snapshot);processed++;}},bridge:{authorizeReply:()=>true}});
+  service.start({scheduler:{schedule:()=>({cancel(){},async stop(){}})}});
+  await service.tick();assert.equal(scans,1);assert.equal(processed,13);
+ }finally{await service?.stop();f.close();}
+});

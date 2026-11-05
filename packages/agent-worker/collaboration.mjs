@@ -1,7 +1,8 @@
 import {createHash} from 'node:crypto';
-import {existsSync,mkdirSync,readdirSync} from 'node:fs';
+import {existsSync,mkdirSync} from 'node:fs';
+import {readFile,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
-import {readJson,writeJson} from './jobs.mjs';
+import {writeJson} from './jobs.mjs';
 import {getPeopleService} from './dist/people-api.mjs';
 import {authorizeTaskOperation} from './dist/authorization-api.mjs';
 
@@ -38,13 +39,14 @@ export function createCollaborationService({root,jobs,bridge,personCall=localPer
  async function scan(){
   if(stopped||!existsSync(root))return;
   mkdirSync(directory,{recursive:true,mode:0o700});
-  for(const name of readdirSync(root).filter(n=>/^[0-9a-f-]{36}\.json$/.test(n))){
+  const supplements=await jobs.supplementScan?.();
+  for(const name of (await readdir(root)).filter(n=>/^[0-9a-f-]{36}\.json$/.test(n))){
    try{
-   let job=readJson(join(root,name));const p=job.provenance;
+   let job=JSON.parse(await readFile(join(root,name),'utf8'));const p=job.provenance;
    if(!p?.sessionKey)continue;
    const authorized=bridge.authorizeReply?.(p);
    if(authorized!==true){if(authorized===false)await jobs.suppressSupplements?.(job.jobId,p.sessionKey,v=>bridge.authorizeReply?.(v)===false);continue;}
-   const file=join(directory,name),state=existsSync(file)?readJson(file):{events:{},calls:{}};
+   const file=join(directory,name),state=existsSync(file)?JSON.parse(await readFile(file,'utf8')):{events:{},calls:{}};
    // Model-chosen IDs are dictionary keys, including valid prototype names.
    state.calls=Object.assign(Object.create(null),state.calls??{});
    const observe=async(key,event)=>{
@@ -61,8 +63,8 @@ export function createCollaborationService({root,jobs,bridge,personCall=localPer
      }catch{logger.warn?.('Worker question card update deferred: '+job.jobId);}
     }
    }
-   await jobs.processSupplements?.(job.jobId,p.sessionKey,v=>bridge.authorizeReply?.(v),async event=>observe('supplement:'+event.supplementId+':'+event.kind,event));
-   job=readJson(join(root,name));
+   await jobs.processSupplements?.(job.jobId,p.sessionKey,v=>bridge.authorizeReply?.(v),async event=>observe('supplement:'+event.supplementId+':'+event.kind,event),supplements);
+   job=JSON.parse(await readFile(join(root,name),'utf8'));
    const q=job.contextRequest,call=q?.pluginCall;
    if(job.status==='awaiting_main'&&call){
     const key=call.callId,body=JSON.stringify(call);let record=state.calls[key];

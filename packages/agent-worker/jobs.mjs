@@ -12,6 +12,7 @@ import {tryLock,acquireLock} from './locks.mjs';
 import {memoryHandoffSummary} from './memory-context.mjs';
 import {hasSourceProvenance} from './source-tasks.mjs';
 import {mkdirSync,readFileSync,writeFileSync,appendFileSync,renameSync,existsSync,readdirSync} from 'node:fs';
+import {readFile,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
@@ -617,10 +618,27 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
     }
    }finally{release();}
   },
-  async processSupplements(jobId,scope,authorize,observe){
-   const directory=join(root,'supplements');if(!existsSync(directory))return;
-   for(const name of readdirSync(directory).filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f)).sort((a,b)=>{const x=readJson(join(directory,a)),y=readJson(join(directory,b));return x.kind==='steering'&&y.kind==='steering'?steeringAdmissionOrder(x,y):(x.acceptedAt??x.createdAt)-(y.acceptedAt??y.createdAt)||(x.sequence??0)-(y.sequence??0)||a.localeCompare(b);})){
-    let s=readJson(join(directory,name));if(s.supplementId+'.json'!==name||s.jobId!==jobId)continue;
+  async supplementScan(){
+   const directory=join(root,'supplements'),byJob=new Map();
+   let names;try{names=await readdir(directory);}catch(error){if(error.code==='ENOENT')return byJob;throw error;}
+   for(const name of names.filter(f=>/^[0-9a-f-]{36}\.json$/i.test(f))){
+    const record=JSON.parse(await readFile(join(directory,name),'utf8'));
+    if(record.supplementId+'.json'!==name)continue;
+    const records=byJob.get(record.jobId)??[];records.push({name,record});byJob.set(record.jobId,records);
+   }
+   for(const records of byJob.values())records.sort((a,b)=>{
+    const x=a.record,y=b.record;
+    return x.kind==='steering'&&y.kind==='steering'?steeringAdmissionOrder(x,y):(x.acceptedAt??x.createdAt)-(y.acceptedAt??y.createdAt)||(x.sequence??0)-(y.sequence??0)||a.name.localeCompare(b.name);
+   });
+   return byJob;
+  },
+  async processSupplements(jobId,scope,authorize,observe,scan){
+   const directory=join(root,'supplements');
+   // One async inventory per coordinator tick; never read files in a comparator.
+   // Only discovery is shared. Re-read receipts before observing or dispatching.
+   const records=(scan??await this.supplementScan()).get(jobId)??[];
+   for(const {name} of records){
+    let s=JSON.parse(await readFile(join(directory,name),'utf8'));if(s.supplementId+'.json'!==name||s.jobId!==jobId)continue;
     const supplementDetails=()=>{
      if(s.kind!=='steering'||!s.provenance)return {};
      const provenance={...s.provenance,attachmentSources:[...(s.provenance.attachmentSources??[]),...(s.attachmentSource?[s.attachmentSource]:[])]};
