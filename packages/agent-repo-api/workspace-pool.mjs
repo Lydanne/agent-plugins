@@ -15,13 +15,13 @@ async function safePath(root,path){
  return full;
 }
 async function atomic(file,value){const tmp=file+'.'+randomUUID();await writeFile(tmp,JSON.stringify(value,null,2),{mode:0o600});await rename(tmp,file);}
-async function transaction(root,fn){
+async function transaction(root,fn,{readOnly=false}={}){
  root=await realpath(root);const dir=await safePath(root,'workspace');await mkdir(dir,{recursive:true,mode:0o700});
  const release=await acquireLock(join(dir,'state.lock'));
  try{const file=await safePath(root,'workspace/state.json');let state;
  try{state=JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;state={version:1,revision:0,workspaces:{}};}
  if(state.version!==1||!state.workspaces||typeof state.workspaces!=='object'||Array.isArray(state.workspaces))throw Error('Invalid workspace state; allocation withheld');
- const result=await fn(state);state.revision++;await atomic(file,state);return result;
+ const result=await fn(state);if(!readOnly){state.revision++;await atomic(file,state);}return result;
  }finally{release();}
 }
 // Called only with a trusted, committed project registration and prepared skill scope.
@@ -37,13 +37,16 @@ export async function workspacePlan(project,result){
   repositories.push({path,source:location,url,baseBranch:branch,baseSha});
  };
  await add('.',project.url,project.branch);
- let modules='';try{modules=await poolGit(source,['config','--blob','HEAD:.gitmodules','--get-regexp','^submodule\\..*\\.path$']);}catch(e){if(![1,128].includes(e.code))throw e;}
+ // Layout belongs to the admitted project commit, not a later background sync.
+ const modulesBlob=repositories[0].baseSha+':.gitmodules';
+ let modules='';try{modules=await poolGit(source,['config','--blob',modulesBlob,'--get-regexp','^submodule\\..*\\.path$']);}catch(e){if(![1,128].includes(e.code))throw e;}
  for(const row of modules.split('\n').filter(Boolean)){
   const [key,path]=row.split(/\s+/);if(!/^(?:wiki|repositories\/[A-Za-z0-9][A-Za-z0-9._-]*)$/.test(path))throw Error('Unsupported workspace repository layout');
-  const prefix=key.slice(0,-4),url=await poolGit(source,['config','--blob','HEAD:.gitmodules','--get',prefix+'url']);
-  let branch;try{branch=await poolGit(source,['config','--blob','HEAD:.gitmodules','--get',prefix+'branch']);}catch{branch=project.branch;}
+  const prefix=key.slice(0,-4),url=await poolGit(source,['config','--blob',modulesBlob,'--get',prefix+'url']);
+  let branch;try{branch=await poolGit(source,['config','--blob',modulesBlob,'--get',prefix+'branch']);}catch{branch=project.branch;}
   await add(path,url,branch);
-  const tree=await poolGit(source,['ls-tree','HEAD','--',path]);if(tree.startsWith('160000 '))repositories.at(-1).baseSha=tree.split(/\s+/)[2];
+  // Projects are default-branch copies: use the captured child HEAD, not the
+  // parent gitlink, which intentionally stays unchanged during child sync.
  }
  const target=result.repository===project.repository?'.':result.repository.slice(project.repository.length+1);
  if(!repositories.some(r=>r.path===target))throw Error('Selected repository is not in workspace sources');
@@ -175,7 +178,7 @@ export async function prepareWorkspace(plan,lease,{install=installDependencies}=
  }catch(error){await update(plan,lease,s=>{s.status='blocked';s.error='Workspace initialization failed; directory preserved. Check clone, branch and dependencies.';});throw Error('Workspace initialization failed; directory preserved. Check clone, branch and dependencies.');}
 }
 export async function validateWorkspace(plan,lease,{settling=false}={}){
- const s=await transaction(plan.root,state=>structuredClone(state.workspaces[lease.id]));
+ const s=await transaction(plan.root,state=>structuredClone(state.workspaces[lease.id]),{readOnly:true});
  if(!s||s.assignmentId!==lease.assignmentId||s.owner!==lease.owner||!((settling?['ready','running','held','checking','idle']:['ready','running','held']).includes(s.status)||(settling&&releaseBlocked(s))))throw Error('Workspace assignment is not executable');
  if(await safePath(plan.root,'workspace/'+s.id)!==s.path||await realpath(s.path)!==s.path)throw Error('Workspace path changed');
  for(const repo of s.repositories){const cwd=repo.path==='.'?s.path:await safePath(s.path,repo.path);
@@ -260,13 +263,16 @@ export async function restoreParkedWorkspace(plan,expected,{agentId,checkpointId
   if(slot.status!=='idle')return null;
   checkpoint.status='restoring';
   state.workspaces[expected.id]={...checkpoint.lease,status:'restoring'};
-  return structuredClone(checkpoint);
+  // Only completed checkpoint generations in this exact slot can justify moving a
+  // reused branch name. Their immutable checkpoint refs retain the other HEAD.
+  const protectedCheckpoints=[...Object.values(state.checkpoints??{}),...Object.values(state.checkpointHistory??{})].filter(other=>other.binding.assignmentId!==checkpoint.binding.assignmentId&&['parked','restored'].includes(other.status)&&other.binding.workspaceId===checkpoint.binding.workspaceId&&other.binding.workspacePath===checkpoint.binding.workspacePath&&other.binding.projectId===checkpoint.binding.projectId).map(other=>structuredClone(other.binding));
+  return {...structuredClone(checkpoint),protectedCheckpoints};
  });
  if(!claimed)return null;
  if(claimed.acknowledged)return claimed.acknowledged;
  try {
   const {restoreWorkspaceCheckpoint}=await import('./workspace-checkpoint-transaction.mjs');
-  await restoreWorkspaceCheckpoint(join(plan.root,'workspace'),claimed.binding);
+  await restoreWorkspaceCheckpoint(join(plan.root,'workspace'),claimed.binding,{protectedCheckpoints:claimed.lease.allowBranchSwitch?claimed.protectedCheckpoints:[]});
   return await transaction(plan.root,state=>{
    const slot=state.workspaces[expected.id],checkpoint=state.checkpoints[expected.assignmentId];
    if(slot?.assignmentId!==expected.assignmentId||slot.status!=='restoring'||checkpoint.status!=='restoring')throw Error('Restore assignment changed');

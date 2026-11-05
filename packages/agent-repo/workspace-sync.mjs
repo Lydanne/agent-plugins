@@ -1,4 +1,4 @@
-import {projectHasReaders} from './dist/project-read-lease.mjs';
+import {projectHasReaders,setProjectFetchReadable} from './dist/project-read-lease.mjs';
 import {gitSyncDiagnostic} from './preparation-error.mjs';
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -144,6 +144,7 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       lock = await open(lockPath, "wx", 0o600);
     }
     await lock.writeFile(String(process.pid));
+    await setProjectFetchReadable(root,false);
     if(await projectHasReaders(root))throw new SyncBlocked("项目正在被 Worker 只读任务使用，延后同步", "PROJECT_IN_USE");
     const check = async (cwd, allowDetached, targetBranch = branch) => {
       if (await realpath(await git(cwd, ["rev-parse", "--show-toplevel"])) !== cwd) throw new SyncBlocked(`${repo}尚未初始化`);
@@ -173,8 +174,12 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       await progress(stage, "started", {branch: targetBranch});
       await check(cwd, allowDetached, targetBranch);
       stage = "拉取";
-      await progress(stage, "started", {branch: targetBranch});
-      await git(cwd, ["fetch", "--no-tags", "--no-recurse-submodules", targetRemote, `refs/heads/${targetBranch}:refs/remotes/${targetRemote}/${targetBranch}`]);
+      await setProjectFetchReadable(root,true);
+      try{await progress(stage, "started", {branch: targetBranch});await git(cwd, ["fetch", "--no-tags", "--no-recurse-submodules", targetRemote, `refs/heads/${targetBranch}:refs/remotes/${targetRemote}/${targetBranch}`]);}
+      finally{await setProjectFetchReadable(root,false);}
+      // Readers admitted during a slow fetch keep their captured worktree. The
+      // background queue retries later; never wait for or interrupt that task.
+      if(await projectHasReaders(root))throw new SyncBlocked("项目正在被 Worker 只读任务使用，延后同步", "PROJECT_IN_USE");
       stage = "检查";
       await check(cwd, allowDetached, targetBranch);
       // An up-to-date merge alone could accept local-only commits. Verify ancestry.
@@ -339,6 +344,7 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
     return { ok: false, reason, ...(gitFailure ? {code:gitFailure.code} : {}), ...(diagnostic ? {diagnostic} : {}), ...(!signal.aborted && error instanceof SyncBlocked && error.code ? {code: error.code} : {}) };
   } finally {
     if (lock) {
+      await setProjectFetchReadable(root,false).catch(()=>{});
       await lock.close().catch(() => {
       });
       await unlink(lockPath).catch(() => {

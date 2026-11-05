@@ -1,11 +1,26 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {mkdir,readFile,writeFile,unlink,readdir,access} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,unlink,readdir,stat,rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 const exec=promisify(execFile);
-const exists=async file=>{try{await access(file);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}};
-async function paths(cwd){const {stdout}=await exec('git',['rev-parse','--absolute-git-dir'],{cwd,timeout:5000});const root=stdout.trim();return {readers:join(root,'agent-repo-readers'),writer:join(root,'ada-workspace-sync.lock')};}
+async function paths(cwd){const {stdout}=await exec('git',['rev-parse','--absolute-git-dir'],{cwd,timeout:5000});const root=stdout.trim();return {readers:join(root,'agent-repo-readers'),writer:join(root,'ada-workspace-sync.lock'),phase:join(root,'ada-workspace-sync.readable.json')};}
+const identity=s=>[s.dev,s.ino,s.ctimeMs,s.size].join(':');
+async function writerBlocksReaders({writer,phase}){
+ let body,metadata;try{body=await readFile(writer,'utf8');metadata=await stat(writer);}catch(error){if(error.code==='ENOENT')return false;throw error;}
+ const pid=Number(body.trim());if(!Number.isSafeInteger(pid)||pid<1)return true;
+ try{process.kill(pid,0);}catch(error){if(error.code==='ESRCH')return false;return true;}
+ try{const readable=JSON.parse(await readFile(phase,'utf8'));return readable.pid!==pid||readable.writer!==identity(metadata);}catch{return true;}
+}
+// The writer keeps its legacy PID lock throughout fetch. Only this matching
+// sidecar permits concurrent readers, and removing it precedes every checkout.
+export async function setProjectFetchReadable(cwd,readable){
+ const p=await paths(cwd);
+ if(!readable){await unlink(p.phase).catch(error=>{if(error.code!=='ENOENT')throw error;});return;}
+ if(Number((await readFile(p.writer,'utf8')).trim())!==process.pid)throw Error('Project sync lock ownership changed');
+ const body=JSON.stringify({pid:process.pid,writer:identity(await stat(p.writer))});
+ const temp=p.phase+'.'+randomUUID();try{await writeFile(temp,body,{flag:'wx',mode:0o600});await rename(temp,p.phase);}finally{await unlink(temp).catch(()=>{});}
+}
 // Sync owns writer before checking readers; readers publish then recheck writer.
 // This handshake prevents checkout while any Worker reads the shared project.
 export async function projectHasReaders(cwd){
@@ -16,12 +31,12 @@ export async function projectHasReaders(cwd){
  }return false;
 }
 export async function acquireProjectReadLease(cwd,{signal,timeoutMs=35000}={}){
- const {readers,writer}=await paths(cwd),deadline=Date.now()+timeoutMs;
+ const p=await paths(cwd),{readers}=p,deadline=Date.now()+timeoutMs;
  await mkdir(readers,{recursive:true,mode:0o700});const file=join(readers,randomUUID()+'.json');
  for(;;){signal?.throwIfAborted();
-  if(!await exists(writer)){
+  if(!await writerBlocksReaders(p)){
    await writeFile(file,JSON.stringify({pid:process.pid}),{flag:'wx',mode:0o600});
-   if(!await exists(writer))return async()=>{await unlink(file).catch(e=>{if(e.code!=='ENOENT')throw e;});};
+   if(!await writerBlocksReaders(p))return async()=>{await unlink(file).catch(e=>{if(e.code!=='ENOENT')throw e;});};
    await unlink(file);
   }
   if(Date.now()>=deadline)throw Error('Project synchronization is still active; retry after it settles');

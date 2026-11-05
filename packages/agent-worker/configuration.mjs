@@ -87,6 +87,7 @@ export function resolveQueueExecution(input={},params={}){
 export function executionFingerprint(config,{policyVersion}={}) {
  const keys=['cwd','cli','codexHome','model',...(config.modelSessionScope?['harness']:['reasoningEffort']),'approvalMode','executorInstructions','businessDataPolicy','skillsEnabled','skillDirectories','memoryRequired'];
  const value=keys.map(k=>[k,config[k]]);
+ if(config.directoryPolicy)value.push(['directoryPolicy',{version:config.directoryPolicy.version,mode:config.directoryPolicy.mode,originalApprovalMode:config.directoryPolicy.originalApprovalMode}]);
  if(config.hermesExecution)value.push(['hermesExecution',config.hermesIdentityVersion===2?hermesExecutionIdentity(config.hermesExecution):config.hermesExecution]);
  if(config.scopedSkillSnapshot?.projectRegistration)value.push(['projectRegistration',config.scopedSkillSnapshot.projectRegistration]);
  if(config.skillContextRoot)value.push(['skillContextRoot',config.skillContextRoot]);

@@ -579,3 +579,40 @@ test('readonly project admission rejects dirty sources and nondefault branches e
  await writeFile(join(root,'untracked.txt'),'keep');await assert.rejects(runtime.prepareScope(f.binding,options),/只读副本存在本地改动/);assert.equal(await readFile(join(root,'untracked.txt'),'utf8'),'keep');await rm(join(root,'untracked.txt'));
  await git(root,['switch','-c','feature']);await assert.rejects(runtime.prepareScope(f.binding,options),/分支或远端/);assert.equal((await git(root,['branch','--show-current'])).trim(),'feature');
 });
+test('prepared workspace callback remains inside the source read lease',async t=>{
+ const {projectHasReaders}=await import('./dist/project-read-lease.mjs');const f=await fixture(t),runtime=f.runtime();
+ let inspected=false;const result=await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',backgroundSync:true,withPreparedScope:async catalog=>{inspected=true;assert.equal(await projectHasReaders(catalog.cwd),true);return {...catalog,workspacePool:{fixture:true}};}});
+ assert.equal(inspected,true);assert.equal(result.workspacePool.fixture,true);assert.equal(await projectHasReaders(result.cwd),false);
+});
+test('Main prompt holds its project read lease until completion, failure or disposal',async t=>{
+ const {projectHasReaders}=await import('./dist/project-read-lease.mjs');const f=await fixture(t),runtime=f.runtime(),cwd=join(f.root,'projects/demo');
+ const prepare=async id=>{const context=runtime.beginPrompt({...runContext,runId:id,workspaceDir:f.root});await runtime.preparePrompt(context,async()=>{assert.equal(await projectHasReaders(cwd),true);await runtime.capturePrompt(context,await repositorySkills(f.binding));});return context;};
+ const completed=await prepare('completed');assert.equal(await projectHasReaders(cwd),true);await runtime.endRun(completed);assert.equal(await projectHasReaders(cwd),false);
+ const failed=runtime.beginPrompt({...runContext,runId:'failed',workspaceDir:f.root});await assert.rejects(runtime.preparePrompt(failed,async()=>{throw Error('fixture failed');}),/fixture failed/);await new Promise(resolve=>setTimeout(resolve,20));assert.equal(await projectHasReaders(cwd),false);
+ await prepare('disposed');await runtime.dispose();assert.equal(await projectHasReaders(cwd),false);
+});
+test('a long active Main prompt keeps its read lease beyond snapshot cache TTL',async t=>{
+ const {projectHasReaders}=await import('./dist/project-read-lease.mjs');const f=await fixture(t);let now=0;const runtime=f.runtime({clock:()=>now}),cwd=join(f.root,'projects/demo');
+ const context=runtime.beginPrompt({...runContext,workspaceDir:f.root});await runtime.preparePrompt(context,async()=>runtime.capturePrompt(context,await repositorySkills(f.binding)));
+ now=3600001;runtime.beginPrompt({...runContext,runId:'next'});assert.equal(await projectHasReaders(cwd),true);assert.equal((await runtime.beforeAgentRun({},context)).outcome,'pass');await runtime.endRun(context);assert.equal(await projectHasReaders(cwd),false);
+});
+test('a fetch exceeding the old admission limit accepts a new scope and preserves its snapshot',async t=>{
+ const {syncWorkspace}=await import('./workspace-sync.mjs');const f=await fixture(t),source=join(f.root,'projects/demo'),remote=join(f.root,'projects/remote.git'),seed=join(f.root,'projects/seed');
+ await git(f.root,['init','--bare','--initial-branch=main',remote]);await git(source,['remote','set-url','origin','ssh://fixture/remote.git']);await git(source,['push',remote,'main']);await git(f.root,['clone',remote,seed]);
+ const ssh=join(f.root,'projects/review-ssh.sh');await writeFile(ssh,'#!/bin/sh\nexec git-upload-pack '+JSON.stringify(remote)+'\n');await (await import('node:fs/promises')).chmod(ssh,0o700);
+ f.projects.demo.url='ssh://fixture/remote.git';await writeFile(join(f.root,'projects.json'),JSON.stringify({schemaVersion:1,projects:f.projects}));await commit(f.root);
+ await writeFile(join(seed,'new-code.txt'),'updated');await commit(seed);await git(seed,['push','origin','main']);
+ let entered,finish;const fetching=new Promise(resolve=>{entered=resolve;}),held=new Promise(resolve=>{finish=resolve;}),results=[];
+ const runtime=f.runtime({synchronize:async(settings,url)=>{const result=await syncWorkspace({...settings,gitEnvironment:{GIT_SSH_COMMAND:ssh,GIT_SSH_VARIANT:'simple'},onProgress:async event=>{if(event.stage==='拉取'&&event.status==='started'){entered();await held;}}},url);results.push(result);return result;}});
+ const original=await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',backgroundSync:true});const updating=runtime.projectSync.tick();await fetching;
+ // Hold the real engine in fetch past the former five-second admission limit.
+ await new Promise(resolve=>setTimeout(resolve,5100));
+ const context=runtime.beginPrompt({...runContext,workspaceDir:f.root});await runtime.preparePrompt(context,async()=>{const admitted=await runtime.prepareScope(f.binding,{agentId:'main',projectId:'demo',backgroundSync:true});assert.equal(admitted.snapshot.repositorySources.find(r=>r.root===source).head,original.snapshot.repositorySources.find(r=>r.root===source).head);await runtime.capturePrompt(context,admitted);});
+ finish();await updating;assert.equal(results[0].code,'PROJECT_IN_USE');assert.equal((await runtime.beforeAgentRun({},context)).outcome,'pass');await runtime.endRun(context);
+});
+test('a Main snapshot for one project does not starve another project background update',async t=>{
+ const f=await fixture(t,{count:2}),runtime=f.runtime();
+ await runtime.capturePrompt(runContext,await repositorySkills(f.binding,{projectId:'demo'}));
+ await runtime.prepareScope(f.binding,{agentId:'main',projectId:'another',backgroundSync:true});await runtime.projectSync.tick();
+ assert.deepEqual(f.calls.map(call=>call.settings.root),[join(f.root,'projects/another')]);await runtime.endRun(runContext);
+});

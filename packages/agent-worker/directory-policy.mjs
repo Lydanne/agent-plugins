@@ -9,7 +9,7 @@ export function applyDirectoryPolicy(runtime){
  const approvalMode=workspace?runtime.approvalMode:'read-only';
  const instructions=workspace?'目录策略：仅在宿主分配的 workspace 内按本任务授权写入或切换分支；不得修改 projects 源目录或其他工作区。':'目录策略：projects 是默认分支的只读资料副本。禁止文件写入、安装依赖和切换分支（含报告及临时文件）；结果内联返回，由宿主保存报告。需要落盘产物、修改代码或切换分支时，在原任务中说明需要独立 workspace，不在源目录尝试。';
  const base=runtime.directoryPolicy?runtime.executorInstructions.split('\n目录策略：')[0]:runtime.executorInstructions;
- return {...runtime,approvalMode,directoryPolicy:{version:1,mode},projectContext:{...runtime.projectContext,directoryMode:mode},executorInstructions:base+'\n'+instructions};
+ return {...runtime,approvalMode,directoryPolicy:{version:2,mode,originalApprovalMode:runtime.directoryPolicy?.originalApprovalMode??runtime.approvalMode},projectContext:{...runtime.projectContext,directoryMode:mode},executorInstructions:base+'\n'+instructions};
 }
 
 export function assertDirectoryReady(runtime){

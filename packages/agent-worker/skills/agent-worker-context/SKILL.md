@@ -32,7 +32,7 @@ CLI 执行输入的 kind=business_task/skill_catalog_refresh 仍是原 JSON 机�
 
 ## 独立 workspace
 
-只读查询、日志与源码分析在登记的默认项目目录执行，省略 `useWorkspace` 或传 false，不占工作区池，也不触发现场保存与恢复。需要写文件、生成落盘产物、安装依赖或切换分支的任务在已有授权内必须在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 使用 projects 默认分支只读副本，禁止在其中写入报告或临时文件；结果内联返回，由宿主在私有状态目录保存报告。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，可在本任务工作区按授权切换分支；提交推送只针对本任务成果，不修改 projects 源副本。workspace 沿用管理员执行权限，目录约定不构成跨目录操作授权。
+只读查询、日志与源码分析在登记的默认项目目录执行，省略 `useWorkspace` 或传 false，不占工作区池，也不触发现场保存与恢复。需要写文件、生成落盘产物、安装依赖或切换分支的任务在已有授权内必须在 run 传 `useWorkspace:true`，从所选项目 workspacePool 分配独立 clone。省略或 false 使用 projects 默认分支只读副本，禁止在其中写入报告或临时文件；结果内联返回，由宿主在私有状态目录保存报告。项目未启用池时报告错误，不回退共享目录；池满保留原 job 等待，结束 Main 当前轮，不重复 run 或轮询。reply、补充和超时继续继承分配；参数不授予额外修改、push、PR、合并或部署权限。宿主初始化分支并按 package.json 是否变化安装依赖，Worker 使用返回的 project.workspace 与 scopeDirectory，可在本任务工作区按授权切换分支；提交推送只针对本任务成果，不修改 projects 源副本。workspace 保留管理员更严的执行限制，宿主目录权限配置只放开本任务工作区及必要运行存储；projects 和其他工作区仍只读，不构成跨目录操作授权。
 
 写任务终止且执行进程组退出后，支持检查点的宿主会逐仓保存 HEAD、暂存区和工作树，另外保存未跟踪及忽略文件。完整核验后才释放池容量。保存记录绑定原 job/assignment、工作区、仓库和检查点轮次；工作区空闲不表示成果已提交、推送、合并或业务完成。
 

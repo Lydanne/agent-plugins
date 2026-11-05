@@ -189,3 +189,42 @@ test('new workspace policy permits branch switching while preserving assignment 
  await poolGit(slot.path,['switch','-c','inspect-release']);assert.equal((await validateWorkspace(plan,slot)).assignmentId,slot.assignmentId);assert.equal(await poolGit(f.source,['branch','--show-current']),'main');
  await assert.rejects(validateWorkspace(plan,{...slot,owner:randomUUID()}),/assignment/);
 });
+
+test('workspace uses the captured child default-branch HEAD instead of an older parent gitlink',async t=>{
+ const f=await fixture(t),child=join(f.source,'repositories/child'),childRemote=join(f.root,'child.git');
+ await poolGit(f.root,['init','--bare',childRemote]);await mkdir(child,{recursive:true});await poolGit(child,['init','-b','main']);await poolGit(child,['remote','add','origin',childRemote]);
+ await writeFile(join(child,'code.txt'),'old');const old=await commit(child);await poolGit(child,['push','origin','main']);
+ await writeFile(join(f.source,'.gitmodules'),'[submodule "child"]\npath = repositories/child\nurl = '+childRemote+'\nbranch = main\n');
+ await poolGit(f.source,['add','.gitmodules']);await poolGit(f.source,['update-index','--add','--cacheinfo','160000,'+old+',repositories/child']);const parent=await commit(f.source);
+ await writeFile(join(child,'code.txt'),'latest');const latest=await commit(child);await poolGit(child,['push','origin','main']);
+ const result={root:f.root,cwd:f.source,repository:'projects/xgj/repositories/child',snapshot:{repositorySources:[{root:f.source,head:parent},{root:child,head:latest}]}};
+ const plan=await workspacePlan({projectId:'xgj',repository:'projects/xgj',url:f.remote,branch:'main',workspacePool:{enabled:true,maxSize:2}},result);
+ assert.equal(plan.repositories[1].baseSha,latest);
+ const slot=await prepareWorkspace({...plan,managed:false},await allocateWorkspace({...plan,managed:false},randomUUID()),{install:f.install});
+ assert.equal(await poolGit(join(slot.path,'repositories/child'),['rev-parse','HEAD']),latest);assert.equal(await readFile(join(slot.path,'repositories/child/code.txt'),'utf8'),'latest');
+ assert.equal(await poolGit(f.source,['rev-parse','HEAD:repositories/child']),old);
+ // A newer project commit must not replace the admitted repository layout.
+ await writeFile(join(f.source,'.gitmodules'),'');await poolGit(f.source,['add','.gitmodules']);await poolGit(f.source,['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','new layout']);
+ const frozen=await workspacePlan({projectId:'xgj',repository:'projects/xgj',url:f.remote,branch:'main',workspacePool:{enabled:true,maxSize:2}},result);
+ assert.equal(frozen.repositories[1].baseSha,latest);assert.equal(frozen.repositories[1].url,childRemote);
+});
+
+test('branch-switching assignments sharing a branch name restore only checkpoint-protected tips',async t=>{
+ const {parkWorkspace,restoreParkedWorkspace}=await import('./workspace-pool.mjs');
+ const f=await fixture(t),plan={...f.plan,maxSize:1,allowBranchSwitch:true};
+ const a=await prepareWorkspace(plan,await allocateWorkspace(plan,randomUUID()),{install:f.install});await poolGit(a.path,['switch','-c','investigation']);await writeFile(join(a.path,'code.txt'),'A commit');const aHead=await commit(a.path);await writeFile(join(a.path,'code.txt'),'A unfinished');await parkWorkspace(plan,a,{agentId:'agent'});
+ const b=await prepareWorkspace(plan,await allocateWorkspace(plan,randomUUID()),{install:f.install});await poolGit(b.path,['switch','investigation']);await writeFile(join(b.path,'code.txt'),'B commit');const bHead=await commit(b.path);await writeFile(join(b.path,'code.txt'),'B unfinished');await parkWorkspace(plan,b,{agentId:'agent'});
+ const restoredA=await restoreParkedWorkspace(plan,a,{agentId:'agent'});assert.equal(await poolGit(a.path,['branch','--show-current']),'investigation');assert.equal(await poolGit(a.path,['rev-parse','HEAD']),aHead);assert.equal(await readFile(join(a.path,'code.txt'),'utf8'),'A unfinished');await poolGit(a.path,['switch','-c','another-investigation']);await parkWorkspace(plan,restoredA,{agentId:'agent'});
+ const restoredB=await restoreParkedWorkspace(plan,b,{agentId:'agent'});assert.equal(await poolGit(b.path,['branch','--show-current']),'investigation');assert.equal(await poolGit(b.path,['rev-parse','HEAD']),bHead);assert.equal(await readFile(join(b.path,'code.txt'),'utf8'),'B unfinished');await parkWorkspace(plan,restoredB,{agentId:'agent'});
+ // An uncheckpointed external branch edit must still be preserved, not reset.
+ await poolGit(b.path,['switch','another-investigation']);await writeFile(join(b.path,'code.txt'),'external');const external=await commit(b.path);await assert.rejects(restoreParkedWorkspace(plan,a,{agentId:'agent'}),/Original branch changed/);assert.equal(await poolGit(b.path,['rev-parse','HEAD']),external);
+});
+
+test('a changed private protection ref cannot authorize moving a reused branch',async t=>{
+ const {parkWorkspace,restoreParkedWorkspace}=await import('./workspace-pool.mjs'),{readCheckpoint}=await import('./workspace-checkpoints.mjs');
+ const f=await fixture(t),plan={...f.plan,maxSize:1,allowBranchSwitch:true};
+ const a=await prepareWorkspace(plan,await allocateWorkspace(plan,randomUUID()),{install:f.install});await poolGit(a.path,['switch','-c','shared']);await writeFile(join(a.path,'code.txt'),'A');const aHead=await commit(a.path);await parkWorkspace(plan,a,{agentId:'agent'});
+ const b=await prepareWorkspace(plan,await allocateWorkspace(plan,randomUUID()),{install:f.install});await poolGit(b.path,['switch','shared']);await writeFile(join(b.path,'code.txt'),'B');const bHead=await commit(b.path),parked=await parkWorkspace(plan,b,{agentId:'agent'});
+ const proof=await readCheckpoint(join(f.root,'workspace'),parked.preservedCheckpoint);await poolGit(b.path,['update-ref',proof.repositories[0].git.headRef,aHead]);
+ await assert.rejects(restoreParkedWorkspace(plan,a,{agentId:'agent'}),/Saved HEAD reference changed/);assert.equal(await poolGit(b.path,['rev-parse','HEAD']),bHead);assert.equal(await poolGit(b.path,['branch','--show-current']),'shared');
+});

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
+import {parse as parseToml} from 'smol-toml';
 export const hermesIdPattern='^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$';
 const variablePattern='^[A-Za-z][A-Za-z0-9_]{0,63}$';
 const stringSchema={type:'string',maxLength:40000};
@@ -70,6 +71,29 @@ export function bindHermes(config,queue){
  return {...config,hermesExecution,hermesIdentityVersion:2,hermesTemplateId:id,hermesRevision,cli:variables.cli,model:variables.model,reasoningEffort:variables.reasoningEffort,speed:variables.speed||undefined,codexHome:variables.codexHome,
   modelSessionScope:createHash('sha256').update(JSON.stringify(['hermes',id,hermesRevision])).digest('hex')};
 }
+// Parse TOML keys, including quoted and dotted forms, rather than comparing raw
+// argv prefixes. The CLI accepts an unquoted value as a string when TOML parsing
+// fails, so validate the key independently from the value in that case.
+const directoryOwnedConfig=new Set(['sandbox_mode','sandbox_permissions','sandbox_workspace_write','sandbox_read_only','permissions','default_permissions','profile','profiles','approval_policy','approvals_reviewer','projects','mcp_servers','hooks','notify','features','shell_environment_policy','cwd','experimental_permissions','experimental_use_unified_exec_tool','experimental_use_freeform_apply_patch','tools']);
+function directoryOverrideConflicts(override){
+ const equals=override.indexOf('=');if(equals<0)return true;
+ let parsed;try{parsed=parseToml(override);}catch{
+  try{parsed=parseToml(override.slice(0,equals)+' = 0');}catch{return true;}
+ }
+ return Object.keys(parsed).some(key=>directoryOwnedConfig.has(key));
+}
+function validateDirectoryArgs(args){
+ for(let index=0;index<args.length;index++){
+  const arg=args[index].trimStart();
+  if(/^(?:--(?:dangerously-bypass-approvals-and-sandbox|dangerously-bypass-hook-trust|full-auto|approve-for-me|permission-profile|profile|ignore-user-config|ignore-rules|add-dir|sandbox|worktree|ask-for-approval|enable|disable)(?:=|$)|-[asPp])/.test(arg))throw Error('Hermes directory policy conflict');
+  let override;
+  if(arg==='-c'||arg==='--config')override=args[++index];
+  else if(arg.startsWith('--config='))override=arg.slice(9);
+  else if(arg.startsWith('-c'))override=arg.slice(2).replace(/^=/,'');
+  else continue;
+  if(typeof override!=='string'||directoryOverrideConflicts(override))throw Error('Hermes directory policy conflict');
+ }
+}
 export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,prompt=''}={}){
  const template=config.hermesExecution?.template??defaultHermesTemplates.codex;
  const variables=config.hermesExecution?.variables??{cli:config.cli,model:config.model,reasoningEffort:config.reasoningEffort,speed:config.speed??'',codexHome:config.codexHome};
@@ -81,9 +105,10 @@ export function hermesCommand(config,{refresh=false,threadId,outputSchemaPath,pr
  if(!command.trim()||command.includes('\n')||command.includes('\r'))throw Error('Invalid Hermes command');
  // Do not allow another template flag to undo the host-owned read-only refresh policy.
  if(refresh&&template.adapter==='codex-jsonl'&&(args.includes('--dangerously-bypass-approvals-and-sandbox')||args.filter(a=>a==='--sandbox'||a==='-s').length!==1||args.some(a=>/^(?:--sandbox=|-s=|sandbox_mode=|--full-auto$)/.test(a))))throw Error('Hermes refresh policy conflict');
- if(config.directoryPolicy?.mode==='project-read-only'){
-  const policies=args.flatMap((arg,index)=>arg==='--sandbox'||arg==='-s'?[args[index+1]]:[]);
-  if((template.adapter==='codex-jsonl'&&(policies.length!==1||policies[0]!== (refresh?'read-only':config.approvalMode)))||args.some(arg=>/^(?:--dangerously-bypass-approvals-and-sandbox|--full-auto|--approve-for-me|--permission-profile|--add-dir|--sandbox=|-s=)/.test(arg)||/^(?:-c=?|--config=)?(?:sandbox_mode|sandbox_workspace_write|sandbox_read_only|permissions\.)/.test(arg)))throw Error('Hermes directory policy conflict');
+ if(config.directoryPolicy){
+  const unowned=expandArgs(template.args,{...values,policyArgs:[],resumeArgs:threadId?expandArgs(template.resumeArgs,{...values,policyArgs:[]}):[]});
+  validateDirectoryArgs(unowned);
  }
+
  return {command,args,stdin:substitute(template.stdin,values),adapter:template.adapter};
 }

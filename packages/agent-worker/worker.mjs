@@ -55,20 +55,29 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   checkCancellation();controller.signal.throwIfAborted();
   const usedMs=(job.executionRounds??[]).reduce((total,round)=>total+Math.max(0,(round.finishedAt??round.startedAt)-round.startedAt),0);
   const remainingMs=job.timeoutMs===undefined?undefined:job.timeoutMs-usedMs;
-  if(remainingMs!==undefined&&remainingMs<1000)throw Object.assign(Error('Worker task execution budget exhausted'),{code:'EXECUTION_TIMEOUT'});
-  if(remainingMs!==undefined)runtime={...runtime,timeoutMs:remainingMs};
+  if(remainingMs!==undefined&&remainingMs<=0)throw Object.assign(Error('Worker task execution budget exhausted'),{code:'EXECUTION_TIMEOUT'});
+  let executionDeadline;
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});await persistBoundary();
   await checkJobWorkspace(runtime??{});
   runtime=applyDirectoryPolicy(runtime??{});assertDirectoryReady(runtime);
-  if(runtime.directoryPolicy?.mode==='project-read-only')releaseProject=await acquireProjectReadLease(runtime.cwd,{signal:controller.signal});
+  if(runtime.directoryPolicy?.mode==='project-read-only'){
+   const timeoutMs=runtime.scopedSkillSnapshot?.projectReadTimeoutMs??65000;
+   if(!Number.isInteger(timeoutMs)||timeoutMs<6000||timeoutMs>65000)throw Error('Invalid project synchronization wait budget');
+   releaseProject=await acquireProjectReadLease(runtime.cwd,{signal:controller.signal,timeoutMs});
+  }
   await checkReadOnlyProject(runtime);
   auditReady=await beginFileAudit({root,id,cwd:runtime?.cwd??job.cwd,isolated:!!runtime?.workspace,resumed:job.executionRounds.length>1}).catch(()=>false);
   if(auditReady){await audit();auditTimer=setInterval(()=>{void audit();},15000);}
   runtime={...runtime,workerCli:runtime?.workerCli??{context:{version:1,workerId:job.workerId??randomUUID(),jobId:id,agentId:job.provenance?.agentId,sessionKey:scope,task:params.task,constraints:params.constraints}}};
   const attachments=jobSourceAttachments(job.provenance);
   checkCancellation();controller.signal.throwIfAborted();
-  const response=await execute(params,{...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onLiveSteering:turn=>{liveTurn=turn;},onProgress:progress=>{job={...job,...progress,...(progress.liveTurn?{liveTurn:{...progress.liveTurn,workerId:job.workerId}}:{})};persist();deliver();}},runtime);
+  if(job.timeoutMs!==undefined){
+   const executionRemainingMs=job.timeoutMs-usedMs-Math.max(0,Date.now()-job.executionRounds.at(-1).startedAt);
+   if(executionRemainingMs<=0)throw Object.assign(Error('Worker task execution budget exhausted during preparation'),{code:'EXECUTION_TIMEOUT'});
+   executionDeadline=Date.now()+executionRemainingMs;
+  }
+  const response=await execute(params,{executionDeadline,...(attachments.length?{attachments}:{}),people:job.provenance?.people,sessionKey:scope,expectedSessionId:job.resumeSessionId,reportDirectory:(runtime?.reportDirectory??'.tmp/codex-query')+'/'+id,signal:controller.signal,onInspectionEvent:recordEvent,onLiveSteering:turn=>{liveTurn=turn;},onProgress:progress=>{job={...job,...progress,...(progress.liveTurn?{liveTurn:{...progress.liveTurn,workerId:job.workerId}}:{})};persist();deliver();}},runtime);
   checkCancellation();controller.signal.throwIfAborted();
   if(livePending)await livePending;
   job.result=response;

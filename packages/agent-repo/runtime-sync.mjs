@@ -44,6 +44,22 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   runs.set(key,{...runs.get(key),at:clock(),pending:true,attempt:token});
   return {...context,[attemptKey]:token};
  }
+ async function preparePrompt(context,load){
+  const binding=bindingFor(config,context);if(!enabled(binding))return load();
+  const key=runKey(context),attempt=context[attemptKey];
+  let release;
+  try{
+   const registry=await readRegistry(binding),workspace=await realpath(context.workspaceDir);
+   const projects=Object.values(registry.projects),selected=projects.find(p=>workspace===p.paths.repository||workspace.startsWith(p.paths.repository+'/repositories/'))??(workspace===binding.repo&&projects.length===1?projects[0]:undefined);
+   if(selected)release=await acquireProjectReadLease(selected.paths.repository,{timeoutMs:(binding.sync.timeoutMs??30000)+5000});
+   context.hookInvocation?.assertActive();
+   if(runs.get(key)?.attempt!==attempt)throw Error('Prompt preparation superseded');
+   const previous=runs.get(key);if(previous?.release)await previous.release();
+   runs.set(key,{...previous,release});release=undefined;
+   return await load();
+  }catch(error){promptFailure(context,error);throw error;}
+  finally{await release?.();}
+ }
  async function log(binding,agentId,entry){try{await writeRepositoryLog(binding.repo,agentId,entry);}catch{logger?.warn?.("agent-repo: repository diagnostic could not be saved");}}
  const enabled=binding=>binding?.sync?.enabled===true;
  async function checkWorkspace(binding,agentId) {
@@ -86,7 +102,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   if(!enabled(binding))return {mode:'background',state:'disabled'};
   return projectSync.enqueue(binding.repo+':'+project.projectId,async()=>{
    // Prompt gates must observe the same role/skill version they captured.
-   prune();if([...runs.entries()].some(([key,run])=>!run.failed&&JSON.parse(key)[0]===agentId))return false;
+   prune();if([...runs.entries()].some(([key,run])=>!run.failed&&JSON.parse(key)[0]===agentId&&(run.pending||!run.catalog||run.catalog.projectId===project.projectId)))return false;
    try{
     const registry=await readRegistry(binding),current=registry.projects[project.projectId];
     if(!current||current.url!==project.url||current.branch!==project.branch||current.repository!==project.repository)throw new PreparationError('后台同步前项目登记改变，已取消旧同步请求。');
@@ -128,27 +144,36 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
  }
  async function prepareScope(binding,options) {
   options={...options,knowledgeDefaults:config.knowledge};
+  const stamp=catalog=>({...catalog,snapshot:{...catalog.snapshot,projectReadTimeoutMs:(binding.sync?.timeoutMs??30000)+5000}});
   if(options.backgroundSync===true&&options.syncSubmodules!==true){
    let release;
    try{
     if(enabled(binding))await checkWorkspace(binding,options.agentId);
     const registry=await readRegistry(binding),project=await select(registry.projects,options);
-    release=await acquireProjectReadLease(project.paths.repository,{timeoutMs:5000});
+    release=await acquireProjectReadLease(project.paths.repository,{timeoutMs:(binding.sync?.timeoutMs??30000)+5000});
     await checkSharedProject(project);
     const catalog=await repositorySkills(binding,options);await assertRegistry(binding,registry);await validate({catalog});
-    return {...catalog,synchronization:enqueueProject(binding,options.agentId,project)};
+    const result={...stamp(catalog),synchronization:enqueueProject(binding,options.agentId,project)};
+    return options.withPreparedScope?await options.withPreparedScope(result):result;
    }catch(error){await log(binding,options.agentId,{repository:options.repository??options.projectId??'Project Repo',stage:'本地项目校验',status:'failed',...preparationDiagnostic(error),effect:'未修改本地副本；执行范围准备未通过'});throw error;}
    finally{await release?.();}
   }
-  if(!enabled(binding))return repositorySkills(binding,options);
+  if(!enabled(binding)){
+   const registry=await readRegistry(binding),project=await select(registry.projects,options),release=await acquireProjectReadLease(project.paths.repository);
+   try{const result=stamp(await repositorySkills(binding,options));return options.withPreparedScope?await options.withPreparedScope(result):result;}finally{await release();}
+  }
   return serializePreparation(binding.repo,async()=>{
    await checkWorkspace(binding,options.agentId);
    const registry=await readRegistry(binding),project=await select(registry.projects,options);
    const synchronized=await sync(binding,options.agentId,project,{root:false,...(options.syncSubmodules===true?{submodules:true,allowLocalChanges:false}:{})});
+   const release=await acquireProjectReadLease(project.paths.repository,{timeoutMs:(binding.sync.timeoutMs??30000)+5000});
+   try{
    const catalog=await repositorySkills(binding,options);
    await assertRegistry(binding,registry);
    await validate({catalog});
-   return options.syncSubmodules===true||synchronized.skipped?{...catalog,synchronization:synchronized}:catalog;
+   const result=options.syncSubmodules===true||synchronized.skipped?{...stamp(catalog),synchronization:synchronized}:stamp(catalog);
+   return options.withPreparedScope?await options.withPreparedScope(result):result;
+   }finally{await release();}
   }).catch(async error=>{
    await log(binding,options.agentId,{repository:options.repository??options.projectId??'Agent Repo',stage:'技能准备',status:'failed',...preparationDiagnostic(error),reason:failureText(error),effect:'执行范围准备未通过'});
    throw error;
@@ -202,10 +227,13 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
     const ids=Object.keys(registry.projects);
     // defaultProject is an operator planning hint, never a task fallback.
     const project=ids.length===1?registry.projects[ids[0]]:undefined;
+    const release=project?await acquireProjectReadLease(project.paths.repository,{timeoutMs:(binding.sync.timeoutMs??30000)+5000}):undefined;
+    try{
     if(project){await checkSharedProject(project);enqueueProject(binding,agentId,project);}
     const catalog=project?await repositorySkills(binding,{agentId,hostConfig:getHostConfig(),projectId:project.projectId,knowledgeDefaults:config.knowledge}):await agentSkills(binding,{agentId,hostConfig:getHostConfig()});
     await assertRegistry(binding,registry);
     await validate({catalog});
+    }finally{await release?.();}
    });
   }catch(error) {
    // Claim hooks are fail-open on throws: return a handled reply explicitly.
@@ -213,8 +241,10 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   }
  }
  function prune() {
-  for(const [key,entry] of runs)if(clock()-entry.at>3600000)runs.delete(key);
-  while(runs.size>=1000)runs.delete(runs.keys().next().value);
+  // A live prompt owns its lease until an explicit lifecycle boundary. Age and
+  // cache pressure must never make an actively read worktree writable.
+  for(const [key,entry] of runs)if(!entry.release&&clock()-entry.at>3600000)runs.delete(key);
+  for(const [key,entry] of runs){if(runs.size<1000)break;if(!entry.release)runs.delete(key);}
  }
  async function capturePrompt(context,catalog) {
   const binding=bindingFor(config,context);
@@ -226,7 +256,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   const key=JSON.stringify([context.agentId,context.sessionKey,context.runId]);
   const previous=runs.get(key);
   if(previous?.catalog||previous?.failed)await validate({...previous,pending:false});
-  const record={at:clock(),catalog,attempt:context[attemptKey]};
+  const record={at:clock(),catalog,attempt:context[attemptKey],release:previous?.release};
   await validate(record);
   if(previous?.catalog&&catalog.snapshot.repositorySources.find(item=>item.root===binding.repo)?.head!==previous.catalog.snapshot.repositorySources.find(item=>item.root===binding.repo)?.head)throw Error('Agent role changed during this run');
   // Host timeout discards prompt enrichment but does not cancel underlying work.
@@ -243,6 +273,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
   if(context[attemptKey]&&current?.attempt!==context[attemptKey])return;
   try{context.hookInvocation?.assertActive();}catch(expired){error=expired;}
   if(current?.failed)return;
+  void current?.release?.().catch(()=>{});
   prune();runs.set(key,{at:clock(),attempt:context[attemptKey]??current?.attempt,failed:true,diagnostic:preparationDiagnostic(error)});
  }
  async function validate(record) {
@@ -276,6 +307,7 @@ export function createRepositoryRuntime(config,getHostConfig,{synchronize=syncWo
    return {outcome:'pass'};
   }catch(error){await log(binding,context.agentId,{repository:'Agent Repo',stage:'模型准备校验',status:'failed',reason:failureText(error),...preparationDiagnostic(error),runId:context.runId,effect:'本轮未开始'});return {outcome:'block',reason:preparationDiagnostic(error).code,message:failureText(error),category:'repository_sync'};}
  }
- function endRun(context) {if(context.runId)runs.delete(JSON.stringify([context.agentId,context.sessionKey,context.runId]));}
- return {projectSync,scheduledSync,beforeDispatch,prepareScope,beginPrompt,capturePrompt,promptFailure,beforeAgentRun,endRun};
+ async function endRun(context) {if(context.runId){const key=runKey(context),record=runs.get(key);runs.delete(key);await record?.release?.();}}
+ async function dispose(){const records=[...runs.values()];runs.clear();await Promise.allSettled(records.map(record=>record.release?.()));}
+ return {projectSync,scheduledSync,beforeDispatch,prepareScope,preparePrompt,beginPrompt,capturePrompt,promptFailure,beforeAgentRun,endRun,dispose};
 }

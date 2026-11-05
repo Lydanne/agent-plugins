@@ -82,6 +82,10 @@ importers:
   packages/agent-repo-api: {}
 
   packages/agent-worker:
+    dependencies:
+      smol-toml:
+        specifier: 1.9.1
+        version: 1.9.1
     devDependencies:
       '@openclaw-plugins/control-ui-kit':
         specifier: workspace:*

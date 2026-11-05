@@ -18,3 +18,17 @@ test('shared child sources require the declared branch and preserve dirty conten
  await writeFile(join(root,'.gitmodules'),'[submodule "demo"]\npath = repositories/demo\nurl = https://example.invalid/demo\nbranch = main\n');git(root,['add','.gitmodules']);git(root,['commit','-m','fixture']);
  await checkProjectChildren(root,'main');git(child,['switch','-c','task']);await assert.rejects(checkProjectChildren(root,'main'),/default branch/);git(child,['switch','main']);await writeFile(join(child,'code'),'preserved');await assert.rejects(checkProjectChildren(root,'main'),/local changes/);assert.equal(await readFile(join(child,'code'),'utf8'),'preserved');
 });
+test('fetch phase permits readers, exclusive phase blocks them, and stale phase cannot authorize a replacement writer',async t=>{
+ const {setProjectFetchReadable}=await import('./project-read-lease.mjs');const {unlink}=await import('node:fs/promises');
+ const cwd=await mkdtemp(join(tmpdir(),'project-phase-'));t.after(()=>rm(cwd,{recursive:true,force:true}));execFileSync('git',['init',cwd],{stdio:'ignore'});
+ const writer=join(cwd,'.git/ada-workspace-sync.lock');await writeFile(writer,String(process.pid));await setProjectFetchReadable(cwd,true);
+ const release=await acquireProjectReadLease(cwd,{timeoutMs:100});assert.equal(await projectHasReaders(cwd),true);await release();
+ await setProjectFetchReadable(cwd,false);await assert.rejects(acquireProjectReadLease(cwd,{timeoutMs:1}),/synchronization/);
+ await setProjectFetchReadable(cwd,true);await unlink(writer);await writeFile(writer,String(process.pid));await assert.rejects(acquireProjectReadLease(cwd,{timeoutMs:1}),/synchronization/);
+});
+test('a dead writer does not strand source admission and readers never remove its lock',async t=>{
+ const {spawnSync}=await import('node:child_process'),{readFile}=await import('node:fs/promises');
+ const cwd=await mkdtemp(join(tmpdir(),'project-dead-writer-'));t.after(()=>rm(cwd,{recursive:true,force:true}));execFileSync('git',['init',cwd],{stdio:'ignore'});
+ const pid=spawnSync(process.execPath,['-e','process.exit(0)']).pid,writer=join(cwd,'.git/ada-workspace-sync.lock');await writeFile(writer,String(pid));
+ const release=await acquireProjectReadLease(cwd,{timeoutMs:100});assert.equal(await readFile(writer,'utf8'),String(pid));await release();
+});

@@ -24,8 +24,9 @@ test('load/reuse/reload use pinned Agent Repo versions and reject tampering or c
 test('real session reuse notifies version changes in delegated tasks, never in developer instructions',async()=>{
  const root=await mkdtemp(join(tmpdir(),'worker-global-skill-'));
  try {
-  const cli=join(root,'fake.mjs');await writeFile(cli,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';import{randomUUID}from'node:crypto';let text='';for await(const c of process.stdin)text+=c;const p=JSON.parse(text),args=process.argv.slice(2);appendFileSync('seen.jsonl',JSON.stringify({p,args})+'\\n');if(p.task==='fail')process.exit(1);console.log(JSON.stringify({type:'thread.started',thread_id:args.includes('resume')?args[args.indexOf('resume')+1]:randomUUID()}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));`);await chmod(cli,0o700);
-  const config={state:join(root,'state'),cwd:root,codexHome:root,cli,skillsEnabled:false,memoryRequired:false,projectContext:{agentId:'main'},mainCapabilitySkill:await skill(root,'first protocol')};
+  const cwd=join(root,'projects/demo');await mkdir(cwd,{recursive:true});
+  const cli=join(root,'fake.mjs');await writeFile(cli,`#!${process.execPath}\nimport{appendFileSync}from'node:fs';import{randomUUID}from'node:crypto';import{createInterface}from'node:readline';if(process.argv.includes('--help')){console.log('CONFIG_PROFILE_V2 --strict-config');process.exit(0);}if(process.argv.includes('app-server')){for await(const line of createInterface({input:process.stdin})){const request=JSON.parse(line);if(request.id)console.log(JSON.stringify({id:request.id,result:request.method==='config/read'?{layers:[]}:request.method==='hooks/list'?{data:[{hooks:[],errors:[]}]}:{}}));}process.exit(0);}let text='';for await(const c of process.stdin)text+=c;const p=JSON.parse(text),args=process.argv.slice(2);appendFileSync('seen.jsonl',JSON.stringify({p,args})+'\\n');if(p.task==='fail')process.exit(1);console.log(JSON.stringify({type:'thread.started',thread_id:args.includes('resume')?args[args.indexOf('resume')+1]:randomUUID()}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));`);await chmod(cli,0o700);
+  const config={state:join(root,'state'),cwd,codexHome:join(root,'codex'),cli,skillsEnabled:false,memoryRequired:false,projectContext:{agentId:'main',root,cwd},mainCapabilitySkill:await skill(root,'first protocol')};
   const params={action:'run',topic:'same',task:'read',context:'none',constraints:'read only',responsibility:'只读诊断'};
   const decode=r=>JSON.parse(r.content[0].text);
   const a=decode(await executeQuery(params,{sessionKey:'chat'},config));
@@ -33,7 +34,7 @@ test('real session reuse notifies version changes in delegated tasks, never in d
   config.mainCapabilitySkill=await skill(root,'updated plugin list');
   await assert.rejects(executeQuery({...params,task:'fail'},{sessionKey:'chat'},config));
   const c=decode(await executeQuery(params,{sessionKey:'chat'},config));assert.equal(c.sessionId,a.sessionId);
-  const seen=(await readFile(join(root,'seen.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  const seen=(await readFile(join(cwd,'seen.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(seen.map(s=>s.p.collaborationSkill.action),['load','reuse','reload','reload']);
   for(const {p,args} of seen){assert.equal(p.responsibility,'只读诊断');assert.ok(!args.join(' ').includes('openclaw-main-main'));assert.ok(!p.pluginCapabilityInstructions);}
   assert.notEqual(requestKeyFor(params,'chat'),requestKeyFor({...params,responsibility:'另一项职责'},'chat'));

@@ -75,8 +75,9 @@ export async function runAppServerTurn({invocation,config,prompt,threadId,refres
   child.send({command:invocation.command,args:invocation.args});
   await rpc('initialize',{clientInfo:{name:'agent-worker',version:'1.0.1'},capabilities:{experimentalApi:true}});write({method:'initialized'});
   const sandbox=refresh||config.approvalMode==='read-only'?'read-only':config.approvalMode==='workspace-write'?'workspace-write':'danger-full-access';
-  const params={cwd:config.cwd,model:config.model,approvalPolicy:'never',sandbox,developerInstructions:config.executorInstructions.replaceAll('{projectDir}',config.cwd),config:{model_reasoning_effort:config.reasoningEffort},...(config.speed?{serviceTier:config.speed}:{})};
+  const params={cwd:config.cwd,model:config.model,approvalPolicy:'never',...(config.directoryPermissionProfile?{permissions:config.directoryPermissionProfile}:{sandbox}),developerInstructions:config.executorInstructions.replaceAll('{projectDir}',config.cwd),config:{...config.directoryPermissionConfig,model_reasoning_effort:config.reasoningEffort},...(config.speed?{serviceTier:config.speed}:{})};
   const response=await rpc(threadId?'thread/resume':'thread/start',{...params,...(threadId?{threadId,excludeTurns:true}:toolBridge?{dynamicTools:definitions}:{})});
+  if(config.directoryPermissionProfile&&response.activePermissionProfile?.id!==config.directoryPermissionProfile)throw Error('Codex CLI did not apply the required directory permission profile');
   if(threadId&&response.thread?.id!==threadId)throw Error('Original Worker session cannot be resumed safely');
   threadId=response.thread?.id;if(typeof threadId!=='string'||!threadId)throw Error('App server returned no thread');
   onProgress?.({sessionId:threadId});

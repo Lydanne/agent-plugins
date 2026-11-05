@@ -135,7 +135,7 @@ test('configured execution timeout survives dispatch and marks the original job 
  const config={...await fixture(t),taskQueues:undefined,timeoutMs:1000};
  const jobs=createJobs({root:join(config.state,'jobs'),node:process.execPath,worker:fileURLToPath(new URL('./worker.mjs',import.meta.url)),getRuntime:()=>config,logger:console});
  const result=await jobs.run({topic:'slow',task:'slow',context:'none',constraints:'read only',waitSeconds:5},'timeout-fixture');
- assert.equal(result.status,'timed_out');assert.match(result.error,/1000 ms/);
+ assert.equal(result.status,'timed_out');assert.match(result.error,/exceeded \d+ ms|execution budget exhausted during preparation/);
 });
 
 test('memory feature combinations advertise the actual admission and native tool protocols',()=>{

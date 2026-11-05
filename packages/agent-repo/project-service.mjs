@@ -25,9 +25,10 @@ export function createProjectService(binding,agentId,getHostConfig,prepareScope,
    if(selector.projectId===undefined&&selector.repository===undefined&&Object.keys(projects).length!==1)throw new AgentRepoError('PROJECT_SELECTION_REQUIRED','Multiple projects require an explicit projectId or repository');
    if(selector.projectId!==undefined&&selector.repository!==undefined&&selector.repository!==projects[selector.projectId].repository&&!selector.repository.startsWith(projects[selector.projectId].repository+'/repositories/'))throw new AgentRepoError('PROJECT_SELECTOR_CONFLICT','projectId and repository select different projects');
    const {expectedRegistryRevision,useWorkspace,...options}=selector;
-   const result=await prepareScope(binding,{...options,backgroundSync:true,agentId,hostConfig:getHostConfig()});
+   const result=await prepareScope(binding,{...options,backgroundSync:true,agentId,hostConfig:getHostConfig(),...(useWorkspace?{withPreparedScope:async prepared=>({...prepared,workspacePool:await workspacePlan(projects[prepared.projectId],prepared)})}:{})});
    if(await registryRevision(binding)!==revision)throw new AgentRepoError('REGISTRY_CHANGED','Project registration changed while preparing');
-   return {...result,...(useWorkspace?{workspacePool:await workspacePlan(projects[result.projectId],result)}:{}),apiVersion:1,agentId,registryRevision:revision,snapshot:{...result.snapshot,registryRevision:revision,projectRegistration:{branch:projects[result.projectId].branch,url:projects[result.projectId].url}}};
+   if(useWorkspace&&!result.workspacePool)throw new AgentRepoError('PROJECT_NOT_READY','Workspace preparation callback was not completed');
+   return {...result,apiVersion:1,agentId,registryRevision:revision,snapshot:{...result.snapshot,registryRevision:revision,projectRegistration:{branch:projects[result.projectId].branch,url:projects[result.projectId].url}}};
    }catch(error){
     if(error instanceof AgentRepoError)throw error;
     // Only our controlled, public diagnostics may reach Main. Child-process

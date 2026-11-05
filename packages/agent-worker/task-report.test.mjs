@@ -87,8 +87,8 @@ test('resumed tasks retain the execution budget and exclude time awaiting input'
  const rounds=[{startedAt:100,finishedAt:1600},{startedAt:100000,finishedAt:101000}];
  writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',timeoutMs:10000,executionRounds:rounds,resumeSessionId:'original'});
  let remaining;
- const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,timeoutMs:10000},execute:async(_p,_c,runtime)=>{remaining=runtime.timeoutMs;return response({result:'done'});}});
- assert.equal(remaining,7500);assert.equal(job.timeoutMs,10000);assert.equal(job.executionRounds.length,3);
+ const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,timeoutMs:10000},execute:async(_p,context,runtime)=>{remaining=context.executionDeadline-Date.now();assert.equal(runtime.timeoutMs,10000);return response({result:'done'});}});
+ assert(remaining>0&&remaining<=7500);assert.equal(job.timeoutMs,10000);assert.equal(job.executionRounds.length,3);
  assert.ok(job.executionRounds[2].finishedAt>=job.executionRounds[2].startedAt);
 }));
 
@@ -110,4 +110,21 @@ test('Worker holds a project read lease through execution and saves a deliverabl
  const id=randomUUID();writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',createdAt:1});
  const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,state,executorInstructions:'fixture',projectContext:{cwd},approvalMode:'dangerously-bypass-approvals-and-sandbox'},execute:async(_p,_c,runtime)=>{assert.equal(runtime.approvalMode,'read-only');assert.equal(await projectHasReaders(cwd),true);return response({result:'complete'});}});
  assert.equal(job.status,'completed');assert.equal(await projectHasReaders(cwd),false);assert.deepEqual(readdirSync(cwd),['.git']);assert.equal(job.reports.length,1);assert.match(job.reports[0].content,/complete/);
+}));
+
+test('source synchronization wait consumes the existing execution budget before business starts',()=>fixture(async base=>{
+ const {execFileSync}=await import('node:child_process'),{unlinkSync}=await import('node:fs');
+ const cwd=join(base,'project'),state=join(base,'state'),root=join(state,'jobs');mkdirSync(cwd);mkdirSync(root,{recursive:true});execFileSync('git',['init','-b','main',cwd],{stdio:'ignore'});
+ const lock=join(cwd,'.git/ada-workspace-sync.lock');writeFileSync(lock,String(process.pid));const id=randomUUID();writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',timeoutMs:10000});
+ const timer=setTimeout(()=>unlinkSync(lock),150);let remaining;
+ try{const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,state,executorInstructions:'fixture',projectContext:{cwd},approvalMode:'read-only'},execute:async(_p,context,runtime)=>{remaining=context.executionDeadline-Date.now();assert.equal(runtime.timeoutMs,undefined);return response({result:'complete'});}});assert.equal(job.status,'completed');assert(remaining>0&&remaining<=9900);}finally{clearTimeout(timer);}
+}));
+
+
+test('resumed tasks execute a positive sub-second budget without lowering public timeout configuration',()=>fixture(async base=>{
+ const cwd=join(base,'cwd'),root=join(base,'jobs');mkdirSync(cwd);mkdirSync(root);
+ const id=randomUUID();writeJson(join(root,id+'.json'),{jobId:id,topic:params.topic,status:'queued',timeoutMs:1000,executionRounds:[{startedAt:100,finishedAt:500}],resumeSessionId:'original'});
+ let executed=false;
+ const job=await runWorker({root,id,params,scope:'test',runtime:{cwd,timeoutMs:1000},execute:async(_p,context,runtime)=>{executed=true;assert.equal(runtime.timeoutMs,1000);const remaining=context.executionDeadline-Date.now();assert(remaining>0&&remaining<=600);return response({result:'done'});}});
+ assert.equal(executed,true);assert.equal(job.status,'completed');
 }));

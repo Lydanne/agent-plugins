@@ -36,13 +36,22 @@ async function verifyGitCheckpoint(path,saved) {
 }
 // The caller must hold the original slot's exclusive restoration lease and
 // persist restoring intent before invoking this operation. Never drop refs here.
-export async function restoreTrackedCheckpoint(path,saved) {
+export async function restoreTrackedCheckpoint(path,saved,{protectedBranches=[]}={}) {
  await verifyGitCheckpoint(path,saved);
  if(await poolGit(path,['status','--porcelain=v1','--untracked-files=all','--ignore-submodules=all']))throw Error('Restore requires a clean repository');
  if(saved.branch) {
   await poolGit(path,['check-ref-format','--branch',saved.branch]);
   let tip;try{tip=await poolGit(path,['rev-parse','--verify','refs/heads/'+saved.branch]);}catch(error){if(error.code!==128)throw error;}
-  if(tip&&tip!==saved.head)throw Error('Original branch changed; recovery withheld');
+  if(tip&&tip!==saved.head){
+   const proof=protectedBranches.find(other=>other.branch===saved.branch&&other.head===tip&&other.repositoryPath===saved.repositoryPath&&other.gitDirectory===saved.gitDirectory);
+   if(!proof)throw Error('Original branch changed; recovery withheld');
+   await verifyGitCheckpoint(path,proof);
+   // Do not rewrite a checked-out branch underneath its index/worktree. The
+   // displaced tip remains in another completed assignment's private refs.
+   if(await poolGit(path,['branch','--show-current'])===saved.branch)await poolGit(path,['checkout','--no-overwrite-ignore','--detach',tip]);
+   await poolGit(path,['update-ref','refs/heads/'+saved.branch,saved.head,tip]);
+   tip=saved.head;
+  }
   await poolGit(path,['checkout','--no-overwrite-ignore',...(tip?[saved.branch]:['-b',saved.branch,saved.head])]);
  } else await poolGit(path,['checkout','--no-overwrite-ignore','--detach',saved.head]);
  if(saved.stash)await poolGit(path,['stash','apply','--index',saved.stash]);

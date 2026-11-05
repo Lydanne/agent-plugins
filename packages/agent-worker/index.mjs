@@ -1,4 +1,5 @@
 import {applyDirectoryPolicy,assertDirectoryReady} from './directory-policy.mjs';
+import {prepareDirectoryInvocation} from './directory-sandbox.mjs';
 import {admitAuthorizedTask,authorizeTaskOperation} from './dist/authorization-api.mjs';
 import {runAppServerTurn} from './codex-app-server.mjs';
 import {createCodexWorkerBridge} from './codex-worker-tools.mjs';
@@ -85,7 +86,7 @@ export async function executeQuery(params,context={},runtime=configuration){
    let scoped=config,versionCurrent=current,invalid=false;
    try{scoped=resolveQueueExecution(runtime,{queueId:entry.queueId});}catch{invalid=true;}
    if(entry.project){
-    scoped={...scoped,cwd:savedCwd,skillContextRoot:entry.project.root,projectContext:entry.project,scopedSkillSnapshot:skillsSnapshot,executorInstructions:scoped.executorInstructions.replaceAll(scoped.cwd,savedCwd).replaceAll('{projectDir}',savedCwd),delegationInstructions:scoped.delegationInstructions.replaceAll(scoped.cwd,savedCwd).replaceAll('{projectDir}',savedCwd)};
+    scoped={...scoped,cwd:savedCwd,skillContextRoot:entry.project.root,projectContext:entry.project,...(entry.workspace?{workspace:entry.workspace,workspacePool:entry.workspacePool}:{}),scopedSkillSnapshot:skillsSnapshot,executorInstructions:scoped.executorInstructions.replaceAll(scoped.cwd,savedCwd).replaceAll('{projectDir}',savedCwd),delegationInstructions:scoped.delegationInstructions.replaceAll(scoped.cwd,savedCwd).replaceAll('{projectDir}',savedCwd)};
     scoped=applyDirectoryPolicy(scoped);
     try{versionCurrent=await readScopedSkillVersion(scoped);}catch{invalid=true;versionCurrent=undefined;}
    }
@@ -111,7 +112,7 @@ export async function executeQuery(params,context={},runtime=configuration){
  const persistBinding=async()=>{
   if(!locked||!threadId||!db)return;
   const release=await acquireLock(state+'/binding-'+scopeHash+'.lock');
-  try{const latest=await load(file);if(legacyKey&&compatibleLegacyBinding(latest[legacyKey],config)&&latest[legacyKey].sessionId===entry.sessionId)delete latest[legacyKey];await save(file,{...latest,[key]:{topic,...projectFields(config),...modelFields(config),sessionId:threadId,cwd,executionPolicyVersion,configurationFingerprint:fingerprint,skillsSnapshot,mainSkillNotifiedRevision,skillsRefreshFailed,previousSessionIds:[...new Set([...(entry?.previousSessionIds??[]),...(entry&&entry.sessionId!==threadId?[entry.sessionId]:[])])],updatedAt:new Date().toISOString()}});}
+  try{const latest=await load(file);if(legacyKey&&compatibleLegacyBinding(latest[legacyKey],config)&&latest[legacyKey].sessionId===entry.sessionId)delete latest[legacyKey];await save(file,{...latest,[key]:{topic,...projectFields(config),...modelFields(config),sessionId:threadId,cwd,executionPolicyVersion,configurationFingerprint:fingerprint,...(config.workspacePool&&config.workspace?{workspacePool:config.workspacePool}:{}),skillsSnapshot,mainSkillNotifiedRevision,skillsRefreshFailed,previousSessionIds:[...new Set([...(entry?.previousSessionIds??[]),...(entry&&entry.sessionId!==threadId?[entry.sessionId]:[])])],updatedAt:new Date().toISOString()}});}
   finally{release();}
  };
  let releaseSession;const legacyReleases=[];
@@ -135,9 +136,9 @@ export async function executeQuery(params,context={},runtime=configuration){
   context.signal?.throwIfAborted();
   mainSkillNotifiedRevision=resumeId?entry?.mainSkillNotifiedRevision:undefined;
   const collaborationSkill=await mainSkillNotice(config.mainCapabilitySkill,mainSkillNotifiedRevision,config.projectContext?.agentId);
-  const deadline=Date.now()+config.timeoutMs;
+  const deadline=Math.min(Date.now()+config.timeoutMs,context.executionDeadline??Infinity);
   const runTurn=async(prompt,{refresh=false,outputSchema}={})=>{
-  let schemaDirectory;
+  let schemaDirectory,directorySandbox;
   try{
    let outputSchemaPath;
    if(refresh&&outputSchema){
@@ -146,15 +147,18 @@ export async function executeQuery(params,context={},runtime=configuration){
     await writeFile(outputSchemaPath,JSON.stringify(outputSchema),{mode:0o600});
    }
    context.signal?.throwIfAborted();
+   const rawInvocation=hermesCommand(config,{refresh,threadId,outputSchemaPath,prompt});
+   directorySandbox=await prepareDirectoryInvocation(config,rawInvocation,{refresh,signal:context.signal,deadline,env:{...workerEnvironment(),...workerCliEnvironment(refresh?undefined:config.workerCli),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})}});
+   context.signal?.throwIfAborted();if(Date.now()>=deadline)throw Object.assign(Error('Worker task execution budget exhausted during sandbox preparation'),{code:'EXECUTION_TIMEOUT'});
    if(config.hermesExecution?.template.adapter==='codex-app-server'){
-    return await runAppServerTurn({invocation:hermesCommand(config,{refresh,threadId,prompt}),config,prompt,threadId,refresh,outputSchema,deadline,signal:context.signal,toolBridge:createCodexWorkerBridge(config.workerCli,{timeout:Math.max(1,deadline-Date.now())}),
-     env:{...workerEnvironment(),...workerCliEnvironment(refresh?undefined:config.workerCli),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})},
+    return await runAppServerTurn({invocation:directorySandbox.invocation,config:directorySandbox.config,prompt,threadId,refresh,outputSchema,deadline,signal:context.signal,toolBridge:createCodexWorkerBridge(config.workerCli,{timeout:Math.max(1,deadline-Date.now())}),
+     env:directorySandbox.env,
      onLiveSteering:refresh?undefined:context.onLiveSteering,onProgress:progress=>{if(progress.sessionId)threadId=progress.sessionId;context.onProgress?.(progress);},
      onEvent:e=>{const recorded=inspectionEvent(e,refresh?'refresh':'business');if(recorded)context.onInspectionEvent?.(recorded);if(!refresh&&e.item?.type==='command_execution')commands.push({exitCode:e.item.exit_code});}});
    }
    return await new Promise((resolve,reject)=>{
-  const invocation=hermesCommand(config,{refresh,threadId,outputSchemaPath,prompt}),args=invocation.args;
-  const child=spawn(process.execPath,[fileURLToPath(new URL('./execution-supervisor.mjs',import.meta.url))],{cwd,detached:true,stdio:['pipe','pipe','pipe','ipc'],env:{...workerEnvironment(),...workerCliEnvironment(refresh?undefined:config.workerCli),CODEX_HOME:config.codexHome,...(config.pathPrefix?{PATH:[config.pathPrefix,process.env.PATH].filter(Boolean).join(delimiter)}:{})}});
+  const invocation=directorySandbox.invocation,args=invocation.args;
+  const child=spawn(process.execPath,[fileURLToPath(new URL('./execution-supervisor.mjs',import.meta.url))],{cwd,detached:true,stdio:['pipe','pipe','pipe','ipc'],env:directorySandbox.env});
   const decoder=new StringDecoder('utf8');
   let out='',size=0,failed,executionExit; const messages=[];
   const stop=()=>{try{process.kill(-child.pid,'SIGKILL')}catch{}};
@@ -184,7 +188,7 @@ export async function executeQuery(params,context={},runtime=configuration){
    child.stdin.end(invocation.stdin);
   }catch(error){failed=error;stop();}
  });
-  }finally{if(schemaDirectory)await rm(schemaDirectory,{recursive:true,force:true});}
+  }finally{await directorySandbox?.cleanup();if(schemaDirectory)await rm(schemaDirectory,{recursive:true,force:true});}
  };
   if(revisionOf(skillsSnapshot)!==revisionOf(currentSkills))context.onProgress?.({skillsStatus:'refreshing',targetSkillsRevision:revisionOf(currentSkills)});
   try {if(currentSkills)await refreshSkillSession({previous:skillsSnapshot,current:currentSkills,runTurn,signal:context.signal,

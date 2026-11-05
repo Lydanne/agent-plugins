@@ -359,3 +359,11 @@ test('project reader lease defers synchronization without changing HEAD, then pe
  try{const result=await syncWorkspace(f.config);assert.equal(result.ok,false);assert.equal(result.code,'PROJECT_IN_USE');assert.equal(git(f.root,'rev-parse','HEAD'),before);}finally{await release();}
  assert.equal((await syncWorkspace(f.config)).ok,true);assert.equal(git(f.root,'rev-parse','HEAD'),next);
 });
+test('slow fetch admits a new reader and defers checkout until the reader finishes',async()=>{
+ const {acquireProjectReadLease}=await import('./dist/project-read-lease.mjs');const f=fixture(),before=git(f.root,'rev-parse','HEAD');f.commit(f.seed,'code.txt','updated');
+ let entered,finishFetch;const fetching=new Promise(resolve=>{entered=resolve;}),held=new Promise(resolve=>{finishFetch=resolve;});
+ const syncing=syncWorkspace({...f.config,onProgress:async event=>{if(event.stage==='拉取'&&event.status==='started'){entered();await held;}}});
+ await fetching;const release=await acquireProjectReadLease(f.root,{timeoutMs:100});finishFetch();
+ try{const result=await syncing;assert.equal(result.code,'PROJECT_IN_USE');assert.equal(git(f.root,'rev-parse','HEAD'),before);}finally{await release();}
+ assert.equal((await syncWorkspace(f.config)).ok,true);
+});

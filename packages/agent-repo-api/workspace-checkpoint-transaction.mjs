@@ -53,7 +53,7 @@ export async function saveWorkspaceCheckpoint(stateRoot,binding,repositories) {
 // Called only after the pool has exclusively claimed the original slot. A
 // restoring/recovery_required record is deliberately not automatically replayed:
 // Git apply may have succeeded before its receipt was durably written.
-export async function restoreWorkspaceCheckpoint(stateRoot,binding) {
+export async function restoreWorkspaceCheckpoint(stateRoot,binding,{protectedCheckpoints=[]}={}) {
  let record=await readCheckpoint(stateRoot,binding);
  const id=createHash('sha256').update(JSON.stringify(record.binding)).digest('hex');
  const dir=join(await realpath(stateRoot),'workspace-checkpoints');
@@ -71,11 +71,19 @@ export async function restoreWorkspaceCheckpoint(stateRoot,binding) {
    const expected=join(dir,id+'.files',createHash('sha256').update(repo.path).digest('hex'));
    if(repo.filesDirectory!==expected||await realpath(expected)!==expected)throw Error('Checkpoint file directory changed');
   }
+  const protectedRecords=[];
+  for(const other of protectedCheckpoints){
+   if(other.workspaceId!==binding.workspaceId||other.workspacePath!==binding.workspacePath||other.projectId!==binding.projectId||other.assignmentId===binding.assignmentId)throw Error('Branch preservation belongs to another workspace');
+   const proof=await readCheckpoint(stateRoot,other);
+   const expectedStage=proof.status==='parked'?'released':proof.status==='restored'?'restored':undefined;
+   if(!expectedStage||!proof.repositories.length||proof.repositories.some(repo=>repo.stage!==expectedStage))throw Error('Branch preservation checkpoint is incomplete');
+   protectedRecords.push(proof);
+  }
   record=await updateCheckpoint(stateRoot,binding,record.revision,{status:'restoring',repositories:record.repositories});
   for(const repo of record.repositories) {
    const path=resolve(binding.workspacePath,repo.path);
    record=await updateCheckpoint(stateRoot,binding,record.revision,{status:'restoring',repositories:record.repositories.map(r=>r.path===repo.path?{...r,stage:'restoring_git'}:r)});
-   await restoreTrackedCheckpoint(path,repo.git);
+   await restoreTrackedCheckpoint(path,repo.git,{protectedBranches:protectedRecords.flatMap(proof=>proof.repositories.filter(other=>other.path===repo.path&&other.url===repo.url).map(other=>other.git))});
    record=await updateCheckpoint(stateRoot,binding,record.revision,{status:'restoring',repositories:record.repositories.map(r=>r.path===repo.path?{...r,stage:'restoring_files'}:r)});
    await restoreExtraFiles(path,repo.filesDirectory,repo.files,{expectedRoot:path});
    record=await updateCheckpoint(stateRoot,binding,record.revision,{status:'restoring',repositories:record.repositories.map(r=>r.path===repo.path?{...r,stage:'restored'}:r)});

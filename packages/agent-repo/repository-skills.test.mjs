@@ -61,6 +61,8 @@ test('worker freezes selected cwd/catalog, checks owner and rejects changes befo
  const f=await fixture(t),dispose=installScopeProvider({agents:{main:f.binding}},()=>({}));t.after(dispose);
  const baseline={cwd:f.roots[1],skillContextRoot:f.root,executorInstructions:'Only '+f.roots[1],delegationInstructions:'Use '+f.roots[1]};
  const runtime=await scopeRuntime(baseline,{repository:'projects/demo/repositories/frontend'},{agentId:'main'});
+ await assert.rejects(scopeRuntime(baseline,{repository:'projects/demo/repositories/frontend',useWorkspace:true},{agentId:'main'}),{code:'AGENT_REPO_UNAVAILABLE'});
+ assert.equal((await scopeRuntime(baseline,{repository:'projects/demo/repositories/frontend',useWorkspace:false},{agentId:'main'})).cwd,f.roots[1]);
  assert.equal(runtime.cwd,f.roots[1]);assert.ok(runtime.executorInstructions.includes(f.roots[1]));assert.equal((await readScopedSkillVersion(runtime)).root,f.root);
  await assert.rejects(readScopedSkillVersion({...runtime,cwd:f.roots[2]}),/cwd mismatch/);
  const legacy={...runtime,cwd:f.roots[2],scopedSkillSnapshot:{...runtime.scopedSkillSnapshot,protocol:1}};assert.equal((await readScopedSkillVersion(legacy)).protocol,1);
@@ -115,8 +117,14 @@ test('real executor CLI stays at the project root with child skills and inherite
  const f=await fixture(t),dispose=installScopeProvider({agents:{main:f.binding}},()=>({}));t.after(dispose);
  const cli=join(f.root,'.tmp/fake-cli.mjs');await mkdir(join(f.root,'.tmp'));
  await writeFile(cli,`#!${process.execPath}
+let args=process.argv.slice(2);
+if(args.includes('--help')){console.log('CONFIG_PROFILE_V2 --permission-profile --include-managed-config --ignore-user-config --strict-config');process.exit(0);}
+if(args.includes('app-server')){
+ let buffer='';for await(const chunk of process.stdin){buffer+=chunk;let end;while((end=buffer.indexOf('\\n'))>=0){const message=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);if(message.id!==undefined){const name=args[args.indexOf('-p')+1];console.log(JSON.stringify({id:message.id,result:message.method==='config/read'?{config:{default_permissions:name,permissions:{[name]:{}}},layers:[]}:message.method==='hooks/list'?{data:[]}:{} }));}}}process.exit(0);
+}
+if(args[0]==='sandbox')args=args.slice(args.indexOf('--')+2);
 let text='';for await(const part of process.stdin)text+=part;
-const prompt=JSON.parse(text),args=process.argv.slice(2);
+const prompt=JSON.parse(text);
 const catalog=prompt.catalog??prompt.skills.catalog;
 const expected=(prompt.root??prompt.skills.root)+(catalog.some(path=>path.startsWith('projects/other/'))?'/projects/other':'/projects/demo');
 if(args[args.indexOf('--cd')+1]!==expected)process.exit(11);
@@ -126,8 +134,10 @@ console.log(JSON.stringify({type:'thread.started',thread_id:id}));
 if(prompt.kind==='skill_catalog_refresh')console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({status:'catalog_applied',revision:prompt.revision})}}));
 else console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'verified child directory and catalog'}}));
 `);await chmod(cli,0o700);
- const baseline={state:join(f.root,'.tmp/state'),cwd:f.roots[1],skillContextRoot:f.root,cli,executorInstructions:'Only '+f.roots[1],delegationInstructions:'Use '+f.roots[1]};
+ const baseline={state:join(f.root,'.tmp/state'),codexHome:join(f.root,'.tmp/codex-home'),cwd:f.roots[1],skillContextRoot:f.root,cli,executorInstructions:'Only '+f.roots[1],delegationInstructions:'Use '+f.roots[1]};
  const runtime=await scopeRuntime(baseline,{repository:'projects/demo/repositories/frontend'},{agentId:'main'});
+ await assert.rejects(scopeRuntime(baseline,{repository:'projects/demo/repositories/frontend',useWorkspace:true},{agentId:'main'}),{code:'AGENT_REPO_UNAVAILABLE'});
+ assert.equal((await scopeRuntime(baseline,{repository:'projects/demo/repositories/frontend',useWorkspace:false},{agentId:'main'})).cwd,f.roots[1]);
  const params={action:'run',topic:'fixture',task:'read only',context:'fixture evidence',constraints:'read only; no business data'};
  const output=JSON.parse((await executeQuery(params,{sessionKey:'frontend-session'},runtime)).content[0].text);assert.equal(output.cwd,f.roots[1]);assert.equal(output.skillsStatus,'catalog_applied');
  const root=await scopeRuntime(baseline,{}, {agentId:'main'});

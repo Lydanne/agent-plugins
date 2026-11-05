@@ -79,8 +79,22 @@ test('single-project default, registration drift and immutable queued snapshot',
 });
 test('A to B to A preserves CLI sessions and scope-specific skills, history and concurrent execution',async t=>{
  const f=await fixture(t),cli=join(f.temp,'fake-cli.mjs');
- await writeFile(cli,`#!${process.execPath}\nimport {randomUUID} from 'node:crypto';let text='';for await(const data of process.stdin)text+=data;const prompt=JSON.parse(text),args=process.argv.slice(2);const id=args.includes('resume')?args[args.indexOf('resume')+1]:randomUUID();console.log(JSON.stringify({type:'thread.started',thread_id:id}));if(prompt.kind==='business_task'&&args[args.indexOf('--cd')+1]!==prompt.project.cwd)process.exit(9);console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:prompt.kind==='skill_catalog_refresh'?JSON.stringify({status:'catalog_applied',revision:prompt.revision}):JSON.stringify({project:prompt.project.projectId,cwd:prompt.project.cwd})}}));\n`);await chmod(cli,0o700);
- const base={...f.baseline,cli},context={agentId:'main',sessionKey:'agent:main:test'},params={action:'run',topic:'same',task:'check',context:'fixture',constraints:'read only'};
+ await writeFile(cli,`#!${process.execPath}
+import {randomUUID} from 'node:crypto';
+let args=process.argv.slice(2);
+if(args.includes('--help')){console.log('CONFIG_PROFILE_V2 --permission-profile --include-managed-config --ignore-user-config --strict-config');process.exit(0);}
+if(args.includes('app-server')){
+ let buffer='';for await(const chunk of process.stdin){buffer+=chunk;let end;while((end=buffer.indexOf('\\n'))>=0){const message=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);if(message.id!==undefined){const name=args[args.indexOf('-p')+1];console.log(JSON.stringify({id:message.id,result:message.method==='config/read'?{config:{default_permissions:name,permissions:{[name]:{}}},layers:[]}:message.method==='hooks/list'?{data:[]}:{} }));}}}process.exit(0);
+}
+if(args[0]==='sandbox')args=args.slice(args.indexOf('--')+2);
+let text='';for await(const data of process.stdin)text+=data;
+const prompt=JSON.parse(text),id=args.includes('resume')?args[args.indexOf('resume')+1]:randomUUID();
+console.log(JSON.stringify({type:'thread.started',thread_id:id}));
+if(prompt.kind==='business_task'&&args[args.indexOf('--cd')+1]!==prompt.project.cwd)process.exit(9);
+console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:prompt.kind==='skill_catalog_refresh'?JSON.stringify({status:'catalog_applied',revision:prompt.revision}):JSON.stringify({project:prompt.project.projectId,cwd:prompt.project.cwd})}}));
+`);await chmod(cli,0o700);
+ const codexHome=join(f.temp,'codex-home');await mkdir(codexHome);
+ const base={...f.baseline,cli,codexHome},context={agentId:'main',sessionKey:'agent:main:test'},params={action:'run',topic:'same',task:'check',context:'fixture',constraints:'read only'};
  const run=async projectId=>{const runtime=await scopeRuntime(base,{projectId},context);return JSON.parse((await executeQuery(params,context,runtime)).content[0].text);};
  const a=await run('a'),b=await run('b'),back=await run('a');assert.notEqual(a.sessionId,b.sessionId);assert.equal(back.sessionId,a.sessionId);assert.equal(back.reused,true);assert.equal(back.projectId,'a');
  const listing=JSON.parse((await executeQuery({action:'list'},context,base)).content[0].text);assert.equal(listing.tasks.length,2);assert.deepEqual(new Set(listing.tasks.map(row=>row.projectId)),new Set(['a','b']));assert.ok(listing.tasks.every(row=>row.needsMigration===false));
@@ -115,4 +129,13 @@ test('workspace selector is opt-in, exposes pool config and maps skill scope int
  const registryText=await readFile(join(f.root,'projects.json'),'utf8'),staged=JSON.parse(registryText);staged.projects.a.branch='other';await writeFile(join(f.root,'projects.json'),JSON.stringify(staged));await git(f.root,['add','projects.json']);await writeFile(join(f.root,'projects.json'),registryText);await assert.rejects(readScopedSkillVersion(runtime),/registration changed/);await git(f.root,['add','projects.json']);
  const resumed=await prepareJobWorkspace(runtime,runtime.workspace.owner);assert.equal(resumed.workspace.assignmentId,runtime.workspace.assignmentId);assert.equal(resumed.executionScope,runtime.executionScope);
  await git(runtime.cwd,['switch','-c','task-investigation']);await readScopedSkillVersion(runtime);assert.equal((await git(join(f.root,'projects/a'),['branch','--show-current'])).trim(),'main');
+ const {resolveQueueExecution,executionFingerprint}=await import('../agent-worker/configuration.mjs'),{applyDirectoryPolicy}=await import('../agent-worker/directory-policy.mjs'),{projectFields,modelFields}=await import('../agent-worker/project-binding.mjs'),{executionPolicyVersion}=await import('../agent-worker/index.mjs');
+ const context={agentId:'main',sessionKey:'agent:main:workspace-history'},resolved=applyDirectoryPolicy(resolveQueueExecution(runtime,{}));
+ const entry={topic:'workspace-history',sessionId:'22222222-2222-4222-8222-222222222222',updatedAt:new Date().toISOString(),...projectFields(resolved),...modelFields(resolved),workspacePool:resolved.workspacePool,configurationFingerprint:executionFingerprint(resolved),executionPolicyVersion,skillsSnapshot:resolved.scopedSkillSnapshot};
+ await mkdir(f.baseline.state,{recursive:true});const bindingFile=join(f.baseline.state,createHash('sha256').update(context.sessionKey).digest('hex')+'.json'),poolFile=join(f.root,'workspace/state.json');
+ const list=async value=>{await writeFile(bindingFile,JSON.stringify({saved:value}));return JSON.parse((await executeQuery({action:'list'},context,f.baseline)).content[0].text).tasks[0];};
+ const before=await readFile(poolFile,'utf8');assert.equal((await list(entry)).needsMigration,false);assert.equal(await readFile(poolFile,'utf8'),before);
+ assert.equal((await list({...entry,workspace:{...entry.workspace,assignmentId:'33333333-3333-4333-8333-333333333333'}})).needsMigration,true);
+ const legacy={...entry};delete legacy.workspacePool;assert.equal((await list(legacy)).needsMigration,true);assert.equal(await readFile(poolFile,'utf8'),before);
+ const {rename}=await import('node:fs/promises');await rename(poolFile,poolFile+'.saved');assert.equal((await list(entry)).needsMigration,true);await assert.rejects(readFile(poolFile),{code:'ENOENT'});await rename(poolFile+'.saved',poolFile);
 });

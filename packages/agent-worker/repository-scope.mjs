@@ -26,6 +26,7 @@ export async function scopeRuntime(config,params,provenance,hostConfig={}) {
   const bound=hostConfig.plugins?.entries?.['agent-repo']?.enabled!==false&&hostConfig.plugins?.entries?.['agent-repo']?.config?.agents?.[context?.agentId];
   if(config.projectRouting==='agent-repo'||bound)throw new AgentRepoError('AGENT_REPO_UNAVAILABLE','Agent Repo service is unavailable; project routing cannot fall back to a fixed cwd');
   if(params.projectId!==undefined||params.expectedRegistryRevision!==undefined)throw new AgentRepoError('AGENT_REPO_UNAVAILABLE','projectId routing requires the Agent Repo API');
+  if(params.useWorkspace===true)throw new AgentRepoError('AGENT_REPO_UNAVAILABLE','Independent workspace allocation requires the Agent Repo API; shared source fallback is forbidden');
   if(params.repository===undefined&&!config.skillContextRoot)return config;
   if(params.repository!==undefined&&(typeof params.repository!=='string'||!/^(?:project|projects\/[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?:\/repositories\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/.test(params.repository)))throw Error('Invalid repository scope');
   if(!config.skillContextRoot)throw Error('repository routing requires the Agent Repo migration configuration');
