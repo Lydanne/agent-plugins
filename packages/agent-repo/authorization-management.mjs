@@ -1,3 +1,5 @@
+import {randomUUID} from 'node:crypto';
+import {inspectionChunkSize,inspectionMaxChunks} from './dist/inspection-transport.mjs';
 import {canReviewResource,reviewResource} from './authorization-reviewed.mjs';
 import {authorizationAdapterResources} from './dist/authorization-api.mjs';
 import {registeredCliCapabilities} from './dist/plugin-cli.mjs';
@@ -8,9 +10,31 @@ import {scanPermissionResources} from './authorization-catalog.mjs';
 import {permissionActions} from './authorization-policy.mjs';
 import {createEntityStore} from './entities.mjs';
 /** Operator administration is an out-of-band bootstrap boundary, never a model tool. */
-export function registerAuthorizationManagement(api,config,runtime,{openGraph=createEntityStore,readCatalog}={}){
- const register=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);
- if(!register)return;
+export function registerAuthorizationManagement(api,config,runtime,{openGraph=createEntityStore,readCatalog,now=()=>Date.now()}={}){
+ const registerAction=api.session?.controls?.registerSessionAction?.bind(api.session.controls)??api.registerSessionAction?.bind(api);
+ if(!registerAction)return;
+ const transfers=new Map(),owner=ctx=>JSON.stringify([ctx.agentId,ctx.sessionKey??null,ctx.client?.connId??null]);
+ const prune=()=>{for(const [id,value] of transfers)if(value.expiresAt<=now())transfers.delete(id);};
+ const part=(id,value,index)=>({encoding:'json-chunks',transferId:id,totalChunks:Math.ceil(value.text.length/inspectionChunkSize),index,chunk:value.text.slice(index*inspectionChunkSize,(index+1)*inspectionChunkSize)});
+ // Small replies keep the existing shape. Larger or deeply nested results use
+ // the same bounded, connection-owned transport as the other management pages.
+ const register=definition=>registerAction({...definition,handler:async ctx=>{
+  const response=await definition.handler(ctx);if(!response?.ok)return response;
+  try{
+   const text=JSON.stringify(response.result);if(typeof text!=='string'||text.length>inspectionChunkSize*inspectionMaxChunks)throw Error('权限资料超过传输容量');
+   const value=JSON.parse(text);const shallow=(item,depth=0)=>depth<=16&&(item===null||typeof item!=='object'||Object.values(item).every(child=>shallow(child,depth+1)));
+   if(text.length<=2000&&shallow(value))return {...response,result:value};
+   prune();const id=randomUUID(),transfer={text,owner:owner(ctx),access:definition.requiredScopes[0],expiresAt:now()+120000};
+   if(text.length>inspectionChunkSize){while(transfers.size>=4||[...transfers.values()].reduce((sum,item)=>sum+item.text.length,0)+text.length>inspectionChunkSize*inspectionMaxChunks)transfers.delete(transfers.keys().next().value);transfers.set(id,transfer);}
+   return {...response,result:part(id,transfer,0)};
+  }catch(error){return {ok:false,code:'AUTHORIZATION_TRANSFER_FAILED',error:error.message};}
+ }});
+ registerAction({id:'authorization-chunk',description:'Read an existing permission response',requiredScopes:['operator.read'],handler:async ctx=>{
+  prune();const {transferId,index}=ctx.payload??{},value=transfers.get(transferId),scopes=ctx.client?.scopes??[];
+  if(!value||value.owner!==owner(ctx)||!config.agents[ctx.agentId]||(!scopes.includes('operator.admin')&&!(value.access==='operator.read'&&scopes.includes('operator.read')))||!Number.isInteger(index)||index<0||index>=Math.ceil(value.text.length/inspectionChunkSize))return {ok:false,code:'AUTHORIZATION_TRANSFER_FAILED',error:'权限资料传输已失效，请刷新页面'};
+  return {ok:true,result:part(transferId,value,index)};
+ }});
+
  for(const action of ['catalog','entityOptions','save','mode','defaults','scan','classify','review','simulate','publish','previewDefaults','recomputeDefaults'])register({id:'authorization-'+action,description:'Current Agent permission administration',requiredScopes:[action==='catalog'?'operator.read':'operator.admin'],handler:async ctx=>{
   try{
    const id=ctx.agentId,binding=config.agents[id];if(!binding)throw Error('Unknown Agent');
