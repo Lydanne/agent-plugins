@@ -1,3 +1,4 @@
+import {readFileAudit} from './file-audit.mjs';
 import {workerInspectionActions} from './cli-capabilities.mjs';
 import {automationDeletionBlocked} from './task-service/deletion.mjs';
 import {createSessionDeletion,sessionDeletionState,sessionSupplements,sessionSubmissionState} from './session-deletion.mjs';
@@ -75,6 +76,11 @@ export function createSessionInspector({state,jobs,now=()=>Date.now()}){
  return {
   agentTasks:createAgentTaskInspector({state,jobs,now}),
   deleteSession:createSessionDeletion({state}),
+  async files(scope,{jobId}={}){
+   if(typeof jobId!=='string'||!uuid.test(jobId))throw Error('Invalid job identifier');
+   const all=await scoped(scope);if(!all.some(job=>job.jobId===jobId))throw Error('Task not found in conversation');
+   return redactInspection(await readFileAudit(root,jobId));
+  },
   async list(scope,{query='',sort='heat',offset=0,limit=30,projectId}={}){
    if(typeof query!=='string'||query.length>500||!['heat','recent'].includes(sort)||!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>100)throw Error('Invalid list parameters');
    if(projectId!==undefined&&(typeof projectId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(projectId)))throw Error('Invalid project filter');

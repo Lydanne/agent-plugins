@@ -54,3 +54,17 @@ it('keeps an expanded message code reader when an earlier reply arrives',async()
  await wrapper.setProps({record:{...record,events:[event('X',3000,'Earlier reply'),a,b]}});
  const retained=wrapper.findAllComponents(SourceView)[0]!;expect(retained.element).toBe(original);expect(original.open).toBe(true);expect(retained.findAll('.cq-source-line')).toHaveLength(1);wrapper.unmount();
 });
+
+import FileAudit from './FileAudit.vue';
+import {flushPromises} from '@vue/test-utils';
+it('file audit switches task and uncommitted diffs, escapes HTML, and supports split layout',async()=>{
+ const load=vi.fn().mockResolvedValue({available:true,final:true,isolated:true,files:[{path:'code.txt',status:'M',patch:'@@ -1 +1 @@\n-before\n+<script>bad()</script>',additions:1,deletions:1}],uncommitted:[],commits:['abc task']});
+ const wrapper=mount(FileAudit,{props:{jobId:'job',load,redact}});await flushPromises();
+ expect(load).toHaveBeenCalledWith('files',{jobId:'job'});expect(wrapper.text()).toContain('code.txt');expect(wrapper.find('script').exists()).toBe(false);
+ await wrapper.get('[aria-label="差异布局"]').setValue('split');expect(wrapper.find('[aria-label="并排文件差异"]').exists()).toBe(true);
+ await wrapper.get('[aria-label="变更范围"]').setValue('pending');expect(wrapper.text()).toContain('此快照没有文件内容变更');wrapper.unmount();
+});
+it('file audit discards late responses after unmount',async()=>{
+ let finish!:(value:unknown)=>void;const load=vi.fn(()=>new Promise(resolve=>{finish=resolve;}));
+ const wrapper=mount(FileAudit,{props:{jobId:'old',load:load as never,redact}});wrapper.unmount();finish({available:true,files:[{path:'old.txt'}]});await flushPromises();expect(wrapper.exists()).toBe(false);
+});

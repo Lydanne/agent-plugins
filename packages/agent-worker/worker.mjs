@@ -1,3 +1,4 @@
+import {beginFileAudit,captureFileAudit} from './file-audit.mjs';
 import {deliverLiveSteering} from './live-steering.mjs';
 import {tryLock,acquireLock} from './locks.mjs';
 import {validateAutomationSource} from './adapters/automation-source.mjs';
@@ -15,7 +16,8 @@ import {executeQuery} from './index.mjs';
 
 export async function runWorker({root,id,params,scope,runtime,execute=executeQuery,pollMs=1000}) {
  const file=join(root,id+'.json');
- let job=readJson(file);let liveTurn,livePending;
+ let job=readJson(file);let liveTurn,livePending;let auditTimer,auditPending,auditReady=false;
+ const audit=()=>auditPending??(auditPending=captureFileAudit({root,id}).catch(()=>{}).finally(()=>{auditPending=null;}));
  const deliver=()=>{if(liveTurn&&!livePending){const turn=liveTurn;livePending=deliverLiveSteering({root,id,workerId:job.workerId,turn,send:turn.send,signal:controller.signal}).catch(()=>{controller.abort();}).finally(()=>{livePending=null;});}};
  const controller=new AbortController();
  const eventFile=join(root,id+'.events.jsonl');let eventBytes=existsSync(eventFile)?statSync(eventFile).size:0,omitted=0;
@@ -56,6 +58,8 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
   job.executionRounds=[...(job.executionRounds??[]),{startedAt:Date.now(),resumed:!!job.resumeSessionId}];
   job.status='running';delete job.result;delete job.error;appendFileSync(eventFile,'',{mode:0o600});await persistBoundary();
   await checkJobWorkspace(runtime??{});
+  auditReady=await beginFileAudit({root,id,cwd:runtime?.cwd??job.cwd,isolated:!!runtime?.workspace,resumed:job.executionRounds.length>1}).catch(()=>false);
+  if(auditReady){await audit();auditTimer=setInterval(()=>{void audit();},15000);}
   runtime={...runtime,workerCli:runtime?.workerCli??{context:{version:1,workerId:job.workerId??randomUUID(),jobId:id,agentId:job.provenance?.agentId,sessionKey:scope,task:params.task,constraints:params.constraints}}};
   const attachments=jobSourceAttachments(job.provenance);
   checkCancellation();controller.signal.throwIfAborted();
@@ -82,6 +86,8 @@ export async function runWorker({root,id,params,scope,runtime,execute=executeQue
 
  }catch(e){delete job.result;job.status=controller.signal.aborted?'cancelled':e.code==='EXECUTION_TIMEOUT' || String(e.message).includes('exceeded 10 minutes')?'timed_out':'failed';job.error=String(e.message);}
  finally {
+  clearInterval(auditTimer);if(auditPending)await auditPending;
+  if(auditReady)await captureFileAudit({root,id,final:job.status!=='awaiting_main'}).catch(()=>{});
   const lastRound=job.executionRounds?.at(-1);if(lastRound&&!lastRound.finishedAt)lastRound.finishedAt=Date.now();
   clearInterval(timer);if(livePending)await livePending;if(omitted)appendFileSync(eventFile,JSON.stringify({event:'inspection.omitted',count:omitted})+'\n',{mode:0o600});if(job.status!=='awaiting_main')job.finishedAt=Date.now();
   if(job.status!=='awaiting_main')await finalizeJobReport({job,params,runtime});

@@ -9,14 +9,15 @@ import SessionInformation from './SessionInformation.vue';
 import TaskCards from './TaskCards.vue';
 import ConversationRecord from './ConversationRecord.vue';
 import SourceView from './SourceView.vue';
+import FileAudit from './FileAudit.vue';
 const props=defineProps<{projectPage?:boolean}>();
-const {context,target,root,scroll,writable,selected,view,filter,query,project,sort,rows,data,list,projects,error,loading,now,menu,selectionMode,checked,collapsed,deleting,deleteFeedback,confirmation,original,originalPayload,history,eligible,allChecked,someChecked,safe,multiple,pick,toggle,selectAll,cancelSelection,confirmDelete,closeDelete,executeDelete,refresh,choose,back,resetProject,search,refreshButton,more,earlier,moreHistory,setView,setFilter,toggleTask,showOriginal}=useWorkerPanel(()=>props.projectPage===true);
+const {invoke,context,target,root,scroll,writable,selected,view,filter,query,project,sort,rows,data,list,projects,error,loading,now,menu,selectionMode,checked,collapsed,deleting,deleteFeedback,confirmation,original,originalPayload,history,eligible,allChecked,someChecked,safe,multiple,pick,toggle,selectAll,cancelSelection,confirmDelete,closeDelete,executeDelete,refresh,choose,back,resetProject,search,refreshButton,more,earlier,moreHistory,setView,setFilter,toggleTask,showOriginal}=useWorkerPanel(()=>props.projectPage===true);
 const draftSort=ref('heat');
 function applyOptions(){sort.value=draftSort.value;search();}
 const current=computed(()=>data.value?.session??data.value?.records.at(-1));
 const summary=computed(()=>list.value?`当前聊天 · 运行 ${list.value.counts.running??0} 个任务 · 排队 ${list.value.counts.queued??0} 个任务${list.value.counts.awaitingMain?' · 等待 Main '+list.value.counts.awaitingMain+' 个任务':''}${list.value.counts.awaitingUser?' · 等待用户 '+list.value.counts.awaitingUser+' 个任务':''}`:loading.value?'当前聊天 · 正在读取任务统计…':'当前聊天 · 任务统计尚未读取');
 const deleteTaskCount=computed(()=>confirmation.value?.rows.reduce((count,row)=>count+(row.taskCount??0),0)??0);
-const tabs=[{id:'records',label:'对话记录'},{id:'process',label:'任务过程'},{id:'info',label:'任务信息'},{id:'session',label:'会话信息'}];
+const tabs=[{id:'records',label:'对话记录'},{id:'process',label:'任务过程'},{id:'files',label:'文件变更'},{id:'info',label:'任务信息'},{id:'session',label:'会话信息'}];
 function remove(row:SessionRow){confirmDelete([row]);}
 </script>
 <template>
@@ -32,7 +33,8 @@ function remove(row:SessionRow){confirmDelete([row]);}
    <div v-if="!selected" ref="scroll" class="cq-scroll"><p v-if="loading&&!rows.length" class="cq-muted">正在读取…</p><SessionList :rows="rows" :list="list" :loading="loading" :error="error" :selection-mode="selectionMode" :checked="checked" :deleting="deleting" :writable="writable" :menu="menu" :redact="safe" :now="now" @choose="choose" @toggle="toggle" @remove="remove" @pick="pick" @menu="menu=$event" @more="more"/></div>
    <Tabs v-else :model-value="view" :items="tabs" label="Worker 会话详情" list-class="cq-detail-tabs" @update:model-value="setView"><div ref="scroll" class="cq-scroll"><p v-if="loading&&!data" class="cq-muted">正在读取…</p><template v-if="data"><nav v-if="view==='records'" class="cq-record-filters"><Button v-for="id in ['all','Main','Worker']" :key="id" variant="ghost" :class="{'cq-selected':filter===id}" @click="setFilter(id)">{{id==='all'?'全部':id}}</Button></nav><SessionInformation v-if="view==='session'" :session="data.session" :agent-id="target.agentId" :redact="safe"/>
      <template v-if="view==='info'"><TaskCards :title="'当前任务 · '+(data.currentTasks?.length??0)" :tasks="data.currentTasks??[]" empty="当前没有进行中的任务。" :records="data.records" :collapsed="collapsed" :now="now" :redact="safe" @toggle="toggleTask" @navigate="setView" @original="showOriginal('Main',$event)"/><TaskCards :title="'历史任务 · '+(data.historyTotal??0)" :tasks="history" empty="还没有历史任务。" :records="data.records" :collapsed="collapsed" :now="now" :redact="safe" @toggle="toggleTask" @navigate="setView" @original="showOriginal('Main',$event)"/><Button v-if="data.historyHasMore" variant="outline" class="cq-load-earlier" :disabled="loading" @click="moreHistory">加载更多历史任务</Button></template>
-     <template v-if="!['session','info'].includes(view)"><ConversationRecord v-for="record in data.records" :key="record.jobId" :record="record" :view="view" :filter="filter" :redact="safe" :now="now" @original="showOriginal"/><Button v-if="data.hasMore" variant="outline" class="cq-load-earlier" :disabled="loading" @click="earlier">加载更早任务</Button></template><EmptyState compact v-if="view!=='session'&&!data.records.length" :title="'暂无任务记录'" />
+     <template v-if="view==='files'"><FileAudit v-for="record in data.records" :key="record.jobId" :job-id="record.jobId" :load="invoke" :redact="safe"/><Button v-if="data.hasMore" variant="outline" :disabled="loading" @click="earlier">加载更早任务</Button></template>
+     <template v-if="!['session','info','files'].includes(view)"><ConversationRecord v-for="record in data.records" :key="record.jobId" :record="record" :view="view" :filter="filter" :redact="safe" :now="now" @original="showOriginal"/><Button v-if="data.hasMore" variant="outline" class="cq-load-earlier" :disabled="loading" @click="earlier">加载更早任务</Button></template><EmptyState compact v-if="view!=='session'&&!data.records.length" :title="'暂无任务记录'" />
     </template></div></Tabs>
   </template>
  </section>

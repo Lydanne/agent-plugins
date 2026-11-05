@@ -210,3 +210,12 @@ test('Worker path labels receive only the trusted AgentRepo root without changin
  const response=await actions.find(a=>a.id==='inspect-list').handler({agentId:'path-main',sessionKey:'agent:path-main:test',payload:{}});assert.deepEqual(Object.keys(response).sort(),['ok','result']);assert.equal(response.result.agentRepoRoot,root);assert.equal(JSON.parse(response.result.chunk).sessions[0].cwd,raw.sessions[0].cwd);
  const foreign=await actions.find(a=>a.id==='inspect-list').handler({agentId:'other',sessionKey:'agent:path-main:test',payload:{}});assert.equal(foreign.result?.agentRepoRoot,undefined);
 });
+test('file audits are read only from saved snapshots and bound to the requesting conversation',()=>fixture(async state=>{
+ const saved={jobId:id,scope:hash('chat-a'),topic:'audit',status:'completed',createdAt:1};
+ await writeFile(join(state,'jobs',id+'.json'),JSON.stringify(saved));
+ await writeFile(join(state,'jobs',id+'.audit.json'),JSON.stringify({available:true,final:true,files:[{path:'source.txt',patch:'+password=private-value'}]}));
+ const inspector=createSessionInspector({state,jobs:{status:()=>saved}});
+ const data=await inspector.files('chat-a',{jobId:id});assert.equal(data.final,true);assert(!JSON.stringify(data).includes('private-value'));
+ await assert.rejects(inspector.files('chat-b',{jobId:id}),/not found/);
+ await assert.rejects(inspector.files('chat-a',{jobId:'../escape'}),/Invalid/);
+}));
