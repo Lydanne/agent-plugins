@@ -8,10 +8,13 @@ export const defaultPermissionGroups=Object.freeze([
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const contextFields=new Set(['projectId','environment','accountId','destinationHost','destinationOrigin','protocol']);
 const fields=new Set(['projectId','environment','accountId','sensitivity','atomicity','recovery','idempotency','externalEffect','access','destinationHost','destinationOrigin','protocol']);
+const allActionsEffect=effect=>effect==='allow_all'||effect==='deny_all';
+const isDeny=rule=>rule.effect==='deny'||rule.effect==='deny_all';
+export const ruleActions=rule=>allActionsEffect(rule.effect)?permissionActions:rule.actions;
 export function validatePermissionRule(rule){
  if(!plain(rule)||Object.keys(rule).some(k=>!['id','groupId','effect','actions','selector','conditions','parameters','origin'].includes(k)))throw Error('Invalid permission rule');
- if(typeof rule.id!=='string'||!rule.id||typeof rule.groupId!=='string'||!rule.groupId||!['allow','deny'].includes(rule.effect))throw Error('Invalid permission rule identity');
- if(!Array.isArray(rule.actions)||!rule.actions.length||rule.actions.some(a=>!permissionActions.includes(a)))throw Error('Invalid permission actions');
+ if(typeof rule.id!=='string'||!rule.id||typeof rule.groupId!=='string'||!rule.groupId||!['allow','deny','allow_all','deny_all'].includes(rule.effect))throw Error('Invalid permission rule identity');
+ if(!Array.isArray(rule.actions)||(allActionsEffect(rule.effect)?rule.actions.length!==0:!rule.actions.length)||rule.actions.some(a=>!permissionActions.includes(a)))throw Error('Invalid permission actions');
  const selector=rule.selector;
  if(!plain(selector)||Object.keys(selector).some(k=>!['resourceIds','kinds','providers','labels'].includes(k))||Object.values(selector).some(v=>!Array.isArray(v)||!v.length||v.some(x=>typeof x!=='string'||!x)))throw Error('Invalid resource selector');
  if(rule.conditions!==undefined&&(!plain(rule.conditions)||Object.entries(rule.conditions).some(([k,v])=>!fields.has(k)||!Array.isArray(v)||!v.length||v.some(x=>typeof x!=='string'))))throw Error('Invalid permission conditions');
@@ -44,7 +47,7 @@ export function permissionDiscoveryRules(rules){
   const conditions=Object.fromEntries(Object.entries(rule.conditions??{}).filter(([key])=>!contextFields.has(key)));
   const needsInvocation=(rule.parameters?.length??0)>0||Object.keys(rule.conditions??{}).some(key=>contextFields.has(key));
   // Only a deny that is decidable without invocation data may hide metadata.
-  if(rule.effect==='deny'&&needsInvocation)return [];
+  if(isDeny(rule)&&needsInvocation)return [];
   const {parameters,...metadataRule}=rule;
   return [{...metadataRule,conditions}];
  });
@@ -74,8 +77,8 @@ export function evaluatePermissions({agentId,subject,groups,rules,requirements,c
   else if(resource.status!=='active'||resource.verification!=='verified'||resource.enforcement!=='enforced')reason='RESOURCE_UNVERIFIED';
   else if(ceiling&&!ceiling.some(item=>item.resourceId===resource.id&&item.revision===resource.revision&&item.action===action))reason='TASK_CEILING_DENIED';
   else{
-   matched=applicable.filter(rule=>rule.actions.includes(action)&&permissionRuleMatches(rule,resource,context)&&permissionParametersMatch(rule.parameters,parameters));
-   reason=matched.some(rule=>rule.effect==='deny')?'EXPLICIT_DENY':matched.some(rule=>rule.effect==='allow')?'ALLOW':'NO_ALLOW';
+   matched=applicable.filter(rule=>ruleActions(rule).includes(action)&&permissionRuleMatches(rule,resource,context)&&permissionParametersMatch(rule.parameters,parameters));
+   reason=matched.some(isDeny)?'EXPLICIT_DENY':matched.length?'ALLOW':'NO_ALLOW';
   }
   checks.push({resourceId:resource?.id,revision:resource?.revision,action,allowed:reason==='ALLOW',reason,ruleIds:matched.map(rule=>rule.id)});
  }

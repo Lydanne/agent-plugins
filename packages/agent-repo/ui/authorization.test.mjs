@@ -153,3 +153,15 @@ test('resource table searches across the full catalog and resets pagination; mod
  click(f.container,'启用强制拦截');await settle();assert.equal(calls.some(p=>p.actionId==='authorization-mode'),false);
  click(f.container,'取消');await settle();assert.equal(calls.some(p=>p.actionId==='authorization-mode'),false);
 });
+test('group editor saves all-operation effects without requiring individual actions',async()=>{
+ const f=await browserFixture({after:onTestFinished},path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../control-ui.mjs')),calls=[];
+ const ctx=uiContext(async(_method,params)=>{calls.push(params);return {ok:true,result:catalog};});ctx.props={...ctx.props,section:'authorization'};
+ f.track(f.ui.mountAgentRepo(f.container,ctx));await settle();
+ click(f.container,'管理权限');await settle();click(f.container,'新增规则');await settle();
+ const select=[...f.container.querySelectorAll('select')].find(field=>field.querySelector('option[value="deny_all"]'));
+ assert.ok(select.querySelector('option[value="allow_all"]'));
+ select.value='deny_all';select.dispatchEvent(new f.window.Event('change',{bubbles:true}));await settle();
+ f.container.querySelector('form').dispatchEvent(new f.window.Event('submit',{bubbles:true,cancelable:true}));await settle();
+ const saved=calls.find(call=>call.actionId==='authorization-save');
+ assert.equal(saved?.payload.value.effect,'deny_all');assert.deepEqual(saved.payload.value.actions,[]);
+});

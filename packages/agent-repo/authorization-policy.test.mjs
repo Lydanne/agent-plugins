@@ -36,3 +36,11 @@ test('parameter rules constrain actual payloads and reject missing, inherited or
  assert.throws(()=>validatePermissionRule({...allow,parameters:[{path:'__proto__.x',op:'present',value:true}]}));
  assert.throws(()=>validatePermissionRule({...allow,parameters:[{path:'limit',op:'max',value:'10'}]}));
 });
+test('all-operation effects honor scope and deny wins across groups in either order',()=>{
+ const grant={...allow,effect:'allow_all',actions:[]};
+ const block={...grant,id:'blocked',groupId:'external',effect:'deny_all',selector:{resourceIds:[resource.id]}};
+ const evaluate=(rules,groups)=>evaluatePermissions({...input,rules,groups,requirements:resource.actions.map(action=>({resource,action}))});
+ assert.equal(evaluate([grant,block],['internal']).allowed,true);
+ for(const rules of [[grant,block],[block,grant]])assert.ok(evaluate(rules,['internal','external']).checks.every(check=>check.reason==='EXPLICIT_DENY'));
+ assert.equal(evaluate([grant,{...block,selector:{resourceIds:['other']}}],['internal','external']).allowed,true);
+});

@@ -2,7 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {chmodSync} from 'node:fs';
 import {randomUUID,createHash} from 'node:crypto';
 import {privateFile,databaseTransaction} from './database.mjs';
-import {defaultPermissionGroups,permissionActions,validatePermissionRule,permissionDefaultMatches} from './authorization-policy.mjs';
+import {defaultPermissionGroups,permissionActions,ruleActions,validatePermissionRule,permissionDefaultMatches} from './authorization-policy.mjs';
 
 /** Internal store only. Transport handlers must authenticate administration separately. */
 export function createAuthorizationStore(root,{agentId,now=()=>new Date().toISOString()}={}){
@@ -132,8 +132,8 @@ export function createAuthorizationStore(root,{agentId,now=()=>new Date().toISOS
     if(resource.defaultAuthorization!=='explicit-only'&&resource.status==='active'&&resource.verification==='verified'&&resource.enforcement==='enforced')for(const stored of rules){
      if(stored.kind!=='default'||!active.has(stored.groupId))continue;
      const {kind,revision,...rule}=stored;if(!permissionDefaultMatches(rule,resource))continue;
-     const actions=rule.actions.filter(action=>resource.actions.includes(action));if(!actions.length)continue;
-     after.push({...rule,actions,selector:{resourceIds:[resource.id]},origin:{kind:'default',ruleId:rule.id,ruleRevision:revision,resourceRevision:resource.revision}});
+     const actions=ruleActions(rule).filter(action=>resource.actions.includes(action));if(!actions.length)continue;
+     after.push({...rule,actions:rule.actions.length?actions:[],selector:{resourceIds:[resource.id]},origin:{kind:'default',ruleId:rule.id,ruleRevision:revision,resourceRevision:resource.revision}});
     }
     const revision=createHash('sha256').update(JSON.stringify({resource,rules,groups,before,after,context})).digest('hex');
     return {resourceId,resourceRevision:resource.revision,revision,before,after};
@@ -158,8 +158,8 @@ export function createAuthorizationStore(root,{agentId,now=()=>new Date().toISOS
      if(stored.kind!=='default'||!activeGroups.has(stored.groupId))continue;
      const {kind,revision,...rule}=stored;
      if(!permissionDefaultMatches(rule,resource))continue;
-     const actions=rule.actions.filter(action=>resource.actions.includes(action));if(!actions.length)continue;
-     const grant={...rule,actions,selector:{resourceIds:[resource.id]},origin:{kind:'default',ruleId:rule.id,ruleRevision:revision,resourceRevision:resource.revision}};
+     const actions=ruleActions(rule).filter(action=>resource.actions.includes(action));if(!actions.length)continue;
+     const grant={...rule,actions:rule.actions.length?actions:[],selector:{resourceIds:[resource.id]},origin:{kind:'default',ruleId:rule.id,ruleRevision:revision,resourceRevision:resource.revision}};
      const result=db.prepare('INSERT OR IGNORE INTO auth_auto_grants VALUES(?,?,?,?,?)').run(resource.id,resource.revision,rule.id,revision,JSON.stringify(grant));
      if(result.changes){audit(actor,'default.apply',resource.id,{ruleId:rule.id,ruleRevision:revision,resourceRevision:resource.revision});applied.push(grant);}
     }

@@ -102,3 +102,16 @@ test('continuation snapshots inherit the parent ceiling instead of newly granted
  assert.throws(()=>store.taskScope('foreign','someone-else',[],{parentScopeId:'parent'}),/requester mismatch/);
  assert.throws(()=>store.taskScope('missing','person',[],{parentScopeId:'absent'}),/missing/);
 });
+test('published all-operation defaults apply to new resources and compose with other groups',t=>{
+ const {store}=setup(t),options={actor:'operator',expectedRevision:0};
+ for(const [groupId,effect] of [['external','deny_all'],['internal','allow_all']]){
+  const draft=store.draftRule({id:effect,kind:'default',groupId,effect,actions:[],selector:{}},options);
+  store.publishPolicy(draft.id,{...options,expectedRevision:draft.revision});
+ }
+ const resource=store.saveResource({id:'combined',kind:'tool',agentId:'ada',provider:'plugin',actions:['read','update'],status:'active',verification:'verified',enforcement:'enforced'},options);
+ const preview=store.previewDefaults(resource.id);
+ assert.deepEqual(store.applyDefaults(resource.id,options),preview.after);
+ const input={agentId:'ada',subject:{agentId:'ada',id:'p',verified:true},requirements:resource.actions.map(action=>({resource,action})),rules:store.effectiveRules(resource.id)};
+ assert.equal(evaluatePermissions({...input,groups:['internal']}).allowed,true);
+ assert.ok(evaluatePermissions({...input,groups:['internal','external']}).checks.every(check=>check.reason==='EXPLICIT_DENY'));
+});
