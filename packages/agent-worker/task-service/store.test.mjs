@@ -19,3 +19,10 @@ test('automatic unstarted settlement survives reopen and preserves dedup and cau
  assert.equal(s.get(t.taskId).settled,true);assert.equal(s.event(t.taskId,'unstarted-settlement').previousError.code,'TASK_RECONCILIATION_FAILED');assert.equal(s.submit('owner',{...input,attempt:'2'},{timeoutMs:60000}).taskId,t.taskId);assert.equal(s.list().length,1);
  }finally{s.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('manual execution review blocks a new generation even after physical settlement',()=>{
+ const root=mkdtempSync(join(tmpdir(),'task-review-')),s=openTaskStore(root);
+ try{const t=s.submit('owner',input,{timeoutMs:60000});s.update(t.taskId,()=>({state:'failed',phase:'finished',settled:true,executionReviewRequired:true}));
+ assert.throws(()=>s.rerun('owner',t.taskId,'new-generation'),/EXECUTION_REVIEW_REQUIRED/);assert.equal(s.list().length,1);assert.equal(s.submit('owner',input,{timeoutMs:60000}).taskId,t.taskId);
+ }finally{s.close();rmSync(root,{recursive:true,force:true});}
+});

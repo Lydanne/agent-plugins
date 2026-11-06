@@ -55,6 +55,7 @@ export function openTaskStore(root){
   rerun(owner,id,operationId){if(typeof operationId!=='string'||!operationId||operationId.length>160)throw fault('INVALID_REQUEST');return tx(()=>{
    const prior=get(id);if(prior.owner!==owner)throw fault('TASK_NOT_FOUND');
    const existing=db.prepare('SELECT events.body FROM events JOIN tasks ON tasks.id=events.task WHERE tasks.owner=? AND tasks.business_key=(SELECT business_key FROM tasks WHERE id=?) AND events.id=?').get(owner,id,'rerun:'+operationId);if(existing)return get(JSON.parse(existing.body).taskId);
+   if(prior.executionReviewRequired===true)throw fault('EXECUTION_REVIEW_REQUIRED');
    if(!terminalStates.has(prior.state)||prior.settled!==true)throw fault('PREDECESSOR_NOT_SETTLED');
    const row=db.prepare('SELECT business_key FROM tasks WHERE id=?').get(id),latest=db.prepare('SELECT id,generation FROM tasks WHERE owner=? AND business_key=? ORDER BY generation DESC LIMIT 1').get(owner,row.business_key);
    if(latest.id!==id)throw fault('PREDECESSOR_SUPERSEDED');

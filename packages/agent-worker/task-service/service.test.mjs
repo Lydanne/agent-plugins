@@ -72,3 +72,18 @@ test('terminal automation releases its hold after unallocated workspace settleme
  const t=f.svc.get('o',a.taskId);assert.equal(t.state,'failed');assert.equal(t.error.code,'TASK_DEADLINE_EXCEEDED');assert.equal(t.settled,true);assert.equal(releases,1);assert.equal(f.runs(),0);
  }finally{f.close();}
 });
+
+test('invalid memory is rejected before claiming delegation and a corrected handoff can be admitted once',async()=>{
+ let invalidSeen=false;
+ const f=fixture(async({e,svc,context,t})=>{if(e.phase!=='dispatch')return;
+ await assert.rejects(()=>svc.tool({...runParams,memory:{status:'unavailable',queries:[],items:[]}},context),/Invalid memory handoff/);
+ assert.equal(f.store.event(t.taskId,'delegation'),undefined);assert.equal(f.store.get(t.taskId).delegationAttempts,undefined);assert.equal(f.runs(),0);invalidSeen=true;
+ await svc.tool({...runParams,memory:{status:'unavailable',queries:[],items:[],reason:'fixture has no memory tool'}},context);
+ });try{const t=f.svc.submit('o',request);await f.svc.tick();assert.equal(invalidSeen,true);assert.equal(f.runs(),1);assert.equal(f.svc.get('o',t.taskId).jobId,'job');}finally{f.close();}
+});
+test('required memory is enforced before the delegation claim',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'automation-memory-')),store=openTaskStore(root);let svc;
+ const main={session:async()=>({sessionId:'session'}),run:async(t,e)=>{await assert.rejects(()=>svc.tool(runParams,{agentId:'main',sessionId:'session',sessionKey:t.sessionKey,toolBindings:{agentWorkerAutomation:e.binding}}),/Memory preflight required/);assert.equal(store.event(t.taskId,'delegation'),undefined);}};
+ svc=createTaskService({store,main,jobs:{findAutomation:()=>null},invoke:()=>assert.fail('must not invoke'),policy,memoryRequired:true});
+ try{const t=svc.submit('o',request);await svc.tick();assert.equal(svc.get('o',t.taskId).state,'failed');assert.equal(svc.get('o',t.taskId).settled,true);}finally{store.close();rmSync(root,{recursive:true,force:true});}
+});

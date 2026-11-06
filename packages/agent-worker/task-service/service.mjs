@@ -1,12 +1,13 @@
 import {randomUUID} from 'node:crypto';
+import {normalizeMemoryContext} from '../memory-context.mjs';
 import {canonical,digest,fault,terminalStates} from './store.mjs';
 const jobTerminal=new Set(['completed','failed','cancelled','timed_out']);
 const wrap=data=>({content:[{type:'text',text:JSON.stringify(data)}]});
 /** Durable coordinator. The adapter owns host admission; jobs remains the only execution scheduler. */
-export function createTaskService({store,jobs,main,invoke,policy,logger=console}){
+export function createTaskService({store,jobs,main,invoke,policy,memoryRequired=false,logger=console}){
  let running=false,timer,scheduled,stopping=false,active;
  const patch=(id,p)=>store.update(id,()=>p);
- const view=t=>({version:1,taskId:t.taskId,createdAt:t.createdAt,updatedAt:t.updatedAt,deadline:t.deadline,state:t.state,phase:t.phase,sessionKey:t.sessionKey,sessionId:t.sessionId,jobId:t.jobId,workerStatus:t.workerStatus,result:t.result,error:t.error,predecessorTaskId:t.predecessorTaskId,generation:t.generation,settled:t.settled===true,artifacts:t.artifacts??[],waitingReason:t.waitingReason,verificationAttempts:t.verificationAttempts??0,diagnostics:{unknownCount:store.list().filter(x=>x.owner===t.owner&&x.state==='unknown').length,resultReady:!!t.result},attempts:store.attempts(t.taskId)});
+ const view=t=>({version:1,taskId:t.taskId,createdAt:t.createdAt,updatedAt:t.updatedAt,deadline:t.deadline,state:t.state,phase:t.phase,sessionKey:t.sessionKey,sessionId:t.sessionId,jobId:t.jobId,workerStatus:t.workerStatus,result:t.result,error:t.error,predecessorTaskId:t.predecessorTaskId,generation:t.generation,settled:t.settled===true,executionReviewRequired:t.executionReviewRequired===true,artifacts:t.artifacts??[],waitingReason:t.waitingReason,verificationAttempts:t.verificationAttempts??0,diagnostics:{unknownCount:store.list().filter(x=>x.owner===t.owner&&x.state==='unknown').length,resultReady:!!t.result},attempts:store.attempts(t.taskId)});
  const fail=(t,code,settled=false)=>patch(t.taskId,{state:settled?'failed':'cancelling',phase:settled?'finished':'stopping',error:{code},settled});
  function bound(context){const b=context.toolBindings?.agentWorkerAutomation;if(!active||b?.nonce!==active.nonce||b?.taskId!==active.taskId||context.sessionKey!==active.sessionKey||context.sessionId!==active.sessionId||context.agentId!==active.agentId)throw fault('INVALID_TASK_BINDING');return store.get(active.taskId);}
  async function tool(params,context){
@@ -16,6 +17,8 @@ export function createTaskService({store,jobs,main,invoke,policy,logger=console}
   if(params.action==='run'){
    if(active.phase!=='dispatch'||t.jobId)throw fault('WORKER_ALREADY_BOUND');
    if(params.projectId!==t.request.projectId||params.repository!==t.request.repository||params.useWorkspace!==t.request.useWorkspace||params.taskClass!==undefined||params.queueId!==undefined&&params.queueId!==t.policy.queueId)throw fault('TASK_SCOPE_MISMATCH');
+   // Validation must precede the durable delegation claim: a rejected handoff never starts a Worker.
+   normalizeMemoryContext(params.memory,{required:memoryRequired});
    let p={...params,constraints:t.request.constraints,queueId:t.policy.queueId,requestId:'automation:'+t.taskId,topic:t.taskId,deliveryMode:'wait',waitSeconds:0};
    const previous=store.event(t.taskId,'delegation');
    if(previous){if(previous.rejected!==true)throw fault('DELEGATION_ALREADY_CLAIMED');p=previous.params;}else if(!store.claim(t.taskId,'delegation',{params:p}))throw fault('DELEGATION_ALREADY_CLAIMED');
