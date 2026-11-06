@@ -53,9 +53,15 @@ it("releases transport serialization after admitted execution takes ownership", 
   }));
   let finish!:()=>void; const gate=new Promise<void>(r=>{finish=r;});
   const calls:string[]=[];
+  let drain!: () => Promise<void>;
+  const trackedDebouncer: typeof createInboundDebouncer = (options) => {
+    const debouncer = createInboundDebouncer(options);
+    drain = () => debouncer.drain();
+    return debouncer;
+  };
   const handler=createFeishuMessageReceiveHandler({
     cfg:{messages:{inbound:{debounceMs:1}}},accountId:"admitted",chatHistories:new Map(),
-    channelRuntime:{debounce:{createInboundDebouncer,resolveInboundDebounceMs},commands:{isControlCommandMessage:()=>false}} as unknown as PluginRuntime['channel'],
+    channelRuntime:{debounce:{createInboundDebouncer: trackedDebouncer,resolveInboundDebounceMs},commands:{isControlCommandMessage:()=>false}} as unknown as PluginRuntime['channel'],
     runtime:{log:vi.fn(),error:vi.fn()} as never,
     resolveDebounceText:({event})=>JSON.parse(event.message.content).text,
     hasProcessedMessage:async()=>false,
@@ -70,5 +76,11 @@ it("releases transport serialization after admitted execution takes ownership", 
   try{
     await send('first');await vi.waitFor(()=>expect(calls).toEqual(['first']));
     await send('second');await vi.waitFor(()=>expect(calls).toEqual(['first','second']));
+    let drained = false;
+    const completion = drain().then(() => { drained = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(drained).toBe(false);
+    finish();
+    await completion;
   }finally{finish();claim.mockRestore();}
 });

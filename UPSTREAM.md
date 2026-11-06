@@ -22,6 +22,10 @@ OpenClaw 2026.10.5 compatibility: remove the unused `readJsonFileWithFallback`
 re-export from the runtime barrel. The current public `json-store` SDK no longer
 exports it; retaining the unused re-export prevents Feishu runtime registration.
 
+OpenClaw 2026.11.1 compatibility: Feishu releases the per-chat transport queue
+after handoff, but keeps the inbound flush pending until message handling
+settles so the host retains the active session admission context.
+
 Standalone test fixture helpers adapted from upstream commit 70446423d62683d6253b673b8eb4c04622e58d89 (MIT).
 
 Local deviation: explicit same-sender correction prefixes can steer the active single-agent turn. Accepted corrections retire the original preview and bind subsequent delivery to the correction message; normal followups, host authority, and session overrides remain unchanged.

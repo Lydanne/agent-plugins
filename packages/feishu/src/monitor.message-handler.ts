@@ -216,15 +216,15 @@ export function createFeishuMessageReceiveHandler({
       botOpenId: getBotOpenId(accountId),
       botName: getBotName(accountId),
     });
+    let handling: Promise<void> | undefined;
     const task = async () => {
       if (turnAdoptionLifecycle?.abortSignal.aborted) {
         await turnAdoptionLifecycle.onAbandoned();
         return;
       }
-      let handedOff = false;
       let release!: () => void;
       const admitted = new Promise<void>((resolve) => { release = resolve; });
-      const handling = handleMessage({
+      handling = handleMessage({
         cfg,
         event,
         preparedContent,
@@ -238,16 +238,15 @@ export function createFeishuMessageReceiveHandler({
         processingClaim,
         messageDedupeKey,
         turnAdoptionLifecycle,
-        onDispatchReady: () => { handedOff = true; release(); },
-      });
-      void handling.catch((err) => {
-        if (handedOff) error(`feishu[${accountId}]: admitted turn failed: ${String(err)}`);
+        onDispatchReady: release,
       });
       // The admitted turn queue owns ordering after policy checks; do not keep
       // later inputs behind the entire model run in this transport queue.
       await Promise.race([handling, admitted]);
     };
     await enqueue(sequentialKey, task);
+    // The host owns the dispatch context until the flush completes.
+    await handling;
   };
 
   const resolveSenderDebounceId = (event: FeishuMessageEvent): string | undefined => {
