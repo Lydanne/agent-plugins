@@ -309,24 +309,31 @@ async function syncLocked(root, config, expectedRemoteUrl, afterSync) {
       if (!gitName(targetBranch) || !gitName(targetRemote) || !/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9._-]+)*$/.test(entry.name) || entry.name.split("/").some(part => part === "." || part === "..")) throw new SyncBlocked("非法子模块配置");
       if (isAbsolute(entry.path) || entry.path.split(/[\\/]/).some((part) => !part || part === ".." || part === ".")) throw new SyncBlocked("非法子模块相对路径");
       const directory = join(root, entry.path);
-      // A conventional wiki can be ordinary project files or a separately managed
-      // Git checkout. Only declared gitlinks enter the submodule update protocol.
-      if(entry.name === "wiki" && entry.path === "wiki") {
-        const tree=await git(root,["ls-tree","HEAD","--",entry.path]);
-        if(!tree.startsWith("160000 commit ")) {
-          if(await exists(join(root,".gitmodules"))) {
-            let declared;
-            try{declared=await git(root,["config","--file",".gitmodules","--get","submodule.wiki.path"]);}catch(error){if(error.code!==1)throw error;}
-            if(declared!==undefined)throw new SyncBlocked("知识库声明与 Git 子模块状态不一致");
-          }
-          continue;
+      const tree = await git(root, ["ls-tree", "HEAD", "--", entry.path]);
+      const gitlink = tree.startsWith("160000 commit ");
+      const wiki = entry.name === "wiki" && entry.path === "wiki";
+      const modules = join(root, ".gitmodules");
+      let declaredPath;
+      if (await exists(modules)) {
+        if (!(await lstat(modules)).isFile() || await realpath(modules) !== modules) throw new SyncBlocked("子模块登记必须是普通文件");
+        try {
+          declaredPath = await git(root, ["config", "--file", ".gitmodules", "--get", `submodule.${entry.name}.path`]);
+        } catch (error) {
+          if (error.code !== 1) throw error;
         }
       }
-      if (await git(root, ["config", "--file", ".gitmodules", "--get", `submodule.${entry.name}.path`]) !== entry.path || !(await git(root, ["ls-tree", "HEAD", "--", entry.path])).startsWith("160000 commit ")) throw new SyncBlocked(`${repo}不是声明的子模块`);
+      if (wiki && !gitlink && declaredPath === undefined) continue;
+      if (declaredPath !== entry.path) throw new SyncBlocked(`${repo}不是声明的子模块`);
+      if (!gitlink) {
+        // XGJ registers independent, ignored checkouts in its committed manifest.
+        if (tree || !(wiki || (config.repositorySubmodules && /^repositories\/[A-Za-z0-9._-]+$/.test(entry.path)))) throw new SyncBlocked(`${repo}不是声明的子模块`);
+        await git(root, ["check-ignore", "-q", "--", entry.path + "/"]);
+        if (await git(root, ["diff", "HEAD", "--", ".gitmodules"]) || !await git(root, ["ls-tree", "HEAD", "--", ".gitmodules"])) throw new SyncBlocked("独立仓库登记必须已提交");
+      }
       if (!await exists(join(directory, ".git"))) throw new SyncBlocked(`${repo}尚未初始化，请管理员准备子模块`);
       if (await realpath(directory) !== directory) throw new SyncBlocked(`${repo}目录不能是外部软链接`);
       if (await git(root, ["config", "--file", ".gitmodules", "--get", `submodule.${entry.name}.url`]) !== await git(directory, ["remote", "get-url", targetRemote])) throw new SyncBlocked(`${repo} ${targetRemote} 与子模块声明不一致，请管理员核对`);
-      repositoryHeads[entry.name] = await update(directory, config.strictDefaultBranch!==true, targetBranch, targetRemote);
+      repositoryHeads[entry.name] = await update(directory, gitlink && config.strictDefaultBranch!==true, targetBranch, targetRemote);
     }
     return await afterSync({
       ok: true,

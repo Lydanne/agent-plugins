@@ -88,6 +88,24 @@ test('selected project sync advances declared business branches and their skills
   assert.match(git(p.root,'status','--short'),/repositories\/frontend/);
 });
 
+test('fast-forwards registered independent wiki and business checkouts', async () => {
+  const f = fixture(), p = addProject(f);
+  const paths = ['wiki', 'repositories/demo'];
+  for (const path of paths) {
+    git(p.seed, 'config', '-f', '.gitmodules', `submodule.${path}.path`, path);
+    git(p.seed, 'config', '-f', '.gitmodules', `submodule.${path}.url`, f.remote);
+  }
+  git(p.seed, 'add', '.gitmodules');
+  f.commit(p.seed, '.gitignore', '/wiki/\n/repositories/\n');
+  git(p.root, 'pull', '--ff-only');
+  for (const path of paths) git(p.root, 'clone', f.remote, path);
+  const next = f.commit(f.seed, 'latest.md', 'updated');
+  const result = await syncWorkspace({...p.config, project: {...p.config.project,
+    repositorySubmodules: true, submodules: [{name: 'wiki', path: 'wiki'}]}});
+  assert.equal(result.ok, true, result.reason);
+  for (const path of paths) assert.equal(git(join(p.root, path), 'rev-parse', 'HEAD'), next);
+});
+
 test('discovery follows the fetched project registration and excludes undeclared and other-location repositories', async () => {
   const f = fixture(), p = addProject(f), frontend = addBusiness(f,p,'frontend','develop');
   git(frontend.seed,'branch','release'); git(frontend.seed,'push','origin','release');
