@@ -2414,7 +2414,9 @@ export async function handleFeishuMessage(params: {
                 },
                 cancel: async (reason) => {
                   await cancelQueuedCard?.(lease?.signal.aborted ? (sourceTask?.remainingRequests().length ? "部分任务消息已撤回，对应来源已撤销；已受理的后台任务不会自动重派。" : "任务依据的消息已全部撤回，已请求停止本轮执行；已发生的外部操作不会自动回滚。") : reason === "cancelled" ? "本条请求已取消。" : "本条请求处理失败，请查看错误说明。");
-                  // Explicit cancellation consumes this admitted message, not a retry.
+                  // The inbound flush settles failures after source revision handling.
+                  // Only explicit cancellation consumes an otherwise unadopted message.
+                  if (reason === "failed") return;
                   if (!turnAdoptionLifecycle?.abortSignal.aborted) {
                     turnAdoptionLifecycle?.onAdoptionFinalizing();
                     await turnAdoptionLifecycle?.onAdopted();

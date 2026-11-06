@@ -1,3 +1,4 @@
+import { buildFeishuFlushIngressLifecycle } from "./feishu-ingress.js";
 import { invalidateGroupContext } from "./group-context-events.js";
 import { prepareHistory } from "./input-context.js";
 const contextSdk = vi.hoisted(() => ({getSessionEntry: vi.fn(), readCodexSessionContext: vi.fn(), readTranscriptStatsSync: vi.fn()}));
@@ -535,6 +536,7 @@ afterAll(() => {
 async function dispatchMessage(params: {
   cfg: ClawdbotConfig;
   currentCfg?: ClawdbotConfig;
+  turnAdoptionLifecycle?: Parameters<typeof handleFeishuMessage>[0]["turnAdoptionLifecycle"];
   sourceMessages?: import("./source-task.js").TaskSource[];
   event: FeishuMessageEvent;
   channelRuntime?: PluginRuntime["channel"];
@@ -564,6 +566,7 @@ async function dispatchMessage(params: {
     cfg,
     event: params.event,
     sourceMessages: params.sourceMessages,
+    turnAdoptionLifecycle: params.turnAdoptionLifecycle,
     botOpenId: params.botOpenId,
     runtime,
     channelRuntime: params.channelRuntime,
@@ -705,6 +708,29 @@ describe("handleFeishuMessage ACP routing", () => {
     await dispatchMessage({cfg,sourceMessages:[{messageId:a,text:"withdrawn input"},{messageId:b,text:"retained input"}],event:createFeishuTestEvent({messageId:b,chatId:"oc_dm",senderOpenId:"ou_sender_1",text:"withdrawn input\nretained input"})});
     expect(mockDispatchInboundMessage).toHaveBeenCalledTimes(1);
     expect(sourceTaskBridge.leases.size).toBe(0);
+  });
+
+  it.each([false, true])("keeps working-turn retry eligibility consistent after dispatch fails (adopted=%s)", async (adopted) => {
+    const claim = { keys: ["failed-turn"], commit: vi.fn(async () => true), release: vi.fn() };
+    const transport = {
+      abortSignal: new AbortController().signal, onAdoptionFinalizing: vi.fn(), onDeferred: vi.fn(),
+      onAdopted: vi.fn(async () => {}), onAbandoned: vi.fn(async () => {}),
+    };
+    const { lifecycle } = buildFeishuFlushIngressLifecycle([{ lifecycle: transport, replayClaim: claim }]);
+    mockDispatchInboundMessage.mockImplementationOnce(async ({replyOptions}) => {
+      if (adopted) await replyOptions.turnAdoptionLifecycle.onAdopted();
+      throw new Error("dispatch failed");
+    });
+    await expect(dispatchMessage({
+      cfg: createFeishuTestConfig({ dmPolicy: "open", workingCard: { enabled: true } }),
+      event: createFeishuTestEvent({ messageId: "failed-turn", chatId: "oc_dm", senderOpenId: "ou_sender_1" }),
+      turnAdoptionLifecycle: lifecycle,
+    })).rejects.toThrow("dispatch failed");
+    await lifecycle?.onAbandoned();
+    expect(transport.onAdopted).toHaveBeenCalledTimes(adopted ? 1 : 0);
+    expect(claim.commit).toHaveBeenCalledTimes(adopted ? 1 : 0);
+    expect(transport.onAbandoned).toHaveBeenCalledTimes(adopted ? 0 : 1);
+    expect(claim.release).toHaveBeenCalledTimes(adopted ? 0 : 1);
   });
 
   it("removes a recalled queued task without starting it or overtaking the running task",async()=>{

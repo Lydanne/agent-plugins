@@ -47,7 +47,8 @@ it.each(["更正一下：改查昨天", "还要多久？"])("urgent input %s byp
   } finally { finishFirst(); claim.mockRestore(); }
 });
 
-it("releases transport serialization after admitted execution takes ownership", async () => {
+it.each(["handoff", "timeout"])("releases buffered transport on %s while tracking dispatch completion", async (mode) => {
+  vi.useFakeTimers();
   const claim=vi.spyOn(dedup,"claimUnprocessedFeishuMessage").mockImplementation(async({messageId})=>({
     kind:"claimed",handle:{keys:[messageId!],commit:async()=>true,release:()=>{}},
   }));
@@ -67,20 +68,28 @@ it("releases transport serialization after admitted execution takes ownership", 
     hasProcessedMessage:async()=>false,
     handleMessage:async({event,onDispatchReady,turnAdoptionLifecycle})=>{
       calls.push(event.message.message_id);
-      turnAdoptionLifecycle?.onDeferred();onDispatchReady?.();
+      if (mode === "handoff") { turnAdoptionLifecycle?.onDeferred(); onDispatchReady?.(); }
       if(event.message.message_id==='first')await gate;
       await turnAdoptionLifecycle?.onAdopted();
     },
   });
   const send=(id:string)=>handler({sender:{sender_id:{open_id:'sender'},sender_type:'user'},message:{message_id:id,chat_id:'chat',chat_type:'p2p',message_type:'text',content:JSON.stringify({text:id})}});
   try{
-    await send('first');await vi.waitFor(()=>expect(calls).toEqual(['first']));
-    await send('second');await vi.waitFor(()=>expect(calls).toEqual(['first','second']));
+    await send('first');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toEqual(['first']);
+    await send('second');
+    await vi.advanceTimersByTimeAsync(1);
+    if (mode === 'timeout') {
+      expect(calls).toEqual(['first']);
+      await vi.advanceTimersByTimeAsync(300_000);
+    }
+    expect(calls).toEqual(['first','second']);
     let drained = false;
     const completion = drain().then(() => { drained = true; });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(0);
     expect(drained).toBe(false);
     finish();
     await completion;
-  }finally{finish();claim.mockRestore();}
+  }finally{finish();claim.mockRestore();vi.useRealTimers();}
 });

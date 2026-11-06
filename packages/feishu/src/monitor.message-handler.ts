@@ -120,6 +120,7 @@ type FeishuMessageDebounceEntry = {
   processingClaim?: FeishuMessageProcessingClaim;
   turnAdoptionLifecycle?: FeishuIngressLifecycle;
   abandoned?: boolean;
+  failureSettled?: boolean;
 };
 
 function dedupeFeishuDebounceEntriesByDedupeKey(
@@ -202,6 +203,7 @@ export function createFeishuMessageReceiveHandler({
   });
 
   const dispatchFeishuMessage = async (
+    releaseTransport: () => void,
     event: FeishuMessageEvent,
     messageDedupeKey?: string,
     processingClaim?: FeishuMessageProcessingClaim,
@@ -245,6 +247,7 @@ export function createFeishuMessageReceiveHandler({
       await Promise.race([handling, admitted]);
     };
     await enqueue(sequentialKey, task);
+    releaseTransport();
     // The host owns the dispatch context until the flush completes.
     await handling;
   };
@@ -323,7 +326,9 @@ export function createFeishuMessageReceiveHandler({
               error(`feishu[${accountId}]: failed to commit logical replay guard: ${String(err)}`),
           },
         );
-        return createFlush({
+        let releaseTransport!: () => void;
+        const transportReady = new Promise<void>((resolve) => { releaseTransport = resolve; });
+        const flush = createFlush({
           lifecycle,
           dispatch: async (admissionLifecycle) => {
             if (!last) {
@@ -336,6 +341,7 @@ export function createFeishuMessageReceiveHandler({
             try {
               if (activeEntries.length === 1) {
                 await dispatchFeishuMessage(
+                  releaseTransport,
                   last.event,
                   last.messageDedupeKey,
                   last.processingClaim,
@@ -369,6 +375,7 @@ export function createFeishuMessageReceiveHandler({
                 botOpenId: getBotOpenId(accountId),
               });
               await dispatchFeishuMessage(
+                releaseTransport,
                 {
                   ...dispatchEntry.event,
                   message: {
@@ -385,13 +392,20 @@ export function createFeishuMessageReceiveHandler({
               await settle();
             } catch (err) {
               await admissionLifecycle.onAbandoned();
+              for (const entry of activeEntries) {
+                if (entry.turnAdoptionLifecycle) entry.failureSettled = true;
+              }
               throw err;
             }
           },
         });
+        // The transport timeout also frees this debounce key. Keep completion
+        // attached to the host root until the original handler actually exits.
+        return { admission: Promise.race([flush.admission, transportReady]), completion: flush.completion };
       },
       onError: (err, entries) => {
         for (const entry of entries) {
+          if (entry.failureSettled) continue;
           entry.processingClaim?.release({ error: err });
           try {
             void Promise.resolve(entry.turnAdoptionLifecycle?.onAbandoned()).catch(
