@@ -55,3 +55,10 @@ test('conditional tool grants remain discoverable while invocation checks and ta
  store.saveRule({id:'hide',groupId:'internal',actions:['discover'],effect:'deny',selector:{resourceIds:['query']},conditions:{sensitivity:['ordinary']}},{actor:'admin'});
  assert.deepEqual(await service.discover({}, {scopeId:'after-grant'}),[]);
 });
+test('stale delivery records preserve verified identity, snapshot time and audit mode',async()=>{
+ const observedAt='2026-01-01T00:00:00Z',audit=[];
+ const service=createAuthorizationService({store:{agentId:'ada',mode:()=>'audit',list:()=>[],audit:(...args)=>audit.push(args)},now:()=>Date.parse(observedAt)+3600001,resolveIdentity:()=>({id:'p',sourceId:'s',agentId:'ada',verified:true}),readMembership:()=>({agentId:'ada',subjectId:'p',sourceId:'s',complete:true,observedAt}),resolveOperation:()=>({requirements:[{action:'execute'}]})});
+ await service.enforce({toolName:'delivery'}, {}, {jobId:'job-1',phase:'delivery'});
+ const [actor,,target,value]=audit[0];
+ assert.deepEqual([actor,target,value.phase,value.mode,value.membershipObservedAt,value.reason],['p','job-1','delivery','audit',observedAt,'STALE_MEMBERSHIP']);
+});

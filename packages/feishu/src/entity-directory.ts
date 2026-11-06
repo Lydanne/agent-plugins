@@ -47,6 +47,9 @@ export async function syncFeishuDirectory(input:{agentId:string;account:Resolved
    if(parent)changes.push({action:'connect',record:{typeId:'parent_department',externalId:JSON.stringify([id,parent]),fromId:node,toId:parent,observedAt:stamp},evidence:proof});
   }
   stage='relationship_validation';check();if(changes.length)producer.applyRelationChanges({requestId:'directory:'+openId+':'+stamp,changes});
+  // The contact response verified this existing person as well as their relationships.
+  // Refresh their observation only after the relationship batch has succeeded.
+  people.observe({accountId:account.accountId,appId:account.appId!,openId});
  }catch(cause){issue(stage,(cause as {apiCode?:number})?.apiCode,cause);if(getGraphService({agentId:input.agentId})!==graph||getPeopleService(input.agentId)!==people)break;}
  if(failures)input.log('feishu: entity directory sync partial',JSON.stringify(errors));
  return {status:failures?'partial' as const:'completed' as const,failures,errors};

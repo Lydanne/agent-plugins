@@ -26,7 +26,7 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
   // transport call must not become a Main call after losing its scope lease.
   if(!scopeId)return String(host?.toolCallId??event.toolCallId??'').startsWith('worker-cli:')?{block:true,blockReason:'Missing trusted Worker permission scope'}:undefined;
   try{const store=storeFor(host.agentId);if(!store)return;
-   const decision=await serviceFor(host.agentId,store).enforce(event,host,{scopeId});
+   const decision=await serviceFor(host.agentId,store).enforce(event,host,{scopeId,jobId:JSON.parse(scopeId)[2],phase:'operation'});
    return store.mode()==='enforce'?decision:undefined;
   }catch{return {block:true,blockReason:'Worker authorization service unavailable'};}
  }
@@ -38,7 +38,7 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
   const scopeId=JSON.stringify(['worker-job',task.sessionKey,task.jobId]);
   const parentScopeId=task.parentJobId?JSON.stringify(['worker-job',task.sessionKey,task.parentJobId]):undefined;
   const event=task.phase==='delivery'?{toolName:'agent_worker_result_delivery',params:{}}:{toolName:'agent_worker',params:{...task.parameters,action:'run'}};
-  const decision=await serviceFor(agentId,store).enforce(event,host,{scopeId,parentScopeId});
+  const decision=await serviceFor(agentId,store).enforce(event,host,{scopeId,parentScopeId,jobId:task.jobId,phase:task.phase??'admission'});
   if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
   const skills=task.skillCatalog&&store.mode()==='enforce'?await serviceFor(agentId,store).filterSkills(task.skillCatalog,host,{scopeId}):undefined;
   return {scopeId,...(skills?{skillPaths:skills.skills.map(skill=>skill.path)}:{})};
@@ -51,7 +51,7 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
  },async authorizeOperation(task,event){
   if(!task.jobId||!task.sessionKey)throw Error('Missing Worker operation scope');
   const store=storeFor(agentId),host={agentId,sessionKey:task.sessionKey,requester:task.requester};
-  const decision=await serviceFor(agentId,store).enforce(event,host,{scopeId:JSON.stringify(['worker-job',task.sessionKey,task.jobId])});
+  const decision=await serviceFor(agentId,store).enforce(event,host,{scopeId:JSON.stringify(['worker-job',task.sessionKey,task.jobId]),jobId:task.jobId,phase:'operation'});
   if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
  }},owner));
  }
@@ -63,7 +63,7 @@ export function registerAuthorizationRuntime(api,config,{openStore=createAuthori
   const store=storeFor(context.agentId);if(!store)return;
   const host={agentId:context.agentId,sessionKey:worker.sessionKey,requester:{channel:context.messageChannel,accountId:worker.accountId,senderId:worker.requesterId}};
   const scopeId=JSON.stringify(['worker-job',worker.sessionKey,worker.jobId]);
-  const decision=await serviceFor(context.agentId,store).enforce(event,host,{scopeId});
+  const decision=await serviceFor(context.agentId,store).enforce(event,host,{scopeId,jobId:worker.jobId,phase:'operation'});
   if(store.mode()==='enforce'&&decision?.block)throw Error(decision.blockReason);
  }
  return {storeFor,evaluate,filterSkills,authorizeOperation};

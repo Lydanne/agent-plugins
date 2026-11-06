@@ -64,6 +64,7 @@ export function readCollaboration(root,job){
 
 /** Only opted-in new jobs have delivery records; never replay historical business results. */
 export function createCompletionService({root, bridge = completionBridge, logger = console, pollMs = 1000, beforeDeliver, authorizeDelivery}) {
+ const maxAttempts = 8;
  const inflight = new Map();
  let controller = new AbortController();
  let timer, scheduled, stopped = true;
@@ -76,7 +77,10 @@ export function createCompletionService({root, bridge = completionBridge, logger
  async function deliver(job) {
   const signal=controller.signal;
   const patchEvent=change=>patch(job.jobId,change,job.notification.eventKey);
+  const attempts = (job.notification.attempts ?? 0) + 1;
+  const retryDelay = Math.min(600000, 10000 * 2 ** (attempts - 1));
   try {
+   patchEvent({state:'processing',attempts});
    if(beforeDeliver){await beforeDeliver(job);const latest=readJson(fileOf(job.jobId));if(latest.status!==job.status||latest.notification?.eventKey!==job.notification.eventKey)return;}
    if(authorizeDelivery){
     if(readCompletionRequest(root,job).availability!=='available')throw Error('Delivery authorization source unavailable');
@@ -84,7 +88,6 @@ export function createCompletionService({root, bridge = completionBridge, logger
     await authorizeDelivery(job,request);signal.throwIfAborted();
     const latest=readJson(fileOf(job.jobId));if(latest.status!==job.status||latest.notification?.eventKey!==job.notification.eventKey)return;
    }
-   patchEvent({state: 'processing', attempts: (job.notification.attempts ?? 0) + 1});
    const collaboration=readCollaboration(root,job);
    const outcome = await bridge.deliver({...completionEvent(job,readCompletionRequest(root,job)),...(collaboration?{collaboration}:{})}, {
     signal,
@@ -94,8 +97,8 @@ export function createCompletionService({root, bridge = completionBridge, logger
    const current=readJson(fileOf(job.jobId));
    if (current.notification.state !== 'delivered') {
     // A normal return without a receipt is not proof that Main/send did nothing.
-    patchEvent({state: outcome?.suppressed ? 'suppressed' : ['sending','uncertain'].includes(current.notification.state) ? 'uncertain' : 'pending',
-     reason: outcome?.reason, retryAt: Date.now() + 10000});
+    patchEvent({state: outcome?.suppressed ? 'suppressed' : outcome?.reason==='no_delivery_receipt'||['sending','uncertain'].includes(current.notification.state) ? 'uncertain' : 'pending',
+     reason: outcome?.reason, retryAt:Date.now()+retryDelay});
    }
   } catch (error) {
    // Persist only bounded diagnostics; provider errors can contain credentials or report text.
@@ -105,9 +108,9 @@ export function createCompletionService({root, bridge = completionBridge, logger
    const current = readJson(fileOf(job.jobId));
    // Network send may have succeeded before receipt persistence failed. Never blindly resend.
    if (current.notification.state !== 'delivered') patchEvent({
-    state: ['sending','uncertain'].includes(current.notification.state) ? 'uncertain' : 'pending', lastErrorCode: errorCode, retryAt: Date.now() + 10000});
+    state: ['sending','uncertain'].includes(current.notification.state) ? 'uncertain' : 'pending', lastErrorCode: errorCode, retryAt:Date.now()+retryDelay});
    logger.warn?.('Codex completion delivery deferred: ' + job.jobId + ' (' + errorCode + ')');
-  } finally {inflight.delete(job.jobId);}
+  }
  }
  function tick() {
   if (stopped || !bridge.deliver || !existsSync(root)) return;
@@ -118,8 +121,14 @@ export function createCompletionService({root, bridge = completionBridge, logger
   for (const job of jobs) {
    if (inflight.has(job.jobId)) continue;
    if (job.notification.state === 'sending') {patch(job.jobId,{state:'uncertain'},job.notification.eventKey); continue;}
-   if (!['pending', 'processing'].includes(job.notification.state) || job.notification.retryAt > Date.now()) continue;
-   const task = deliver(job).catch(() => logger.warn?.('Completion persistence deferred: ' + job.jobId)); inflight.set(job.jobId,task);
+   if (!['pending', 'processing'].includes(job.notification.state)) continue;
+   if(job.notification.reason==='no_delivery_receipt'||job.notification.attempts>=maxAttempts){
+    patch(job.jobId,{state:'uncertain',reason:job.notification.reason??'retry_limit_reached'},job.notification.eventKey);continue;
+   }
+   if(job.notification.retryAt > Date.now())continue;
+   const task = deliver(job).catch(() => logger.warn?.('Completion persistence deferred: ' + job.jobId))
+    .finally(() => inflight.delete(job.jobId));
+   inflight.set(job.jobId,task);
   }
  }
  return {

@@ -181,3 +181,24 @@ test('delivery permission denial prevents handing reports to the completion brid
  service.start();await flush();await service.stop();
  assert.equal(checked,1);assert.equal(sent,0);assert.equal(readJson(join(root,j.jobId+'.json')).notification.state,'pending');
 }));
+test('legacy receiptless and exhausted events are quarantined before authorization or delivery',()=>fixture(async root=>{
+ const jobs=[job(),job()];
+ Object.assign(jobs[0].notification,{reason:'no_delivery_receipt',attempts:102});
+ Object.assign(jobs[1].notification,{attempts:8});
+ for(const item of jobs)writeJson(join(root,item.jobId+'.json'),item);
+ let calls=0;const service=createCompletionService({root,beforeDeliver:()=>{calls++},bridge:{deliver:()=>{calls++}}});
+ service.start();await flush();await service.stop();
+ assert.equal(calls,0);
+ for(const item of jobs)assert.equal(readJson(join(root,item.jobId+'.json')).notification.state,'uncertain');
+}));
+test('pre-delivery failures consume a bounded retry budget and back off',()=>fixture(async root=>{
+ const j=job(),file=join(root,j.jobId+'.json');writeJson(file,j);
+ let attempts=0;const service=createCompletionService({root,pollMs:100000,logger:{warn(){}},beforeDeliver:()=>{attempts++;throw Error('unavailable')},bridge:{deliver:()=>assert.fail('preflight failed')}});
+ service.start();
+ for(let i=1;i<=8;i++){
+  await flush();const saved=readJson(file);
+  assert.equal(attempts,i);assert.ok(saved.notification.retryAt>=Date.now()+Math.min(600000,10000*2**(i-1))-1000);
+  writeJson(file,{...saved,notification:{...saved.notification,retryAt:0}});service.tick();
+ }
+ await service.stop();assert.equal(attempts,8);assert.equal(readJson(file).notification.state,'uncertain');
+}));

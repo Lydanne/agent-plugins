@@ -18,3 +18,13 @@ it('a verified complete empty membership ends only that persons source relations
 it('wrong department identity or tenant failure cannot fabricate organization facts',async()=>{const {graph,input}=fixture();api.tenant.mockResolvedValue({code:99991672});api.department.mockResolvedValue({code:0,data:{department:{open_department_id:'other',name:'Wrong'}}});expect((await syncFeishuDirectory(input)).status).toBe('partial');expect(graph.list({typeId:'organization'}).total).toBe(0);expect(graph.list({typeId:'department'}).total).toBe(0);expect(graph.relations().total).toBe(0);});
 it('organization collection survives denied people access and exposes safe permission diagnostics',async()=>{const {graph,input}=fixture();api.user.mockResolvedValue({code:99991672});const result=await syncFeishuDirectory(input);expect(result.status).toBe('partial');expect(result.errors).toEqual([{stage:'contact',code:99991672}]);expect(graph.list({typeId:'organization'}).total).toBe(1);expect(graph.relations().total).toBe(0);});
 it('missing parent fields in a later contact read never revoke established department hierarchy',async()=>{const {graph,input}=fixture();await syncFeishuDirectory(input);const before=graph.relations({typeId:'parent_department',status:'active'}).relations;expect(before.length).toBe(1);api.department.mockImplementation(async req=>({code:0,data:{department:{open_department_id:req.path.department_id,name:req.path.department_id}}}));await syncFeishuDirectory(input);expect(graph.relations({typeId:'parent_department',status:'active'}).relations).toEqual(before);});
+
+it('only a verified contact and successful membership read refresh the person observation',async()=>{
+ const {graph,p,input}=fixture(),id='person:'+p.id;
+ const before=graph.get(id).entity.observedAt;
+ api.user.mockResolvedValueOnce({code:0,data:{user:{open_id:'different',department_ids:[]}}});
+ expect((await syncFeishuDirectory(input)).status).toBe('partial');
+ expect(graph.get(id).entity.observedAt).toBe(before);
+ expect((await syncFeishuDirectory(input)).status).toBe('completed');
+ expect(graph.get(id).entity.observedAt>before).toBe(true);
+});

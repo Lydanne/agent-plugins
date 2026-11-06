@@ -7,13 +7,17 @@ export function createAuthorizationService({store,resolveIdentity,readMembership
  for(const method of [resolveIdentity,readMembership,resolveOperation])if(typeof method!=='function')throw Error('Authorization adapters are required');
  async function decide(event,host,{ceiling,scopeId,parentScopeId}={}){
   const subject=await resolveIdentity(host);
-  const reject=reason=>({allowed:false,reason,checks:[],bindingIds:[]});
-  if(subject?.verified!==true||subject.agentId!==store.agentId)return reject('UNVERIFIED_SUBJECT');
+  const reject=reason=>({allowed:false,reason,checks:[],bindingIds:[],...(subject?.verified&&subject.agentId===store.agentId?{subjectId:subject.id}:{})});
+  if(subject?.verified!==true||subject.agentId!==store.agentId){
+   const requester=host?.requester;
+   const identityIssue=!requester?.channel?'缺少请求来源渠道':requester.channel!=='feishu'?'来源未提供可核验的飞书身份':!requester.accountId||!requester.senderId?'缺少飞书账号或发送者标识':'无法唯一匹配当前 Agent 的飞书人员';
+   return {...reject('UNVERIFIED_SUBJECT'),identityIssue};
+  }
   const operation=await resolveOperation(event,host);
   if(!operation||!Array.isArray(operation.requirements)||!operation.requirements.length)return reject('UNCLASSIFIED_OPERATION');
   const snapshot=await readMembership(subject);
   const membership=resolvePermissionGroups({agentId:store.agentId,subject,snapshot,bindings:store.list('bindings'),groups:store.list('groups'),now:now()});
-  if(!membership.verified)return reject(membership.reason);
+  if(!membership.verified)return {...reject(membership.reason),membershipObservedAt:snapshot?.observedAt};
   const taskScope=scopeId?store.taskScope(scopeId,subject.id,membership.groupIds,{parentScopeId}):null;
   const checks=[];
   for(const requirement of operation.requirements){
@@ -67,7 +71,7 @@ export function createAuthorizationService({store,resolveIdentity,readMembership
    let result;
    try{result=await decide(event,host,options);}catch{result={allowed:false,reason:'AUTHORIZATION_UNAVAILABLE',checks:[],bindingIds:[]};}
    // A failed audit must also prevent execution. Do not persist untrusted params.
-   store.audit(result.subjectId??'unresolved','execution.decision',host?.toolCallId??'unknown',{allowed:result.allowed,reason:result.reason,checks:result.checks,bindingIds:result.bindingIds});
+   store.audit(result.subjectId??'unresolved','execution.decision',host?.toolCallId??options?.jobId??event?.toolName??'unknown',{allowed:result.allowed,reason:result.reason,checks:result.checks,bindingIds:result.bindingIds,mode:store.mode?.(),jobId:options?.jobId,phase:options?.phase,toolName:event?.toolName,membershipObservedAt:result.membershipObservedAt,identityIssue:result.identityIssue});
    return result.allowed?undefined:{block:true,blockReason:'Permission denied: '+result.reason};
   },
  };
