@@ -9,7 +9,7 @@ import { workingResultCard } from "./working-card.js";
 
 type Source = Pick<TaskLease, "taskId" | "revision" | "accountId" | "chatId" | "sessionKey" | "senderId">;
 export type SteeringCardEntry={id:string;text:string;at:number;state:string};
-export type AsyncTaskCard = Source & {steeringEntries?:SteeringCardEntry[];jobId: string; messageId: string; imageKey?: string; result?: string; progress?: string; questionMessageId?: string; continuationQuestionIds?: string[]; originalMessageId?: string};
+export type AsyncTaskCard = Source & {reminderReceipt?: {messageId:string;replyToMessageId:string};steeringEntries?:SteeringCardEntry[];jobId: string; messageId: string; imageKey?: string; result?: string; progress?: string; questionMessageId?: string; continuationQuestionIds?: string[]; originalMessageId?: string};
 const sameSource = (a: Source, b: Source) =>
   a.taskId === b.taskId && a.revision === b.revision && a.accountId === b.accountId &&
   a.chatId === b.chatId && a.sessionKey === b.sessionKey && a.senderId === b.senderId;
@@ -69,6 +69,14 @@ export function acceptAsyncCardResult(stateDir: string, binding: AsyncTaskCard, 
   const db = database(stateDir);
   try {db.prepare("UPDATE cards SET metadata=? WHERE job=?").run(JSON.stringify({...binding, result: text}), binding.jobId);}
   finally {db.close();}
+}
+
+export function saveReminderReceipt(stateDir: string, binding: AsyncTaskCard, messageId: string, replyToMessageId: string) {
+  const db = database(stateDir);
+  try {
+    db.prepare("UPDATE cards SET metadata=json_set(metadata,'$.reminderReceipt',json(?)) WHERE job=? AND json_extract(metadata,'$.messageId')=?")
+      .run(JSON.stringify({messageId,replyToMessageId}), binding.jobId, binding.messageId);
+  } finally { db.close(); }
 }
 
 /** Presentation follows a new human reply; business ownership remains the original source. */

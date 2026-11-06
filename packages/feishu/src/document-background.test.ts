@@ -230,8 +230,8 @@ it("records report failure separately from successful failure-notice delivery",a
  const pending=await stage();activateBackgroundDocument(root,pending,"original");start();
  await vi.waitFor(()=>expect(rows()[0].status).toBe("done"));
  expect(rows()[0]).toMatchObject({uploadState:"failed",uploadFailure:{stage:"read_files",code:"path-not-allowed"}});
- expect(mocks.write.mock.calls.at(-1)![2]).toContain("读取目录未获授权");
- expect(JSON.stringify(mocks.edit.mock.calls)).toContain("path-not-allowed");
+ expect(mocks.write.mock.calls.at(-1)![2]).toContain("完整报告未能附上");
+ expect(JSON.stringify(mocks.edit.mock.calls)).not.toContain("path-not-allowed");
  service!.stop();service=undefined;start();
  await new Promise(r=>setTimeout(r,300));expect(mocks.prepare).toHaveBeenCalledOnce();
 });

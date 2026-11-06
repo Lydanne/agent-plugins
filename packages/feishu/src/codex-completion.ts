@@ -20,7 +20,7 @@ import type { ClawdbotConfig } from "../runtime-api.js";
 import { isCompletionSourceCurrent, isTaskSourceRecalled, sourceTaskBridge } from "./source-task.js";
 import { runFeishuWorkingTurn } from "./working-turn-queue.js";
 import { editMessageFeishu, sendMessageFeishu, sendCardFeishu } from "./send.js";
-import { bindAsyncTaskCard, acceptAsyncCardResult, prepareAsyncCardResult, readAsyncTaskCard, saveAsyncCardQuestion, acceptAsyncCardProgress, prepareAsyncOriginalOverview } from "./async-task-card.js";
+import { saveReminderReceipt, bindAsyncTaskCard, acceptAsyncCardResult, prepareAsyncCardResult, readAsyncTaskCard, saveAsyncCardQuestion, acceptAsyncCardProgress, prepareAsyncOriginalOverview } from "./async-task-card.js";
 import { workingResultCard } from "./working-card.js";
 import {savePreparedCompletion,readPreparedCompletion,clearPreparedCompletion} from "./completion-outbox.js";
 import {resolveFeishuSenderName} from "./bot-sender-name.js";
@@ -57,6 +57,24 @@ const bridge = state[symbol] ??= {};
 
 function isCompletionSourceAndAnswersCurrent(p:Provenance,stateDir:string):boolean{
  return isCompletionSourceCurrent(p,stateDir)&&questionAnswerSourceIds(p,stateDir).every(messageId=>!isTaskSourceRecalled({...p,messageId},stateDir));
+}
+
+// Host-authored Markdown also contains execution records. Deliver only its result section.
+function completionInlineReport(event: CompletionEvent) {
+ const report = event.taskReport;
+ if (!report || typeof report !== "object" || !("storage" in report)) return;
+ const storage = report.storage;
+ if (!storage || typeof storage !== "object" || !("path" in storage) || typeof storage.path !== "string"
+     || !("state" in storage) || storage.state !== "written" || !event.reportPaths.includes(storage.path)) return;
+ const host = "producer" in storage ? storage.producer === "host" : /\/completion-report-[0-9a-f-]{36}\.md$/i.test(storage.path);
+ if (host) return {path: storage.path, content: "resultContent" in report && typeof report.resultContent === "string" ? report.resultContent : ""};
+}
+
+function reminderConclusion(text: string): string | undefined {
+ const line = text.trim().split(/\r?\n/,1)[0].replaceAll("**","").trim();
+ const sentence = line.match(/^[^。！？]*[。！？]/u)?.[0] ?? line;
+ if (!sentence || sentence.length > 140 || /[<>\[\]`/]|https?:/i.test(sentence)) return;
+ return sentence;
 }
 
 /** Keep the full persisted report deliverable even if the model omitted its link. */
@@ -161,14 +179,15 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      if(sessionId)savePreparedCompletion(stateDir,event,sessionId,{text:finalText,mediaUrl:payload.mediaUrl,mediaUrls:payload.mediaUrls});
      const binding = readAsyncTaskCard(stateDir, event.jobId, p);
      const existingResult=binding?prepareAsyncCardResult(stateDir,binding,finalText,accountConfig):undefined;
-     const canStage=!existingResult || (existingResult.fits && Buffer.byteLength(existingResult.combined,"utf8")<20000);
+     const inlineReport = completionInlineReport(event);
+     const canStage=!inlineReport && (!existingResult || (existingResult.fits && Buffer.byteLength(existingResult.combined,"utf8")<20000));
      let staged,stagingFailed=false;
      const workerReport={sessionName:event.topic?.trim() || event.request?.taskSummary || event.request?.task,finishedAt:event.finishedAt ?? Date.now()};
      try {
       staged=canStage ? await stageBackgroundDocument({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,stateDir,source:p,sessionId,completionJobId:event.jobId,to:"chat:"+p.chatId,text:finalText,workerReport,
        mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal}) : undefined;
      } catch {signal.throwIfAborted();stagingFailed=true;}
-     const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,workerReport,
+     const document=staged ? {text:staged.text} : stagingFailed ? {text:unavailableDocumentText(finalText,cfg.agents?.defaults?.workspace)} : await prepareFeishuDocumentDelivery({cfg:completionCfg,accountId:p.accountId,agentId,mediaRuntime:core.media,to:"chat:"+p.chatId,recipientContext:p,text:finalText,workerReport,inlineReport,
       mediaUrls:[...(payload.mediaUrls ?? []),...(payload.mediaUrl?[payload.mediaUrl]:[])],signal});
      if (!isCompletionSourceAndAnswersCurrent(p,stateDir) || !sessionCurrent() || signal.aborted) {suppressed=true;return;}
      let deliveryText=document?.text ?? finalText;
@@ -226,11 +245,16 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
      if (binding && isCompletionSourceAndAnswersCurrent(p, stateDir) && sessionCurrent() && !signal.aborted &&
       (reminderReport || (!resultMentionsRequester && (binding.imageKey || !recentlyMentioned({accountId:p.accountId,to:'chat:'+p.chatId,replyInThread:p.replyInThread,replyToMessageId:receipt.messageId},p.senderId))))) {
       try {
-       const reminderText=`<at id="${p.senderId}"></at>`+renderBusinessMessage(businessMessages,event.status==="timed_out"?"timeoutMention":event.status==="failed"?"failureMention":event.status==="cancelled"?"cancelledMention":"completionMention")+(reminderReport ? ` ${reminderReport}` : "");
-       await sendCardFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
+       const kind = event.status === "timed_out" ? "timeoutMention" : event.status === "failed" ? "failureMention" : event.status === "cancelled" ? "cancelledMention" : "completionMention";
+       const useConclusion = kind === "completionMention" && businessMessages?.completionMention === undefined && !businessMessages?.completionMentions?.length;
+       const conclusion = useConclusion ? reminderConclusion(replyText) : undefined;
+       const message = useConclusion ? (conclusion ? "老师，"+conclusion : "老师，请查看这条提醒引用的任务结果。") : renderBusinessMessage(businessMessages,kind);
+       const reminderText = `<at id="${p.senderId}"></at>${message}` + (reminderReport ? ` ${reminderReport}` : "");
+       const reminder = await sendCardFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
         replyToMessageId: receipt.messageId, replyInThread: p.replyInThread ?? false,
         card: workingResultCard(reminderText,accountConfig)});
        reportInReminder=Boolean(reminderReport);
+       saveReminderReceipt(stateDir,binding,reminder.messageId,receipt.messageId);
       } catch {console.warn("Codex result accepted, but completion mention failed or is unconfirmed");}
      }
      if(reminderReport && !reportInReminder && binding && isCompletionSourceAndAnswersCurrent(p,stateDir) && sessionCurrent() && !signal.aborted) {

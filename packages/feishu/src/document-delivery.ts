@@ -255,6 +255,7 @@ export type DeliveryParams = {
   cfg: ClawdbotConfig; accountId?: string; to: string; text?: string; mediaUrls?: string[];
   workspaceDir?: string; mediaLocalRoots?: readonly string[]; mediaAccess?: OutboundMediaAccess;
   mediaReadFile?: OutboundMediaAccess["readFile"]; signal?: AbortSignal;
+  inlineReport?: {path: string; content: string};
   existingDocumentId?: string;
   workerReport?: WorkerReportTitle;
   confirmedGrant?: ConfirmedDocumentGrant;
@@ -305,7 +306,10 @@ export async function prepareFeishuDocumentDelivery(params: DeliveryParams): Pro
   assertDeliveryCurrent(params,error);
   const failure=documentDeliveryFailure(error);
   params.onFailure?.(failure);
-  const notice=failure.code==="path-not-allowed"?"报告读取目录未获授权（path-not-allowed），请管理员核对 documentDelivery.localRoots；总结已保留。":"附件未成功交付，已改为文字结果。";
+  const notice=failure.code==="path-not-allowed"?"完整报告未能附上。":"附件未成功交付，已改为文字结果。";
+  if (failure.code === "path-not-allowed") {
+    fallbackText = transformLocalReferences(split.text, findLocalFileReferences(split.text, workspaceDir ?? "/"), () => "", workspaceDir).trim();
+  }
   return {text:[fallbackText,notice].filter(Boolean).join("\n\n")+skippedNotice,mediaUrls:split.images,...(skippedNotice?{skippedAttachmentNotice:skippedNotice}:{})};
  }
 }
@@ -341,7 +345,8 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
   const textual = new Set(config?.textExtensions ?? [".md",".markdown",".txt",".sql"]);
   for (const input of inputs) {
     params.signal?.throwIfAborted();
-    const info=await localFileInfo(input);
+    const inline = params.inlineReport?.path === input ? params.inlineReport : undefined;
+    const info = inline ? {size: Buffer.byteLength(inline.content)} : await localFileInfo(input);
     if(!info)continue;
     // Inspect metadata before loading: never buffer or upload oversized files.
     if(info.size>attachmentSkipBytes) {
@@ -350,9 +355,10 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
       captureText(replaceLocalReferences(params.text ?? "",refs),notice);
       continue;
     }
+    if (inline && info.size > maxBytes) throw Error("Document attachment exceeds per-file size limit");
     let loaded;
     try {
-      loaded = await runBeforeFeishuMessageDispatch(()=>(params.mediaRuntime ?? getFeishuRuntime().media).loadWebMedia(input,buildOutboundMediaLoadOptions({
+      loaded = inline ? {buffer: Buffer.from(inline.content), fileName: "任务结果.md"} : await runBeforeFeishuMessageDispatch(()=>(params.mediaRuntime ?? getFeishuRuntime().media).loadWebMedia(input,buildOutboundMediaLoadOptions({
         maxBytes, optimizeImages:false, mediaAccess:params.mediaAccess, mediaReadFile:params.mediaReadFile,
         mediaLocalRoots,
       })));
@@ -381,7 +387,9 @@ async function prepareDocument(params: DeliveryParams,captureText:(text:string,s
     // Secondary documents are opaque original attachments, not more body sections.
     if(content && primaryFilePath===input && /\.m(?:d|arkdown)$/i.test(name) && resolveLocalFilePath(input,workspaceDir)) {
       const nested=findLocalFileReferences(content,dirname(input));
-      for(const ref of nested)if(!inputs.includes(ref.path))inputs.push(ref.path);
+      if (!inline) {
+        for(const ref of nested)if(!inputs.includes(ref.path))inputs.push(ref.path);
+      }
       content=replaceLocalReferences(content,nested);
     }
     files.push({path:input,buffer:loaded.buffer,name,content:primaryFilePath===input || bundleSql?content:undefined});

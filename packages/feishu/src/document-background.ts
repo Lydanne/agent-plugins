@@ -143,8 +143,7 @@ export function registerDocumentBackground(api:OpenClawPluginApi) {
         if(interrupted && !job.finalText)job.uploadState="interrupted";
         if(!job.finalText && !success) {
           const client=createFeishuClient(resolveFeishuRuntimeAccount({cfg,accountId:job.source.accountId}));
-          const reason=job.uploadFailure?.code==="path-not-allowed"?"报告已生成，但读取目录未获授权；请核对 documentDelivery.localRoots。":job.uploadFailure?.stage==="read_files"?"报告文件读取失败，请核对文件可用性及读取权限。":"完整报告上传失败或文件不存在。";
-          if(job.uploadFailure?.code==="path-not-allowed")text+="\n报告读取目录未获授权（path-not-allowed），请管理员核对报告目录配置。";
+          const reason="完整报告未能附上。";
           try {await writeDoc(client,job.documentId,"上传未完成\n\n"+(interrupted?"服务重启中断了上传。":reason)+"总结已经交付，请联系管理员核对报告。"+skippedNotice,20*1024*1024,30000);} catch {check();console.warn("Feishu upload status document update failed");}
         }
         if(job.reportInReminder)text=splitCompletionReportLink(text).text;
