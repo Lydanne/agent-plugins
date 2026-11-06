@@ -72,9 +72,8 @@ function completionInlineReport(event: CompletionEvent) {
 
 function reminderConclusion(text: string): string | undefined {
  const line = text.trim().split(/\r?\n/,1)[0].replaceAll("**","").trim();
- const sentence = line.match(/^[^。！？]*[。！？]/u)?.[0] ?? line;
- if (!sentence || sentence.length > 140 || /[<>\[\]`/]|https?:/i.test(sentence)) return;
- return sentence;
+ if (!line || line.length > 140 || /[<>\[\]`/]|https?:/i.test(line)) return;
+ return line;
 }
 
 /** Keep the full persisted report deliverable even if the model omitted its link. */
@@ -249,7 +248,7 @@ export async function deliverCodexCompletion(event: CompletionEvent, callbacks: 
        const useConclusion = kind === "completionMention" && businessMessages?.completionMention === undefined && !businessMessages?.completionMentions?.length;
        const conclusion = useConclusion ? reminderConclusion(replyText) : undefined;
        const message = useConclusion ? (conclusion ? "老师，"+conclusion : "老师，请查看这条提醒引用的任务结果。") : renderBusinessMessage(businessMessages,kind);
-       const reminderText = `<at id="${p.senderId}"></at>${message}` + (reminderReport ? ` ${reminderReport}` : "");
+       const reminderText = `<at id="${p.senderId}"></at>${message}` + (reminderReport ? `\n\n${reminderReport}` : "");
        const reminder = await sendCardFeishu({cfg: completionCfg, accountId: p.accountId, to: "chat:" + p.chatId,
         replyToMessageId: receipt.messageId, replyInThread: p.replyInThread ?? false,
         card: workingResultCard(reminderText,accountConfig)});

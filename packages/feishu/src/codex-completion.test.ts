@@ -846,7 +846,7 @@ it('keeps same-group reminders on their own result when jobs finish in reverse o
  expect(mocks.send.mock.calls.map(([p])=>[p.replyToMessageId,p.card.body.elements[0].content])).toEqual([
   ['card-b','<at id="sender"></at>老师，绑定来源尚未查明。'],['card-a','<at id="sender"></at>老师，提交记录已核实。']]);
 });
-it.each(['未执行生产日志查询，无法确认通知是否发送。','部分完成：尚缺平台回执。','已核验查询结果。'])('uses a neutral completed reminder for report: %s',async reportContent=>{
+it.each(['按钮应固定在底部。留白计算异常只是推测，现场原因尚未确认。','未执行生产日志查询，无法确认通知是否发送。','部分完成：尚缺平台回执。','已核验查询结果。'])('uses a neutral completed reminder for report: %s',async reportContent=>{
  bindAsyncTaskCard(cardStateDir,event.provenance,[event.jobId],{messageId:'result-card',imageKey:'gif'});
  mocks.run.mockImplementation(async({adapter})=>adapter.resolveTurn().delivery.deliver({text:reportContent},{kind:'final'}));
  await deliverCodexCompletion({...event,reportContent},{beforeSend:vi.fn(),onReceipt:vi.fn()});
@@ -1104,7 +1104,7 @@ it.each([false,true])('puts only the missing report in the reminder (existing: %
  try {
   await deliverCodexCompletion({...event,taskReport:{storage:{state:'written',path:event.reportPaths[0]}}},{beforeSend:vi.fn(),onReceipt:vi.fn()});
   expect(readAsyncTaskCard(cardStateDir,event.jobId,event.provenance)?.result).toBe(existing?report:'核验结果');
-  expect(mocks.send.mock.calls.at(-1)![0]).toMatchObject({card:reminderCard('老师，核验结果'+(existing?'':` [完整报告](${url})`))});
+  expect(mocks.send.mock.calls.at(-1)![0]).toMatchObject({card:reminderCard('老师，核验结果'+(existing?'':`\n\n[完整报告](${url})`))});
  }finally{stage.mockRestore();prepare.mockRestore();}
 });
 it('restores the report to the card if its reminder fails',async()=>{
