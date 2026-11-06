@@ -63,3 +63,12 @@ test('unknown bound execution is retained past deadline without implicit cancell
 test('dispatch evidence added during inspection wins over automatic settlement',async()=>{
  const f=fixture(()=>assert.fail('must not run'));try{const a=f.svc.submit('o',request);markUnknown(f,a.taskId,{sessionId:'session'});f.main.session=async()=>{f.store.claim(a.taskId,'dispatch',{});return {sessionId:'session'};};await f.svc.tick();assert.equal(f.svc.get('o',a.taskId).state,'unknown');assert.equal(f.store.event(a.taskId,'unstarted-settlement'),undefined);}finally{f.close();}
 });
+
+test('terminal automation releases its hold after unallocated workspace settlement without replay',async()=>{
+ const f=fixture(()=>assert.fail('must not run Main'));let releases=0;f.main.release=()=>releases++;
+ try{const a=f.svc.submit('o',request);f.store.update(a.taskId,()=>({state:'failed',phase:'finished',jobId:'job',sessionId:'session',settled:false,error:{code:'TASK_DEADLINE_EXCEEDED'}}));
+ f.setJob({jobId:'job',status:'cancelled',useWorkspace:true});await f.svc.tick();assert.equal(releases,0);assert.equal(f.svc.get('o',a.taskId).settled,false);
+ f.setJob({jobId:'job',status:'cancelled',useWorkspace:true,workspaceSettled:true,workspaceRelease:'idle',workspaceSettlementReason:'never_allocated'});await f.svc.tick();
+ const t=f.svc.get('o',a.taskId);assert.equal(t.state,'failed');assert.equal(t.error.code,'TASK_DEADLINE_EXCEEDED');assert.equal(t.settled,true);assert.equal(releases,1);assert.equal(f.runs(),0);
+ }finally{f.close();}
+});

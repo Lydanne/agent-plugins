@@ -110,3 +110,27 @@ test('checkpoint continuation waits for its original workspace and never spawns 
  const input=JSON.parse(readFileSync(join(f.root,job.jobId+'.input')));
  assert.equal(restores,1);assert.equal(input.runtime.workspaceCheckpoint,undefined);assert.equal(input.runtime.cwd,f.root);assert.equal(input.runtime.executionScope,'original');
 });
+
+for(const status of ['cancelled','failed','timed_out'])test('unallocated '+status+' job settles without allocating or releasing a workspace',async t=>{
+ const f=fixture(t);let allocationCalls=0;
+ const jobs=f.start({prepareWorkspace:async()=>{allocationCalls++;return null;},settleWorkspace:async()=>assert.fail('no assigned workspace to release')});
+ const j=await jobs.run({...params,useWorkspace:true},'a');
+ await until(()=>{jobs.tick();return jobs.status(j.jobId,'a').waitingReason==='waiting_workspace';});
+ const file=join(f.root,j.jobId+'.json'),job=JSON.parse(readFileSync(file));job.status=status;job.finishedAt=Date.now();writeFileSync(file,JSON.stringify(job));
+ const before=allocationCalls;
+ await until(()=>{jobs.tick();return jobs.status(j.jobId,'a').workspaceSettled===true;});
+ const done=jobs.status(j.jobId,'a');assert.equal(done.status,status);assert.equal(done.workspaceRelease,'idle');assert.equal(done.workspaceSettlementReason,'never_allocated');assert.equal(allocationCalls,before);
+});
+for(const evidence of [{workspace:{assignmentId:'preserve'}},{workspaceCheckpoint:{id:'keep'}},{startedAt:1},{executionRounds:1},{resumeSessionId:'previous'},{workspaceRelease:'blocked'}])test('unallocated settlement preserves uncertain ownership '+Object.keys(evidence)[0],async t=>{
+ const f=fixture(t);const jobs=f.start({prepareWorkspace:async()=>null});const j=await jobs.run({...params,useWorkspace:true},'a');
+ await until(()=>{jobs.tick();return jobs.status(j.jobId,'a').waitingReason==='waiting_workspace';});
+ const file=join(f.root,j.jobId+'.json'),job=JSON.parse(readFileSync(file));Object.assign(job,{status:'cancelled',finishedAt:Date.now()},evidence);writeFileSync(file,JSON.stringify(job));
+ jobs.tick();await delay(30);assert.notEqual(jobs.status(j.jobId,'a').workspaceSettled,true);
+});
+
+test('a retained dead-process receipt prevents unallocated settlement',async t=>{
+ const f=fixture(t);const jobs=f.start({prepareWorkspace:async()=>null});const j=await jobs.run({...params,useWorkspace:true},'a');
+ await until(()=>{jobs.tick();return jobs.status(j.jobId,'a').waitingReason==='waiting_workspace';});
+ const file=join(f.root,j.jobId+'.json'),job=JSON.parse(readFileSync(file));Object.assign(job,{status:'cancelled',finishedAt:Date.now()});writeFileSync(file,JSON.stringify(job));writeFileSync(join(f.root,j.jobId+'.process.json'),JSON.stringify({pid:999999999}));
+ jobs.tick();await delay(30);assert.notEqual(jobs.status(j.jobId,'a').workspaceSettled,true);
+});

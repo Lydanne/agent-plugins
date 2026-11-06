@@ -237,12 +237,19 @@ export function createJobs({root,node,worker,getRuntime=()=>undefined,getLimits=
    delete job.contextRequest;delete job.finishedAt;delete job.result;
   }
   for(const job of all.filter(j=>j.useWorkspace&&['completed','failed','timed_out','cancelled'].includes(j.status)&&(!j.workspaceSettled||j.workspaceRelease==='blocked')&&(!j.workspaceReleaseRetryAt||j.workspaceReleaseRetryAt<=Date.now()))){
-   if(workspaceOperations.has(job.jobId)||!settleWorkspace||all.some(other=>sameWorkspace(job,other)&&(settlementActive(other)||pendingSteering(other))))continue;
+   if(workspaceOperations.has(job.jobId)||all.some(other=>sameWorkspace(job,other)&&(settlementActive(other)||pendingSteering(other))))continue;
    const processFile=join(root,job.jobId+'.process.json');
    if(existsSync(processFile)&&processAlive(readJson(processFile).pid))continue;
    if(Number.isInteger(job.executionPid)){try{process.kill(-job.executionPid,0);continue;}catch(error){if(error.code!=='ESRCH')continue;}}
    const request=readJson(join(root,job.jobId+'.request.json'));
-   if(!request.runtime?.workspace)continue;
+   // A job cancelled while waiting for capacity never owned a workspace to release.
+   // Require the durable wait marker and no evidence of allocation or execution.
+   if(!existsSync(processFile)&&job.workspaceWaiting==='waiting_workspace'&&!job.workspace&&!request.runtime?.workspace&&!job.workspaceReady&&!job.startedAt&&!job.executionPid&&!job.workerId&&!job.sessionId&&!job.resumeSessionId&&!job.executionRounds&&!job.workspaceCheckpoint&&!request.runtime?.workspaceCheckpoint&&!job.workspaceSettlement&&!job.workspaceRelease){
+    Object.assign(job,{workspaceSettled:true,workspaceRelease:'idle',workspaceSettlementReason:'never_allocated'});
+    delete job.workspaceReleaseRetryAt;delete job.workspaceReleaseFailure;
+    writeJson(join(root,job.jobId+'.json'),job);continue;
+   }
+   if(!settleWorkspace||!request.runtime?.workspace)continue;
    // A continuation with the same assignment keeps ownership, even when queued.
    if(all.some(other=>other.jobId!==job.jobId&&other.workspace?.assignmentId===job.workspace?.assignmentId&&!['completed','failed','timed_out','cancelled'].includes(other.status)))continue;
    const token=randomUUID();job.workspaceSettlement={pid:process.pid,token};writeJson(join(root,job.jobId+'.json'),job);
